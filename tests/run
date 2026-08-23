@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+quattro_root=${OMARCHY_QUATTRO_PATH:-${OMARCHY_PATH:-/usr/share/omarchy}}
+test_root=$(mktemp -d)
+trap 'rm -rf -- "$test_root"' EXIT
+
+python3 -m py_compile "$repo_root/scripts/model_usage_common.py"
+python3 -m py_compile "$repo_root/scripts/usage-fetch.py"
+python3 -m py_compile "$repo_root/scripts/cost-fetch.py"
+python3 -m unittest discover -s "$repo_root/tests" -p 'test_*.py' -v
+node "$repo_root/tests/test_usage_logic.js"
+
+if command -v omarchy >/dev/null 2>&1 && omarchy plugin validate --help >/dev/null 2>&1; then
+  omarchy plugin validate "$repo_root"
+else
+  echo "omarchy plugin validate unavailable; manifest contract tests still ran"
+fi
+
+qml_lint=$(command -v qmllint || true)
+if [[ -z $qml_lint && -x /usr/lib/qt6/bin/qmllint ]]; then
+  qml_lint=/usr/lib/qt6/bin/qmllint
+fi
+
+if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
+  lint_root="$test_root/lint"
+  mkdir -p "$lint_root/qs"
+  ln -s "$quattro_root/shell/Ui" "$lint_root/qs/Ui"
+  ln -s "$quattro_root/shell/Commons" "$lint_root/qs/Commons"
+  lint_log="$lint_root/qmllint.log"
+  if ! "$qml_lint" -W 0 --missing-property disable --signal-handler-parameters disable \
+    -I "$lint_root" \
+    "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" \
+    "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" \
+    "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" >"$lint_log" 2>&1; then
+    sed -n '1,240p' "$lint_log"
+    exit 1
+  fi
+  echo "qmllint: passed (dynamic Omarchy/Quickshell type warnings disabled)"
+else
+  echo "qmllint or Quattro source unavailable; skipping QML lint"
+fi
+
+if command -v quickshell >/dev/null 2>&1 \
+    && command -v jq >/dev/null 2>&1 \
+    && command -v rg >/dev/null 2>&1 \
+    && command -v timeout >/dev/null 2>&1 \
+    && [[ -n ${WAYLAND_DISPLAY:-} ]] \
+    && [[ -d "$quattro_root/shell/Ui" ]]; then
+  runtime_root="$test_root/runtime"
+  config_dir="$runtime_root/model-usage-test"
+  mkdir -p "$config_dir" "$runtime_root/home"
+  cp "$repo_root/tests/qml/shell.qml" "$config_dir/shell.qml"
+  ln -s "$quattro_root/shell/Ui" "$config_dir/Ui"
+  ln -s "$quattro_root/shell/Commons" "$config_dir/Commons"
+  result="$runtime_root/result.json"
+  log="$runtime_root/quickshell.log"
+  panel_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root/Panel.qml")
+  meter_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root/BlockMeter.qml")
+  backend_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root/UsageBackend.qml")
+  cost_backend_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root/CostBackend.qml")
+  cost_view_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root/UsageCosts.qml")
+
+  MODEL_USAGE_TEST_RESULT="$result" \
+  MODEL_USAGE_PANEL_URL="$panel_url" \
+  MODEL_USAGE_METER_URL="$meter_url" \
+  MODEL_USAGE_BACKEND_URL="$backend_url" \
+  MODEL_USAGE_COST_BACKEND_URL="$cost_backend_url" \
+  MODEL_USAGE_COST_VIEW_URL="$cost_view_url" \
+  MODEL_USAGE_FAKE_BACKEND="$repo_root/tests/fake_backend.py" \
+  MODEL_USAGE_FAKE_COST_BACKEND="$repo_root/tests/fake_cost_backend.py" \
+  MODEL_USAGE_NORMALIZED_FIXTURE="$repo_root/tests/fixtures/normalized-all.json" \
+  MODEL_USAGE_COST_FIXTURE="$repo_root/tests/fixtures/normalized-costs.json" \
+  HOME="$runtime_root/home" \
+  XDG_CONFIG_HOME="$runtime_root/home/.config" \
+  XDG_CACHE_HOME="$runtime_root/home/.cache" \
+  XDG_STATE_HOME="$runtime_root/home/.local/state" \
+  QML2_IMPORT_PATH="$quattro_root/shell${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}" \
+  QML_IMPORT_PATH="$quattro_root/shell${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
+  PATH="$repo_root/tests/fake-bin:$PATH" \
+    timeout 20 quickshell -p "$config_dir" --no-color >"$log" 2>&1 || {
+      sed -n '1,240p' "$log"
+      echo "Quickshell runtime contract failed" >&2
+      exit 1
+    }
+  if [[ ! -s $result ]] || ! jq -e '.ok == true' "$result" >/dev/null; then
+    [[ -s $result ]] && jq . "$result"
+    sed -n '1,240p' "$log"
+    echo "Quickshell runtime assertions failed" >&2
+    exit 1
+  fi
+  if rg -n 'Error:|ReferenceError|TypeError|Binding loop|Unable to assign|failed to load|failed to instantiate' "$log"; then
+    echo "Quickshell runtime log contains QML errors" >&2
+    exit 1
+  fi
+  echo "Quickshell runtime contract: passed"
+else
+  echo "Live Wayland/Quickshell test unavailable; skipping runtime contract"
+fi

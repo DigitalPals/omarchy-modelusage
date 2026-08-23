@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "digitalpals.model-usage",
+  "name": "Model Usage",
+  "version": "1.0.0",
+  "author": "DigitalPals",
+  "license": "MIT",
+  "description": "Claude Code, OpenAI Codex, and Kimi Code limits, token activity, and estimated API costs in a native Omarchy panel.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Model Usage",
+    "description": "AI subscription limits, reset times, quota history, token activity, and on-demand estimated API costs.",
+    "category": "AI",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "refreshIntervalSec": 900,
+      "enabledProviders": ["claude", "codex", "kimi"],
+      "barDisplayMode": "Icon",
+      "warningThreshold": 25,
+      "criticalThreshold": 10
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "description": "How often provider usage is refreshed. Manual refresh is always available.",
+        "min": 60,
+        "max": 3600,
+        "step": 60,
+        "defaultValue": 900
+      },
+      {
+        "key": "enabledProviders",
+        "type": "multiselect",
+        "label": "Providers",
+        "description": "Only selected providers are queried and shown.",
+        "noSelectionText": "No providers",
+        "placeholderText": "Search providers...",
+        "emptyText": "No providers found",
+        "defaultValue": ["claude", "codex", "kimi"],
+        "options": [
+          { "value": "claude", "label": "Claude Code" },
+          { "value": "codex", "label": "OpenAI Codex" },
+          { "value": "kimi", "label": "Kimi Code" }
+        ]
+      },
+      {
+        "key": "barDisplayMode",
+        "type": "enum",
+        "label": "Bar display",
+        "options": ["Icon", "Percentages"],
+        "defaultValue": "Icon",
+        "description": "Percentages shows compact remaining quota on horizontal bars and falls back to the icon on vertical bars."
+      },
+      {
+        "key": "warningThreshold",
+        "type": "integer",
+        "label": "Warning at (% remaining)",
+        "min": 1,
+        "max": 100,
+        "step": 1,
+        "defaultValue": 25
+      },
+      {
+        "key": "criticalThreshold",
+        "type": "integer",
+        "label": "Critical at (% remaining)",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "defaultValue": 10
+      }
+    ]
+  }
+}

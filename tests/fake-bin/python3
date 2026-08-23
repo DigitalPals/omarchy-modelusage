@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${1:-} == */scripts/usage-fetch.py ]]; then
+  shift
+  exec /usr/bin/python3 "${MODEL_USAGE_FAKE_BACKEND:?}" "$@"
+fi
+
+if [[ ${1:-} == */scripts/cost-fetch.py ]]; then
+  shift
+  exec /usr/bin/python3 "${MODEL_USAGE_FAKE_COST_BACKEND:?}" "$@"
+fi
+
+exec /usr/bin/python3 "$@"
