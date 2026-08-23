@@ -31,6 +31,20 @@ def fixture_json(name: str):
 
 
 class TranscriptParserTests(unittest.TestCase):
+    @staticmethod
+    def claude_line(index: int) -> str:
+        return json.dumps({
+            "type": "assistant",
+            "timestamp": "2030-01-15T12:00:00Z",
+            "sessionId": "session",
+            "requestId": f"request-{index}",
+            "message": {
+                "id": f"message-{index}",
+                "model": "claude-test",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        })
+
     def test_claude_deduplicates_content_blocks_and_honors_reported_cost(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "claude.jsonl"
@@ -88,6 +102,25 @@ class TranscriptParserTests(unittest.TestCase):
         self.assertEqual(records[0].model, "<unattributed>")
         self.assertEqual(records[0].total_tokens, 1040)
         self.assertIsNone(records[0].reported_cost_usd)
+
+    def test_oversized_transcript_line_is_rejected_atomically(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "oversized.jsonl"
+            path.write_text(self.claude_line(1) + " " * 64 + "\n", encoding="utf-8")
+            with mock.patch.object(costs, "MAX_TRANSCRIPT_LINE_BYTES", 64):
+                records = costs.parse_claude_file(path, 0)
+        self.assertIsNone(records)
+
+    def test_per_file_record_ceiling_rejects_partial_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "records.jsonl"
+            path.write_text(
+                self.claude_line(1) + "\n" + self.claude_line(2) + "\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(costs, "MAX_TRANSCRIPT_RECORDS_PER_FILE", 1):
+                records = costs.parse_claude_file(path, 0)
+        self.assertIsNone(records)
 
 
 class PricingAndAggregationTests(unittest.TestCase):
@@ -183,8 +216,96 @@ class PricingAndAggregationTests(unittest.TestCase):
         self.assertIsNotNone(bucket_for(now_ms))
         self.assertIsNone(bucket_for(now_ms + 1))
 
+    def test_distinct_model_output_groups_are_bounded(self):
+        now_ms = 1_894_708_800_000
+        records = [
+            costs.UsageRecord(
+                "codex", now_ms, f"model-{index}", f"session-{index}",
+                1, 0, 0, 0, 0, None, None,
+            )
+            for index in range(3)
+        ]
+        with mock.patch.object(costs, "MAX_MODEL_GROUPS", 1):
+            result = costs.aggregate_usage(records, ["codex"], 7, now_ms, {}, "UTC")
+        self.assertEqual(len(result["models"]), 2)
+        self.assertIn("Other models", [row["model"] for row in result["models"]])
+        self.assertEqual(result["totals"]["records"], 3)
+
 
 class CoverageTests(unittest.TestCase):
+    def test_oversized_transcript_file_is_skipped_without_parsing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transcript_root = root / "claude" / "projects"
+            transcript_root.mkdir(parents=True)
+            transcript = transcript_root / "session.jsonl"
+            transcript.write_text("{}\n", encoding="utf-8")
+            now_ms = int(transcript.stat().st_mtime * 1000)
+            parser = mock.Mock(return_value=[])
+            with (
+                mock.patch.object(costs, "transcript_root", return_value=transcript_root),
+                mock.patch.object(costs, "MAX_TRANSCRIPT_FILE_BYTES", 1),
+                mock.patch.dict(costs.PARSERS, {"claude": parser}),
+            ):
+                records, coverage = costs.scan_transcripts(
+                    ["claude"], root / "state", now_ms
+                )
+        parser.assert_not_called()
+        self.assertEqual(records, [])
+        self.assertEqual(coverage[0]["status"], "failed")
+        self.assertEqual(coverage[0]["skippedFiles"], 1)
+
+    def test_total_record_ceiling_marks_coverage_partial(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transcript_root = root / "claude" / "projects"
+            transcript_root.mkdir(parents=True)
+            for name in ("one.jsonl", "two.jsonl"):
+                (transcript_root / name).write_text("{}\n", encoding="utf-8")
+            now_ms = int((transcript_root / "one.jsonl").stat().st_mtime * 1000)
+
+            def parser(path, _start):
+                return [costs.UsageRecord(
+                    "claude", now_ms, path.stem, path.stem,
+                    1, 0, 0, 0, 0, None, path.stem,
+                )]
+
+            with (
+                mock.patch.object(costs, "transcript_root", return_value=transcript_root),
+                mock.patch.object(costs, "MAX_TRANSCRIPT_RECORDS_TOTAL", 1),
+                mock.patch.dict(costs.PARSERS, {"claude": parser}),
+            ):
+                records, coverage = costs.scan_transcripts(
+                    ["claude"], root / "state", now_ms
+                )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(coverage[0]["status"], "partial")
+        self.assertEqual(coverage[0]["scannedFiles"], 1)
+        self.assertEqual(coverage[0]["skippedFiles"], 1)
+
+    def test_total_changed_input_ceiling_marks_coverage_partial(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transcript_root = root / "claude" / "projects"
+            transcript_root.mkdir(parents=True)
+            for name in ("one.jsonl", "two.jsonl"):
+                (transcript_root / name).write_text("{}\n", encoding="utf-8")
+            now_ms = int((transcript_root / "one.jsonl").stat().st_mtime * 1000)
+            parser = mock.Mock(return_value=[])
+            with (
+                mock.patch.object(costs, "transcript_root", return_value=transcript_root),
+                mock.patch.object(costs, "MAX_TRANSCRIPT_SCAN_BYTES", 3),
+                mock.patch.dict(costs.PARSERS, {"claude": parser}),
+            ):
+                records, coverage = costs.scan_transcripts(
+                    ["claude"], root / "state", now_ms
+                )
+        self.assertEqual(records, [])
+        self.assertEqual(parser.call_count, 1)
+        self.assertEqual(coverage[0]["status"], "partial")
+        self.assertEqual(coverage[0]["scannedFiles"], 1)
+        self.assertEqual(coverage[0]["skippedFiles"], 1)
+
     def test_unreadable_transcript_marks_coverage_failed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -239,6 +360,13 @@ class CoverageTests(unittest.TestCase):
 
 
 class CacheAndContractTests(unittest.TestCase):
+    def test_oversized_scan_cache_is_ignored(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cache.json"
+            path.write_bytes(b"{}" + b" " * 31)
+            with mock.patch.object(costs, "MAX_SCAN_CACHE_BYTES", 32):
+                self.assertEqual(costs.load_scan_cache(path), {})
+
     def test_build_payload_caches_only_hashed_identifiers_with_private_permissions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

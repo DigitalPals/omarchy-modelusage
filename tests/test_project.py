@@ -94,14 +94,24 @@ class ProjectContractTests(unittest.TestCase):
         self.assertNotIn("Timer {\n    interval:", cost_backend.split("Process {")[0])
         self.assertIn("function ensureLoaded()", cost_backend)
         self.assertIn("interval: 60000", cost_backend)
+        for source in (backend, cost_backend):
+            self.assertNotIn("StdioCollector", source)
+            self.assertIn('splitMarker: ""', source)
+            self.assertIn("outputTooLarge", source)
+            self.assertIn("maxBodyChars", source)
 
         collector = (ROOT / "scripts" / "usage-fetch.py").read_text()
         self.assertIn('[codex, "-s", "read-only", "-a", "never", "app-server"]', collector)
+        self.assertIn("MAX_HTTP_RESPONSE_BYTES + 1", collector)
+        self.assertIn("class CodexRpcStream", collector)
+        self.assertNotIn("process.stdout.readline", collector)
 
         cost_collector = (ROOT / "scripts" / "cost-fetch.py").read_text()
         self.assertIn('opaque_id(str(path.absolute()))', cost_collector)
         self.assertIn("cost = None", cost_collector)
         self.assertNotIn('document.get("prompt")', cost_collector)
+        self.assertIn("MAX_TRANSCRIPT_LINE_BYTES + 1", cost_collector)
+        self.assertIn("MAX_TRANSCRIPT_RECORDS_TOTAL", cost_collector)
 
     def test_namespaced_ipc_and_no_builtin_alias_collision(self):
         panel = (ROOT / "Panel.qml").read_text()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -155,6 +156,70 @@ class FailureAndIsolationTests(unittest.TestCase):
             with self.assertRaises(usage.ProviderFailure) as raised:
                 usage.http_json("https://example", {}, 1)
         self.assertEqual(raised.exception.kind, "malformed")
+
+    def test_http_response_body_is_bounded_before_json_parsing(self):
+        response = mock.MagicMock()
+        reader = response.__enter__.return_value.read
+        reader.return_value = b"x" * (usage.MAX_HTTP_RESPONSE_BYTES + 1)
+        with mock.patch.object(usage.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(usage.ProviderFailure) as raised:
+                usage.http_json("https://example", {}, 1)
+        self.assertEqual(raised.exception.kind, "malformed")
+        reader.assert_called_once_with(usage.MAX_HTTP_RESPONSE_BYTES + 1)
+
+    def test_codex_rpc_rejects_an_oversized_unterminated_line(self):
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b"x" * 33)
+        os.close(write_fd)
+
+        class PipeProcess:
+            stdin = io.BytesIO()
+            stdout = os.fdopen(read_fd, "rb", buffering=0)
+
+            @staticmethod
+            def poll():
+                return None
+
+        process = PipeProcess()
+        try:
+            stream = usage.CodexRpcStream(process, max_line_bytes=32)
+            with self.assertRaises(usage.ProviderFailure) as raised:
+                stream.receive(1, "test/read", 1)
+        finally:
+            process.stdout.close()
+        self.assertEqual(raised.exception.kind, "malformed")
+
+    def test_codex_rpc_skips_notifications_and_returns_bounded_response(self):
+        read_fd, write_fd = os.pipe()
+        os.write(
+            write_fd,
+            b'{"method":"account/updated"}\n'
+            b'{"id":7,"result":{"ok":true}}\n',
+        )
+        os.close(write_fd)
+
+        class PipeProcess:
+            stdin = io.BytesIO()
+            stdout = os.fdopen(read_fd, "rb", buffering=0)
+
+            @staticmethod
+            def poll():
+                return None
+
+        process = PipeProcess()
+        try:
+            stream = usage.CodexRpcStream(process, max_line_bytes=128)
+            response = stream.receive(7, "test/read", 1)
+        finally:
+            process.stdout.close()
+        self.assertTrue(response["result"]["ok"])
+
+    def test_local_json_input_is_bounded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "oversized.json"
+            path.write_bytes(b"{}" + b" " * 31)
+            with self.assertRaises(ValueError):
+                usage.read_json(path, max_bytes=32)
 
     def test_one_provider_failure_does_not_suppress_others(self):
         def failed(_timeout):

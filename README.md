@@ -154,7 +154,7 @@ omarchy bar set digitalpals.model-usage criticalThreshold 5 --json
 
 The packaged script and assets are found with `Qt.resolvedUrl`, so cloned plugins, symlinked development checkouts, and Omarchy's hot reload all use the plugin's actual source directory.
 
-Polling never overlaps: a refresh requested while a collector is running is collapsed into one follow-up run. Provider requests, transcript scans, price downloads, and both QML processes have timeouts. The one-second countdown timer runs only while the panel is open, quota history is capped to seven days, and transcript cache retention is capped to 32 days for the longest 30-day view plus boundary slack.
+Polling never overlaps: a refresh requested while a collector is running is collapsed into one follow-up run. Provider requests, transcript scans, price downloads, and both QML processes have timeouts. Provider/local JSON, Codex RPC messages, QML process streams, transcript lines/files/scan volume, cached scan records, and aggregate records all have explicit memory ceilings; limit breaches fail locally or produce honest partial coverage. The one-second countdown timer runs only while the panel is open, quota history is capped to seven days, and transcript cache retention is capped to 32 days for the longest 30-day view plus boundary slack.
 
 ## Development and testing
 
@@ -168,7 +168,7 @@ The suite performs:
 
 - Python syntax checks and fixture/contract tests on Python 3.10 through 3.14 in CI.
 - Claude, Codex, and Kimi normalization tests, including multiple/scoped windows and credits.
-- Claude/Codex/Kimi transcript parsing, repeat/fork deduplication, token accounting, pricing, partial/unavailable costs, and private cache tests.
+- Claude/Codex/Kimi transcript parsing, repeat/fork deduplication, token accounting, pricing, partial/unavailable costs, private cache tests, and adversarial input-ceiling tests.
 - missing/expired credentials, HTTP errors, timeouts, rate limiting, malformed data, and provider-failure isolation.
 - bounded XDG history persistence and corrupt-history recovery.
 - JavaScript threshold and compact-percentage tests.

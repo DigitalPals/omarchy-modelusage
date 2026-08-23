@@ -42,6 +42,21 @@ CACHE_RETENTION_DAYS = 32
 MTIME_SLACK_SECONDS = 36 * 60 * 60
 MAX_RATE_BYTES = 32 * 1024 * 1024
 FORK_COPY_MAX_GAP_MS = 1000
+MAX_TRANSCRIPT_LINE_BYTES = 1024 * 1024
+MAX_TRANSCRIPT_FILE_BYTES = 128 * 1024 * 1024
+MAX_TRANSCRIPT_SCAN_BYTES = 512 * 1024 * 1024
+MAX_TRANSCRIPT_RECORDS_PER_FILE = 20_000
+MAX_TRANSCRIPT_RECORDS_TOTAL = 50_000
+MAX_TRANSCRIPT_FILES_PER_PROVIDER = 10_000
+MAX_TRANSCRIPT_DIRECTORIES_PER_PROVIDER = 2_000
+MAX_SCAN_CACHE_BYTES = 32 * 1024 * 1024
+MAX_SCAN_CACHE_FILES = 10_000
+MAX_MODEL_NAME_CHARS = 256
+MAX_MODEL_GROUPS = 512
+
+
+class TranscriptLimitError(ValueError):
+    """A transcript exceeded a resource ceiling and must be skipped atomically."""
 
 
 @dataclass(frozen=True)
@@ -107,6 +122,35 @@ def opaque_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
 
 
+def read_bounded_json(path: Path, max_bytes: int) -> Any:
+    with path.open("rb") as handle:
+        raw = handle.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise ValueError(f"JSON input exceeds the {max_bytes}-byte limit")
+    return json.loads(raw)
+
+
+def bounded_jsonl_lines(path: Path) -> Iterable[str]:
+    with path.open("rb") as handle:
+        consumed = 0
+        while True:
+            raw = handle.readline(MAX_TRANSCRIPT_LINE_BYTES + 1)
+            if not raw:
+                return
+            consumed += len(raw)
+            if consumed > MAX_TRANSCRIPT_FILE_BYTES:
+                raise TranscriptLimitError("transcript file is unexpectedly large")
+            if len(raw) > MAX_TRANSCRIPT_LINE_BYTES:
+                raise TranscriptLimitError("transcript line is unexpectedly large")
+            yield raw.decode("utf-8", errors="replace")
+
+
+def bounded_model(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:MAX_MODEL_NAME_CHARS]
+
+
 def state_path(name: str, state_dir: Path | None = None) -> Path:
     if state_dir is None:
         state_home = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
@@ -133,9 +177,9 @@ def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
     if not isinstance(row, list) or len(row) != 10:
         return None
     timestamp = finite_number(row[0])
-    model = row[1]
-    session_id = row[2]
-    if timestamp is None or not isinstance(model, str) or not isinstance(session_id, str):
+    model = bounded_model(row[1])
+    session_id = row[2][:128] if isinstance(row[2], str) else ""
+    if timestamp is None or not model or not isinstance(row[2], str):
         return None
     numeric = [finite_number(value) for value in row[3:8]]
     if any(value is None or value < 0 for value in numeric):
@@ -143,7 +187,7 @@ def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
     reported = finite_number(row[8])
     if reported is not None and reported < 0:
         reported = None
-    dedupe = row[9] if isinstance(row[9], str) else None
+    dedupe = row[9][:128] if isinstance(row[9], str) else None
     return UsageRecord(
         provider=provider,
         timestamp_ms=int(timestamp),
@@ -161,8 +205,8 @@ def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
 
 def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        document = read_bounded_json(path, MAX_SCAN_CACHE_BYTES)
+    except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
         return {}
     if not isinstance(document, dict) or document.get("schemaVersion") != SCAN_CACHE_VERSION:
         return {}
@@ -170,8 +214,11 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
     if not isinstance(files, dict):
         return {}
     cache: dict[str, dict[str, Any]] = {}
+    cached_records = 0
     for key, entry in files.items():
-        if not isinstance(key, str) or not isinstance(entry, dict):
+        if len(cache) >= MAX_SCAN_CACHE_FILES:
+            break
+        if not isinstance(key, str) or len(key) != 64 or not isinstance(entry, dict):
             continue
         provider = entry.get("p")
         if provider not in PROVIDER_ORDER:
@@ -179,7 +226,13 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
         size = finite_number(entry.get("s"))
         modified = finite_number(entry.get("m"))
         rows = entry.get("r")
-        if size is None or modified is None or not isinstance(rows, list):
+        if (
+            size is None
+            or modified is None
+            or not isinstance(rows, list)
+            or len(rows) > MAX_TRANSCRIPT_RECORDS_PER_FILE
+            or cached_records + len(rows) > MAX_TRANSCRIPT_RECORDS_TOTAL
+        ):
             continue
         records: list[UsageRecord] = []
         corrupt = False
@@ -196,14 +249,22 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
                 "p": provider,
                 "records": records,
             }
+            cached_records += len(records)
     return cache
 
 
 def save_scan_cache(path: Path, cache: dict[str, dict[str, Any]]) -> None:
     files: dict[str, Any] = {}
+    cached_records = 0
     for key, entry in cache.items():
+        if len(files) >= MAX_SCAN_CACHE_FILES:
+            break
         records = entry.get("records")
-        if not isinstance(records, list):
+        if (
+            not isinstance(records, list)
+            or len(records) > MAX_TRANSCRIPT_RECORDS_PER_FILE
+            or cached_records + len(records) > MAX_TRANSCRIPT_RECORDS_TOTAL
+        ):
             continue
         files[key] = {
             "s": int(entry["s"]),
@@ -211,6 +272,7 @@ def save_scan_cache(path: Path, cache: dict[str, dict[str, Any]]) -> None:
             "p": entry["p"],
             "r": [serialize_record(record) for record in records],
         }
+        cached_records += len(records)
     atomic_write_json(path, {"schemaVersion": SCAN_CACHE_VERSION, "files": files})
 
 
@@ -221,9 +283,9 @@ def record_from_claude(document: Any) -> UsageRecord | None:
     if not isinstance(message, dict):
         return None
     usage = message.get("usage")
-    model = message.get("model")
+    model = bounded_model(message.get("model"))
     timestamp = parse_timestamp_ms(document.get("timestamp"))
-    if not isinstance(usage, dict) or not isinstance(model, str) or not model or timestamp is None:
+    if not isinstance(usage, dict) or not model or timestamp is None:
         return None
     message_id = message.get("id") if isinstance(message.get("id"), str) else ""
     request_id = document.get("requestId") if isinstance(document.get("requestId"), str) else ""
@@ -252,22 +314,23 @@ def parse_claude_file(path: Path, retention_start_ms: int) -> list[UsageRecord] 
     records: list[UsageRecord] = []
     seen: set[str] = set()
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                if '"usage"' not in line:
+        for line in bounded_jsonl_lines(path):
+            if '"usage"' not in line:
+                continue
+            try:
+                record = record_from_claude(json.loads(line))
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if record is None or record.timestamp_ms < retention_start_ms:
+                continue
+            if record.dedupe_key is not None:
+                if record.dedupe_key in seen:
                     continue
-                try:
-                    record = record_from_claude(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-                if record is None or record.timestamp_ms < retention_start_ms:
-                    continue
-                if record.dedupe_key is not None:
-                    if record.dedupe_key in seen:
-                        continue
-                    seen.add(record.dedupe_key)
-                records.append(record)
-    except OSError:
+                seen.add(record.dedupe_key)
+            if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
+                raise TranscriptLimitError("too many usage records in one transcript")
+            records.append(record)
+    except (OSError, TranscriptLimitError):
         return None
     return records
 
@@ -294,71 +357,70 @@ def parse_codex_file(path: Path, retention_start_ms: int) -> list[UsageRecord] |
     suppressing_fork_copies = False
     fork_copy_anchor_ms = 0
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                if not any(marker in line for marker in ('"session_meta"', '"turn_context"', '"token_count"')):
+        for line in bounded_jsonl_lines(path):
+            if not any(marker in line for marker in ('"session_meta"', '"turn_context"', '"token_count"')):
+                continue
+            try:
+                document = json.loads(line)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if not isinstance(document, dict) or not isinstance(document.get("payload"), dict):
+                continue
+            payload = document["payload"]
+            record_type = document.get("type")
+            if record_type == "session_meta":
+                if saw_session_meta:
                     continue
-                try:
-                    document = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(document, dict) or not isinstance(document.get("payload"), dict):
-                    continue
-                payload = document["payload"]
-                record_type = document.get("type")
-                if record_type == "session_meta":
-                    if saw_session_meta:
-                        continue
-                    saw_session_meta = True
-                    raw_id = payload.get("id") or payload.get("session_id")
-                    if isinstance(raw_id, str):
-                        session_id = opaque_id("codex:" + raw_id)
-                    timestamp = parse_timestamp_ms(document.get("timestamp"))
-                    if timestamp is not None and codex_forked(payload):
-                        suppressing_fork_copies = True
-                        fork_copy_anchor_ms = timestamp
-                    continue
-                if record_type == "turn_context":
-                    raw_model = payload.get("model")
-                    if isinstance(raw_model, str):
-                        model = raw_model
-                    continue
-                if payload.get("type") != "token_count":
-                    continue
-                info = payload.get("info")
-                last = info.get("last_token_usage") if isinstance(info, dict) else None
+                saw_session_meta = True
+                raw_id = payload.get("id") or payload.get("session_id")
+                if isinstance(raw_id, str):
+                    session_id = opaque_id("codex:" + raw_id)
                 timestamp = parse_timestamp_ms(document.get("timestamp"))
-                if not isinstance(last, dict) or timestamp is None or not model:
+                if timestamp is not None and codex_forked(payload):
+                    suppressing_fork_copies = True
+                    fork_copy_anchor_ms = timestamp
+                continue
+            if record_type == "turn_context":
+                model = bounded_model(payload.get("model"))
+                continue
+            if payload.get("type") != "token_count":
+                continue
+            info = payload.get("info")
+            last = info.get("last_token_usage") if isinstance(info, dict) else None
+            timestamp = parse_timestamp_ms(document.get("timestamp"))
+            if not isinstance(last, dict) or timestamp is None or not model:
+                continue
+            signature = json.dumps(last, separators=(",", ":"), sort_keys=True)
+            if signature == last_signature:
+                continue
+            last_signature = signature
+            if suppressing_fork_copies:
+                if timestamp - fork_copy_anchor_ms < FORK_COPY_MAX_GAP_MS:
+                    fork_copy_anchor_ms = timestamp
                     continue
-                signature = json.dumps(last, separators=(",", ":"), sort_keys=True)
-                if signature == last_signature:
-                    continue
-                last_signature = signature
-                if suppressing_fork_copies:
-                    if timestamp - fork_copy_anchor_ms < FORK_COPY_MAX_GAP_MS:
-                        fork_copy_anchor_ms = timestamp
-                        continue
-                    suppressing_fork_copies = False
-                input_tokens = nonnegative_int(last.get("input_tokens"))
-                cached = nonnegative_int(last.get("cached_input_tokens"))
-                cache_creation = nonnegative_int(last.get("cache_write_input_tokens"))
-                output = nonnegative_int(last.get("output_tokens"))
-                record = UsageRecord(
-                    provider="codex",
-                    timestamp_ms=timestamp,
-                    model=model,
-                    session_id=session_id,
-                    uncached_input=max(0, input_tokens - cached - cache_creation),
-                    cached_input=cached,
-                    cache_creation=cache_creation,
-                    output=output,
-                    reasoning=min(output, nonnegative_int(last.get("reasoning_output_tokens"))),
-                    reported_cost_usd=None,
-                    dedupe_key=None,
-                )
-                if record.total_tokens > 0 and record.timestamp_ms >= retention_start_ms:
-                    records.append(record)
-    except OSError:
+                suppressing_fork_copies = False
+            input_tokens = nonnegative_int(last.get("input_tokens"))
+            cached = nonnegative_int(last.get("cached_input_tokens"))
+            cache_creation = nonnegative_int(last.get("cache_write_input_tokens"))
+            output = nonnegative_int(last.get("output_tokens"))
+            record = UsageRecord(
+                provider="codex",
+                timestamp_ms=timestamp,
+                model=model,
+                session_id=session_id,
+                uncached_input=max(0, input_tokens - cached - cache_creation),
+                cached_input=cached,
+                cache_creation=cache_creation,
+                output=output,
+                reasoning=min(output, nonnegative_int(last.get("reasoning_output_tokens"))),
+                reported_cost_usd=None,
+                dedupe_key=None,
+            )
+            if record.total_tokens > 0 and record.timestamp_ms >= retention_start_ms:
+                if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
+                    raise TranscriptLimitError("too many usage records in one transcript")
+                records.append(record)
+    except (OSError, TranscriptLimitError):
         return None
     return records
 
@@ -381,52 +443,53 @@ def parse_kimi_file(path: Path, retention_start_ms: int) -> list[UsageRecord] | 
     raw_session = path.parent.name
     session_id = opaque_id("kimi:" + raw_session) if raw_session else ""
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                if '"token_usage"' not in line:
+        for line in bounded_jsonl_lines(path):
+            if '"token_usage"' not in line:
+                continue
+            try:
+                document = json.loads(line)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if not isinstance(document, dict) or not isinstance(document.get("message"), dict):
+                continue
+            timestamp = parse_timestamp_ms(document.get("timestamp"))
+            if timestamp is None or timestamp < retention_start_ms:
+                continue
+            message = document["message"]
+            message_type = message.get("type")
+            if not isinstance(message_type, str):
+                continue
+            for event_type, payload in kimi_events(message_type, message.get("payload")):
+                if event_type != "StatusUpdate":
                     continue
-                try:
-                    document = json.loads(line)
-                except json.JSONDecodeError:
+                usage = payload.get("token_usage")
+                if not isinstance(usage, dict):
                     continue
-                if not isinstance(document, dict) or not isinstance(document.get("message"), dict):
-                    continue
-                timestamp = parse_timestamp_ms(document.get("timestamp"))
-                if timestamp is None or timestamp < retention_start_ms:
-                    continue
-                message = document["message"]
-                message_type = message.get("type")
-                if not isinstance(message_type, str):
-                    continue
-                for event_type, payload in kimi_events(message_type, message.get("payload")):
-                    if event_type != "StatusUpdate":
-                        continue
-                    usage = payload.get("token_usage")
-                    if not isinstance(usage, dict):
-                        continue
-                    raw_message_id = payload.get("message_id")
-                    if isinstance(raw_message_id, str) and raw_message_id:
-                        dedupe_source = "kimi:" + raw_message_id
-                    else:
-                        dedupe_source = "kimi:" + str(timestamp) + ":" + json.dumps(
-                            usage, separators=(",", ":"), sort_keys=True
-                        )
-                    record = UsageRecord(
-                        provider="kimi",
-                        timestamp_ms=timestamp,
-                        model="<unattributed>",
-                        session_id=session_id,
-                        uncached_input=nonnegative_int(usage.get("input_other")),
-                        cached_input=nonnegative_int(usage.get("input_cache_read")),
-                        cache_creation=nonnegative_int(usage.get("input_cache_creation")),
-                        output=nonnegative_int(usage.get("output")),
-                        reasoning=0,
-                        reported_cost_usd=None,
-                        dedupe_key=opaque_id(dedupe_source),
+                raw_message_id = payload.get("message_id")
+                if isinstance(raw_message_id, str) and raw_message_id:
+                    dedupe_source = "kimi:" + raw_message_id
+                else:
+                    dedupe_source = "kimi:" + str(timestamp) + ":" + json.dumps(
+                        usage, separators=(",", ":"), sort_keys=True
                     )
-                    if record.total_tokens > 0:
-                        records.append(record)
-    except OSError:
+                record = UsageRecord(
+                    provider="kimi",
+                    timestamp_ms=timestamp,
+                    model="<unattributed>",
+                    session_id=session_id,
+                    uncached_input=nonnegative_int(usage.get("input_other")),
+                    cached_input=nonnegative_int(usage.get("input_cache_read")),
+                    cache_creation=nonnegative_int(usage.get("input_cache_creation")),
+                    output=nonnegative_int(usage.get("output")),
+                    reasoning=0,
+                    reported_cost_usd=None,
+                    dedupe_key=opaque_id(dedupe_source),
+                )
+                if record.total_tokens > 0:
+                    if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
+                        raise TranscriptLimitError("too many usage records in one transcript")
+                    records.append(record)
+    except (OSError, TranscriptLimitError):
         return None
     return records
 
@@ -450,37 +513,70 @@ def transcript_root(provider: str) -> Path:
 
 def discover_transcripts(
     provider: str, root: Path, retention_start_ms: int
-) -> tuple[list[tuple[Path, os.stat_result, str]], set[str], int]:
+) -> tuple[list[tuple[Path, os.stat_result, str]], set[str], int, bool]:
     candidates: list[tuple[Path, os.stat_result, str]] = []
     live: set[str] = set()
     errors = 0
+    complete = True
+    pending = [root]
+    visited_directories = 0
+    stop = False
 
-    def record_walk_error(_error: OSError) -> None:
-        nonlocal errors
-        errors += 1
-
-    try:
-        walker = os.walk(root, followlinks=False, onerror=record_walk_error)
-        for directory, _, names in walker:
-            for name in names:
-                if provider == "kimi":
-                    if name != "wire.jsonl":
+    while pending and not stop:
+        if visited_directories >= MAX_TRANSCRIPT_DIRECTORIES_PER_PROVIDER:
+            errors += 1
+            complete = False
+            break
+        directory = pending.pop()
+        visited_directories += 1
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if (
+                                visited_directories + len(pending)
+                                >= MAX_TRANSCRIPT_DIRECTORIES_PER_PROVIDER
+                            ):
+                                errors += 1
+                                complete = False
+                                stop = True
+                                break
+                            pending.append(Path(entry.path))
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        errors += 1
+                        complete = False
                         continue
-                elif not name.endswith(".jsonl"):
-                    continue
-                path = Path(directory) / name
-                key = opaque_id(str(path.absolute()))
-                live.add(key)
-                try:
-                    stats = path.stat()
-                except OSError:
-                    errors += 1
-                    continue
-                if int(stats.st_mtime * 1000) >= retention_start_ms:
-                    candidates.append((path, stats, key))
-    except OSError:
-        errors += 1
-    return candidates, live, errors
+                    name = entry.name
+                    if provider == "kimi":
+                        if name != "wire.jsonl":
+                            continue
+                    elif not name.endswith(".jsonl"):
+                        continue
+                    if len(live) >= MAX_TRANSCRIPT_FILES_PER_PROVIDER:
+                        errors += 1
+                        complete = False
+                        stop = True
+                        break
+                    path = Path(entry.path)
+                    key = opaque_id(str(path.absolute()))
+                    live.add(key)
+                    try:
+                        stats = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        errors += 1
+                        complete = False
+                        continue
+                    if int(stats.st_mtime * 1000) >= retention_start_ms:
+                        candidates.append((path, stats, key))
+        except OSError:
+            errors += 1
+            complete = False
+    candidates.sort(key=lambda item: (item[1].st_mtime_ns, str(item[0])), reverse=True)
+    return candidates, live, errors, complete
 
 
 def scan_transcripts(
@@ -492,8 +588,9 @@ def scan_transcripts(
     records: list[UsageRecord] = []
     coverage: list[dict[str, Any]] = []
     walked: set[str] = set()
-    live_by_provider: dict[str, set[str]] = {}
+    live_by_provider: dict[str, set[str] | None] = {}
     cache_changed = False
+    scanned_input_bytes = 0
 
     for provider in provider_ids:
         root = transcript_root(provider)
@@ -512,10 +609,10 @@ def scan_transcripts(
             continue
 
         walked.add(provider)
-        candidates, live, discovery_errors = discover_transcripts(
+        candidates, live, discovery_errors, discovery_complete = discover_transcripts(
             provider, root, retention_start_ms
         )
-        live_by_provider[provider] = live
+        live_by_provider[provider] = live if discovery_complete else None
         source["skippedFiles"] += discovery_errors
         provider_record_count = 0
         for path, stats, key in candidates:
@@ -523,26 +620,40 @@ def scan_transcripts(
             modified = int(stats.st_mtime_ns)
             entry = cache.get(key)
             parsed: list[UsageRecord] | None
-            if (
+            cache_hit = (
                 entry is not None
                 and entry.get("p") == provider
                 and entry.get("s") == size
                 and entry.get("m") == modified
-            ):
+            )
+            if cache_hit:
                 parsed = entry["records"]
             else:
-                parsed = PARSERS[provider](path, retention_start_ms)
-                if parsed is not None:
-                    cache[key] = {
-                        "s": size,
-                        "m": modified,
-                        "p": provider,
-                        "records": parsed,
-                    }
+                if entry is not None:
+                    del cache[key]
                     cache_changed = True
+                if (
+                    size > MAX_TRANSCRIPT_FILE_BYTES
+                    or scanned_input_bytes + size > MAX_TRANSCRIPT_SCAN_BYTES
+                ):
+                    parsed = None
+                else:
+                    scanned_input_bytes += size
+                    parsed = PARSERS[provider](path, retention_start_ms)
             if parsed is None:
                 source["skippedFiles"] += 1
                 continue
+            if len(records) + len(parsed) > MAX_TRANSCRIPT_RECORDS_TOTAL:
+                source["skippedFiles"] += 1
+                continue
+            if not cache_hit:
+                cache[key] = {
+                    "s": size,
+                    "m": modified,
+                    "p": provider,
+                    "records": parsed,
+                }
+                cache_changed = True
             source["scannedFiles"] += 1
             provider_record_count += len(parsed)
             records.extend(parsed)
@@ -550,7 +661,10 @@ def scan_transcripts(
         incomplete = source["skippedFiles"] > 0
         messages: list[str] = []
         if incomplete:
-            messages.append("Some transcript files could not be read; totals may be incomplete.")
+            messages.append(
+                "Some transcript files were unreadable or exceeded safety limits; "
+                "totals may be incomplete."
+            )
             source["status"] = "partial" if source["scannedFiles"] > 0 else "failed"
         if provider == "kimi" and provider_record_count > 0 and source["status"] != "failed":
             source["status"] = "partial"
@@ -566,7 +680,8 @@ def scan_transcripts(
     for key, entry in list(cache.items()):
         provider = entry.get("p")
         too_old = int(entry.get("m", 0)) // 1_000_000 < retention_start_ms
-        deleted = provider in walked and key not in live_by_provider.get(provider, set())
+        provider_live = live_by_provider.get(provider)
+        deleted = provider in walked and provider_live is not None and key not in provider_live
         if too_old or deleted:
             del cache[key]
             cache_changed = True
@@ -580,8 +695,8 @@ def scan_transcripts(
 
 
 def normalize_model_name(model: str) -> str:
-    normalized = model.strip().lower()
-    return normalized.rsplit("/", 1)[-1]
+    normalized = model.strip().lower().rsplit("/", 1)[-1]
+    return normalized[:MAX_MODEL_NAME_CHARS]
 
 
 UNPRICEABLE_MODELS = {
@@ -620,8 +735,8 @@ def parse_rate_table(document: Any) -> dict[str, tuple[float, float, float, floa
 
 def load_rate_cache(path: Path) -> tuple[int, dict[str, tuple[float, float, float, float]]] | None:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        document = read_bounded_json(path, MAX_RATE_BYTES)
+    except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     if not isinstance(document, dict) or document.get("schemaVersion") != RATE_CACHE_VERSION:
         return None
@@ -636,7 +751,14 @@ def load_rate_cache(path: Path) -> tuple[int, dict[str, tuple[float, float, floa
         values = [finite_number(value) for value in row]
         if any(value is None or value < 0 for value in values):
             continue
-        rates[model] = (values[0] or 0, values[1] or 0, values[2] or 0, values[3] or 0)
+        normalized = normalize_model_name(model)
+        if normalized:
+            rates[normalized] = (
+                values[0] or 0,
+                values[1] or 0,
+                values[2] or 0,
+                values[3] or 0,
+            )
     return (int(fetched), rates) if rates else None
 
 
@@ -926,7 +1048,10 @@ def aggregate_usage(
         if bucket is None:
             continue
         provider_cell = provider_cells[record.provider]
-        model_cell = model_cells.setdefault((record.provider, record.model), empty_cell())
+        model_key = (record.provider, record.model)
+        if model_key not in model_cells and len(model_cells) >= MAX_MODEL_GROUPS:
+            model_key = (record.provider, "<other>")
+        model_cell = model_cells.setdefault(model_key, empty_cell())
         add_record(provider_cell, record, rates)
         add_record(model_cell, record, rates)
         add_record(period_cells[bucket], record, rates)
@@ -941,7 +1066,11 @@ def aggregate_usage(
         {
             "provider": provider,
             "providerName": PROVIDER_NAMES[provider],
-            "model": "Unknown model" if model == "<unattributed>" else model,
+            "model": (
+                "Unknown model" if model == "<unattributed>"
+                else "Other models" if model == "<other>"
+                else model
+            ),
             **finish_cell(cell),
         }
         for (provider, model), cell in model_cells.items()

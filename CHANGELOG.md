@@ -6,6 +6,16 @@ All notable changes to this project will be documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Bound provider HTTP and local JSON inputs, and replaced Codex RPC `readline`
+  handling with a deadline-aware incremental reader capped per message.
+- Stream and cap recurring QML backend output while discarding stderr instead
+  of retaining complete process streams in the long-lived shell.
+- Bound transcript line/file/scan sizes, per-file and total usage records,
+  persisted scan caches, model names, and output model groups; limit breaches
+  now produce explicit partial/failed coverage instead of unbounded growth.
+
 ## [1.0.0] - 2026-08-23
 
 ### Added

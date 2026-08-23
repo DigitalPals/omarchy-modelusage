@@ -72,7 +72,9 @@ Item {
 
   function settle() {
     loading = false
-    if (fetchProcess.timedOut) {
+    if (fetchProcess.outputTooLarge) {
+      fetchError = "Model usage backend returned too much data"
+    } else if (fetchProcess.timedOut) {
       fetchError = "Model usage backend timed out"
     } else if (!fetchProcess.exitSeen) {
       fetchError = "Could not start python3 for Model Usage"
@@ -108,14 +110,27 @@ Item {
     property bool exitSeen: false
     property int lastExit: 0
     property bool timedOut: false
+    property bool outputTooLarge: false
+    readonly property int maxBodyChars: 2 * 1024 * 1024
 
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: fetchProcess.body = text
+    function appendBody(data) {
+      if (outputTooLarge) return
+      var chunk = String(data)
+      if (body.length + chunk.length > maxBodyChars) {
+        body = ""
+        outputTooLarge = true
+        running = false
+        return
+      }
+      body += chunk
     }
-    stderr: StdioCollector {
-      waitForEnd: true
+
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) { fetchProcess.appendBody(data) }
     }
+    // Drain diagnostics in arbitrary chunks without retaining them.
+    stderr: SplitParser { splitMarker: "" }
     onExited: function(exitCode) {
       fetchProcess.exitSeen = true
       fetchProcess.lastExit = exitCode
@@ -126,6 +141,7 @@ Item {
         exitSeen = false
         lastExit = 0
         timedOut = false
+        outputTooLarge = false
         root.loading = true
         processTimeout.restart()
       } else {

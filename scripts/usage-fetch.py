@@ -43,6 +43,10 @@ FIVE_HOURS = 5 * 60 * 60
 SEVEN_DAYS = 7 * 24 * 60 * 60
 HISTORY_RETENTION_SECONDS = SEVEN_DAYS
 HISTORY_MAX_SAMPLES = 10_080  # One sample/minute/provider for seven days.
+MAX_LOCAL_JSON_BYTES = 2 * 1024 * 1024
+MAX_HTTP_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_CODEX_RPC_LINE_BYTES = 2 * 1024 * 1024
+CODEX_RPC_READ_BYTES = 64 * 1024
 
 
 class ProviderFailure(Exception):
@@ -58,8 +62,12 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+def read_json(path: Path, max_bytes: int = MAX_LOCAL_JSON_BYTES) -> Any:
+    with path.open("rb") as handle:
+        raw = handle.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise ValueError(f"JSON input exceeds the {max_bytes}-byte limit")
+    return json.loads(raw)
 
 
 def number(value: Any) -> float | None:
@@ -126,7 +134,11 @@ def http_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
+            raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_HTTP_RESPONSE_BYTES:
+                raise ProviderFailure(
+                    "malformed", "The provider returned unexpectedly large usage data."
+                )
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             raise ProviderFailure("expired", "The saved sign-in is no longer accepted.") from None
@@ -373,35 +385,87 @@ def runtime_environment() -> dict[str, str]:
     return env
 
 
+class CodexRpcStream:
+    """Incrementally read newline-delimited RPC without unbounded readline buffers."""
+
+    def __init__(
+        self,
+        process: subprocess.Popen[bytes],
+        max_line_bytes: int = MAX_CODEX_RPC_LINE_BYTES,
+    ) -> None:
+        if process.stdin is None or process.stdout is None:
+            raise ProviderFailure("rpc", "Codex app-server did not expose its RPC streams.")
+        self.process = process
+        self.stdin = process.stdin
+        self.stdout = process.stdout
+        self.max_line_bytes = max_line_bytes
+        self.buffer = bytearray()
+
+    def send(self, message: dict[str, Any]) -> None:
+        encoded = json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"
+        self.stdin.write(encoded)
+        self.stdin.flush()
+
+    def read_line(self, deadline: float, method: str) -> bytes:
+        while True:
+            newline = self.buffer.find(b"\n")
+            if newline >= 0:
+                if newline > self.max_line_bytes:
+                    raise ProviderFailure("malformed", "Codex returned oversized RPC data.")
+                line = bytes(self.buffer[:newline])
+                del self.buffer[: newline + 1]
+                return line
+            if len(self.buffer) > self.max_line_bytes:
+                raise ProviderFailure("malformed", "Codex returned oversized RPC data.")
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProviderFailure("timeout", f"Codex app-server timed out during {method}.")
+            ready, _, _ = select.select([self.stdout], [], [], min(0.25, remaining))
+            if not ready:
+                if self.process.poll() is not None:
+                    raise ProviderFailure("rpc", f"Codex app-server stopped during {method}.")
+                continue
+
+            read_size = min(
+                CODEX_RPC_READ_BYTES,
+                self.max_line_bytes + 1 - len(self.buffer),
+            )
+            chunk = os.read(self.stdout.fileno(), max(1, read_size))
+            if not chunk:
+                if self.buffer:
+                    line = bytes(self.buffer)
+                    self.buffer.clear()
+                    return line
+                raise ProviderFailure("rpc", f"Codex app-server stopped during {method}.")
+            self.buffer.extend(chunk)
+
+    def receive(self, request_id: int, method: str, timeout: float) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        while True:
+            line = self.read_line(deadline, method)
+            try:
+                message = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(message, dict) or message.get("id") != request_id:
+                continue
+            if message.get("error"):
+                raw_error = message["error"]
+                detail = raw_error.get("message") if isinstance(raw_error, dict) else raw_error
+                raise ProviderFailure("rpc", f"Codex RPC failed: {detail}")
+            return message
+
+
 def rpc_request(
-    process: subprocess.Popen[str], request_id: int, method: str, timeout: float
+    stream: CodexRpcStream,
+    request_id: int,
+    method: str,
+    timeout: float,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if process.stdin is None or process.stdout is None:
-        raise ProviderFailure("rpc", "Codex app-server did not expose its RPC streams.")
-    process.stdin.write(json.dumps({"id": request_id, "method": method, "params": {}}) + "\n")
-    process.stdin.flush()
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        ready, _, _ = select.select([process.stdout], [], [], min(0.25, max(0, deadline - time.monotonic())))
-        if not ready:
-            if process.poll() is not None:
-                break
-            continue
-        line = process.stdout.readline()
-        if not line:
-            raise ProviderFailure("rpc", f"Codex app-server stopped during {method}.")
-        try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if message.get("id") != request_id:
-            continue
-        if message.get("error"):
-            raw_error = message["error"]
-            detail = raw_error.get("message") if isinstance(raw_error, dict) else raw_error
-            raise ProviderFailure("rpc", f"Codex RPC failed: {detail}")
-        return message
-    raise ProviderFailure("timeout", f"Codex app-server timed out during {method}.")
+    stream.send({"id": request_id, "method": method, "params": params or {}})
+    return stream.receive(request_id, method, timeout)
 
 
 def duration_label(minutes: int | None) -> tuple[str, int | None]:
@@ -544,44 +608,19 @@ def fetch_codex(timeout: float) -> dict[str, Any]:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
             env=env,
         )
     except OSError as exc:
         return error_provider(provider_id, "cli_unavailable", f"Could not start Codex: {exc}")
 
     try:
-        if process.stdin is None:
-            raise ProviderFailure("rpc", "Codex app-server did not open stdin.")
+        rpc = CodexRpcStream(process)
         initialize = {"clientInfo": {"name": "omarchy-model-usage", "version": "1"}}
-        process.stdin.write(json.dumps({"id": 1, "method": "initialize", "params": initialize}) + "\n")
-        process.stdin.flush()
-        # Read the initialize response with the same bounded response loop.
-        deadline = time.monotonic() + timeout
-        initialized = False
-        while time.monotonic() < deadline and process.stdout is not None:
-            ready, _, _ = select.select([process.stdout], [], [], 0.25)
-            if not ready:
-                continue
-            line = process.stdout.readline()
-            if not line:
-                raise ProviderFailure("rpc", "Codex app-server stopped during initialization.")
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if message.get("id") == 1:
-                if message.get("error"):
-                    raise ProviderFailure("rpc", "Codex app-server initialization failed.")
-                initialized = True
-                break
-        if not initialized:
-            raise ProviderFailure("timeout", "Codex app-server initialization timed out.")
-        process.stdin.write(json.dumps({"method": "initialized", "params": {}}) + "\n")
-        process.stdin.flush()
+        rpc_request(rpc, 1, "initialize", timeout, initialize)
+        rpc.send({"method": "initialized", "params": {}})
 
-        account_message = rpc_request(process, 2, "account/read", min(timeout, 6))
-        limits_message = rpc_request(process, 3, "account/rateLimits/read", min(timeout, 6))
+        account_message = rpc_request(rpc, 2, "account/read", min(timeout, 6))
+        limits_message = rpc_request(rpc, 3, "account/rateLimits/read", min(timeout, 6))
         account_result = account_message.get("result") or {}
         account = account_result.get("account") if isinstance(account_result, dict) else None
         if not isinstance(account, dict):
@@ -814,7 +853,7 @@ def empty_history() -> dict[str, Any]:
 def load_history(path: Path) -> dict[str, Any]:
     try:
         raw = read_json(path)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, json.JSONDecodeError):
         return empty_history()
     if not isinstance(raw, dict) or raw.get("schemaVersion") != 1 or not isinstance(raw.get("providers"), dict):
         return empty_history()
