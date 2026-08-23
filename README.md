@@ -4,9 +4,11 @@
 
 Native Omarchy Quattro quota and activity monitoring for Claude Code, OpenAI Codex, and Kimi Code. A compact bar widget opens a keyboard-friendly panel with provider limits, reset times, credits, persistent quota history, and on-demand API-equivalent cost estimates from local CLI transcripts.
 
-![Model Usage panel showing Claude Code quota windows and history](docs/model-usage-panel.png)
+<p align="center">
+  <img src="docs/model-usage-panel.png" alt="Model Usage panel showing Claude Code quota windows, extra usage, and history" width="560">
+</p>
 
-The screenshot is a direct Quickshell runtime capture using synthetic fixture data.
+The screenshot reflects the shipped Quattro UI with representative usage data.
 
 The panel follows Quattro's `Panel`, `KeyboardPanel`, hero, section, button, border, typography, spacing, focus, tooltip, and popup-coordination conventions. Quota and history visuals deliberately retain DigitalPals' fixed-block meter language.
 
