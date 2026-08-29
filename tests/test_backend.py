@@ -4,12 +4,14 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -124,6 +126,82 @@ class FailureAndIsolationTests(unittest.TestCase):
                 }))
                 self.assertEqual(usage.fetch_claude(1)["errorKind"], "expired")
                 self.assertEqual(usage.fetch_kimi(1)["errorKind"], "expired")
+
+    def test_kimi_scoped_credentials_file_is_discovered(self):
+        # Newer Kimi Code CLI revisions store one credentials file per OAuth
+        # environment (kimi-code-env-<hash>.json) instead of kimi-code.json.
+        with tempfile.TemporaryDirectory() as temporary:
+            kimi_dir = Path(temporary)
+            credentials_dir = kimi_dir / "credentials"
+            credentials_dir.mkdir(parents=True)
+            self.assertIsNone(usage.kimi_credentials_path(kimi_dir))
+            scoped = credentials_dir / "kimi-code-env-abc123.json"
+            scoped.write_text(json.dumps({"access_token": "secret", "expires_at": 1}))
+            self.assertEqual(usage.kimi_credentials_path(kimi_dir), scoped)
+            legacy = credentials_dir / "kimi-code.json"
+            legacy.write_text(json.dumps({"access_token": "secret", "expires_at": 1}))
+            self.assertEqual(usage.kimi_credentials_path(kimi_dir), legacy)
+
+    def test_kimi_refresh_rotates_and_persists_tokens(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "kimi-code-env-abc123.json"
+            path.write_text(json.dumps({
+                "access_token": "old-access", "refresh_token": "old-refresh", "expires_at": 1
+            }))
+            body = json.dumps({
+                "access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 900
+            }).encode()
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self, *args):
+                    return body
+
+            requests = []
+
+            def fake_urlopen(request, timeout=0):
+                requests.append(request)
+                return FakeResponse()
+
+            with mock.patch.object(usage.urllib.request, "urlopen", fake_urlopen):
+                updated = usage.kimi_refresh(
+                    path, json.loads(path.read_text()), "https://auth.kimi.test", 1)
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["access_token"], "new-access")
+            persisted = json.loads(path.read_text())
+            self.assertEqual(persisted["refresh_token"], "new-refresh")
+            self.assertGreater(persisted["expires_at"], int(time.time()))
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(len(requests), 1)
+            request = requests[0]
+            self.assertEqual(request.full_url, "https://auth.kimi.test/api/oauth/token")
+            fields = urllib.parse.parse_qs(request.data.decode())
+            self.assertEqual(fields["grant_type"], ["refresh_token"])
+            self.assertEqual(fields["refresh_token"], ["old-refresh"])
+            self.assertEqual(fields["client_id"], [usage.KIMI_CLIENT_ID])
+
+    def test_kimi_refresh_failure_keeps_expired_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            kimi_dir = Path(temporary)
+            credentials_dir = kimi_dir / "credentials"
+            credentials_dir.mkdir(parents=True)
+            (credentials_dir / "kimi-code-env-abc123.json").write_text(json.dumps({
+                "access_token": "old-access", "refresh_token": "old-refresh", "expires_at": 1
+            }))
+
+            def failing_urlopen(request, timeout=0):
+                raise urllib.error.URLError("offline")
+
+            with mock.patch.dict(os.environ, {"KIMI_CODE_HOME": str(kimi_dir)}), \
+                    mock.patch.object(usage.urllib.request, "urlopen", failing_urlopen):
+                self.assertEqual(usage.fetch_kimi(1)["errorKind"], "expired")
+
 
     def test_codex_cli_missing(self):
         with mock.patch.object(usage.shutil, "which", return_value=None):
