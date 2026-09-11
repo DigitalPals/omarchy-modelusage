@@ -69,6 +69,15 @@ function meaningfulProviders(providers) {
   return result
 }
 
+function selectedProviders(providers, ids) {
+  var result = []
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && contains(ids, list[i].id)) result.push(list[i])
+  }
+  return result
+}
+
 function providerMark(providerId) {
   if (providerId === "claude") return "C"
   if (providerId === "codex") return "O"
@@ -76,10 +85,41 @@ function providerMark(providerId) {
   return String(providerId || "?").charAt(0).toUpperCase()
 }
 
+function accountPlanLabel(account) {
+  if (!account) return ""
+  var plan = String(account.planType || account.plan || "")
+  var normalized = plan.toLowerCase().replace(/^chatgpt\s+/, "").replace(/[-_ ]/g, "")
+  if (account.id === "codex") {
+    if (normalized === "pro" || normalized === "pro20x") return "Codex Pro · 20×"
+    if (normalized === "prolite" || normalized === "pro5x") return "Codex Pro · 5×"
+  }
+  return String(account.plan || account.name || account.id || "Account")
+}
+
+function accountWindows(account, expanded) {
+  var rows = listOrEmpty(account && account.windows)
+  if (expanded) return rows
+  var overall = [], weekly = [], monthly = []
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    var label = String(row.label || "")
+    var seconds = Number(row.windowSeconds)
+    if (/^weekly(?: limit)?$/i.test(label)) overall.push(row)
+    if (seconds === 604800 || /weekly/i.test(label)) weekly.push(row)
+    if (/^monthly(?: limit)?$/i.test(label)) monthly.push(row)
+  }
+  if (overall.length) return overall
+  if (weekly.length) return weekly
+  if (monthly.length) return monthly
+  // Plans without a weekly/monthly allowance still show their real main window.
+  return firstItems(rows, 1)
+}
+
 function errorTitle(provider) {
   if (!provider) return "Provider unavailable"
   var name = String(provider.name || provider.id || "Provider")
   switch (provider.errorKind) {
+  case "config": return "CLIProxyAPI configuration required"
   case "no_credentials": return name + " sign-in required"
   case "expired": return name + " sign-in expired"
   case "rate_limited": return name + " is rate limited"
@@ -87,4 +127,43 @@ function errorTitle(provider) {
   case "cli_unavailable": return name + " CLI unavailable"
   default: return name + " usage unavailable"
   }
+}
+
+function preserveProxyReadings(previous, next) {
+  if (!previous || previous.source !== "cliproxy") return next
+  function retain(old, fresh) {
+    if (!old || !fresh || fresh.status !== "error" || old.status !== "ok") return fresh
+    return Object.assign({}, fresh, {
+      status: "ok", stale: true, windows: old.windows, credits: old.credits,
+      plan: old.plan, account: old.account, fetchedAt: old.fetchedAt,
+      notice: "Last known reading · " + String(fresh.message || "Refresh failed.")
+    })
+  }
+  var oldProviders = listOrEmpty(previous.providers)
+  if (next.providers.length === 1 && next.providers[0].id === "cliproxy" && next.providers[0].status === "error"
+      && oldProviders.length > 0 && oldProviders[0].id !== "cliproxy") {
+    var failure = next.providers[0]
+    next.providers = Array.prototype.map.call(oldProviders, function(old) {
+      var fresh = Object.assign({}, old, { status: "error", message: failure.message, errorKind: failure.errorKind })
+      fresh.accounts = Array.prototype.map.call(listOrEmpty(old.accounts), function(account) {
+        return retain(account, Object.assign({}, account, { status: "error", message: failure.message }))
+      })
+      return retain(old, fresh)
+    })
+  }
+  next.providers = listOrEmpty(next.providers).map(function(fresh) {
+    var old = null
+    for (var i = 0; i < oldProviders.length; i++)
+      if (oldProviders[i].id === fresh.id) old = oldProviders[i]
+    var accounts = listOrEmpty(fresh.accounts).map(function(account) {
+      var prior = listOrEmpty(old && old.accounts)
+      for (var j = 0; j < prior.length; j++)
+        if (prior[j].accountId === account.accountId) return retain(prior[j], account)
+      return account
+    })
+    var result = old && old.accountId === fresh.accountId ? retain(old, fresh) : fresh
+    if (fresh.accounts) result.accounts = accounts
+    return result
+  })
+  return next
 }

@@ -9,6 +9,7 @@ trap 'rm -rf -- "$test_root"' EXIT
 python3 -m py_compile "$repo_root/scripts/model_usage_common.py"
 python3 -m py_compile "$repo_root/scripts/usage-fetch.py"
 python3 -m py_compile "$repo_root/scripts/cost-fetch.py"
+python3 -m py_compile "$repo_root/scripts/management-key.py"
 python3 -m unittest discover -s "$repo_root/tests" -p 'test_*.py' -v
 node "$repo_root/tests/test_usage_logic.js"
 
@@ -33,7 +34,8 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
     -I "$lint_root" \
     "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" \
     "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" \
-    "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" >"$lint_log" 2>&1; then
+    "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
+    "$repo_root/UsageSettings.qml" >"$lint_log" 2>&1; then
     sed -n '1,240p' "$lint_log"
     exit 1
   fi
@@ -94,6 +96,14 @@ if command -v quickshell >/dev/null 2>&1 \
     echo "Quickshell runtime log contains QML errors" >&2
     exit 1
   fi
+  python3 - "$runtime_root/home/.config/omarchy/model-usage/management-keys" <<'PY'
+import pathlib
+import sys
+keys = list(pathlib.Path(sys.argv[1]).glob("*.key"))
+assert len(keys) == 1, "failed GUI save must roll back its staged key"
+assert keys[0].stat().st_mode & 0o777 == 0o600
+assert keys[0].read_text() == "qml-synthetic-management-key\n"
+PY
   echo "Quickshell runtime contract: passed"
 else
   echo "Live Wayland/Quickshell test unavailable; skipping runtime contract"

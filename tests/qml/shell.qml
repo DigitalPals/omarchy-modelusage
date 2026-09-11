@@ -17,6 +17,8 @@ ShellRoot {
   property var objects: []
   property var widget: null
   property var malformedBackend: null
+  property var proxyBackend: null
+  property var proxyWidget: null
   property var richCostBackend: null
   property var malformedCostBackend: null
   property var backendErrorCostBackend: null
@@ -25,6 +27,7 @@ ShellRoot {
   property int lastGoodWaitAttempts: 0
   property var panelPositions: ["top", "bottom", "left", "right"]
   property int panelPositionIndex: 0
+  property bool settingsPanelChecks: false
 
   function fail(message) { failures.push(String(message)) }
   function assertTrue(condition, message) { if (!condition) fail(message) }
@@ -60,12 +63,87 @@ ShellRoot {
     return object
   }
 
+  function checkSettings() {
+    var original = JSON.parse(JSON.stringify(widget.settings))
+    widget.settings = Object.assign({}, original, { unrelatedPreference: "keep" })
+    widget.showSettings()
+    assertTrue(widget.configuring, "settings opens from the panel")
+    var form = widget.settingsForm
+    form.toggleProvider("barProviders", "codex")
+    form.setValue("hideAccountEmails", true)
+    assertTrue(!widget.hideAccountEmails, "draft privacy change waits for Save")
+    assertEqual(widget.percentageProviders.length, 3, "draft edits do not change the live bar")
+    form.cancelRequested()
+    assertEqual(widget.viewMode, "limits", "Cancel returns to Limits")
+    widget.showSettings()
+    assertEqual(form.draft.barProviders.length, 3, "Cancel discards draft edits")
+    assertEqual(form.draft.hideAccountEmails, false, "Cancel discards privacy edits")
+
+    form.setValue("usageSource", "cliproxy")
+    assertTrue(form.proxyMode, "proxy source reveals connection fields")
+    form.setValue("cliproxyUrl", "https://user:secret@proxy.test")
+    assertTrue(!form.submit(), "URL credentials cannot be saved")
+    form.setValue("cliproxyUrl", "https://proxy.test/prefix/management.html")
+    form.managementKey = "invalid\nkey"
+    assertTrue(!form.submit(), "multiline management keys cannot be saved")
+    form.managementKey = "synthetic-secret"
+    form.setValue("refreshIntervalSec", "")
+    assertTrue(!form.submit(), "empty numeric input cannot be saved")
+    form.setValue("refreshIntervalSec", "900")
+    form.setValue("criticalThreshold", "80")
+    assertTrue(!form.submit(), "inverted thresholds cannot be saved")
+    assertEqual(mockShell.saveCount, 0, "invalid and cancelled edits never reach persistence")
+    form.cancelRequested()
+    assertEqual(form.managementKey, "", "Cancel clears the entered key")
+
+    widget.showSettings()
+    form.toggleProvider("barProviders", "codex")
+    mockShell.rejectSave = true
+    form.setValue("hideAccountEmails", true)
+    form.submit()
+    assertTrue(widget.configuring, "failed persistence keeps the form open")
+    assertTrue(form.errorText !== "", "failed persistence is explained")
+    assertEqual(widget.percentageProviders.length, 3, "failed persistence does not change live settings")
+    mockShell.rejectSave = false
+    form.submit()
+    assertTrue(!widget.configuring, "Save returns to the previous view")
+    assertTrue(widget.hideAccountEmails, "saving privacy setting updates the view")
+    assertEqual(mockShell.savedSettings.hideAccountEmails, true, "privacy preference is persisted")
+    assertEqual(mockShell.savedId, widget.moduleName, "settings are saved to this widget only")
+    assertEqual(mockShell.savedSettings.unrelatedPreference, "keep", "Save preserves unrelated settings")
+    assertEqual(mockShell.savedSettings.barProviders.join(","), "claude,kimi", "bar selection is persisted")
+    assertEqual(widget.percentageProviders.length, 2, "hidden provider leaves the bar immediately")
+    assertEqual(widget.providers.length, 3, "hiding from the bar retains all popup providers")
+    widget.settings = JSON.parse(JSON.stringify(mockShell.savedSettings))
+    widget.showSettings()
+    assertEqual(form.draft.barProviders.join(","), "claude,kimi", "reopening reads persisted selection")
+    form.setValue("barProviders", [])
+    form.submit()
+    assertTrue(!widget.percentageMode, "hiding every chip retains the widget icon")
+
+    widget.showSettings()
+    form.setValue("enabledProviders", [])
+    form.submit()
+    assertEqual(widget.providers.length, 0, "disabling monitoring removes popup providers immediately")
+    widget.showSettings()
+    assertTrue(widget.configuring, "settings remains accessible with no providers")
+    form.cancelRequested()
+    widget.settings = original
+    widget.showCosts()
+    widget.showSettings()
+    form.cancelRequested()
+    assertEqual(widget.viewMode, "costs", "Cancel restores the Costs view")
+    widget.showLimits()
+    widget.close()
+  }
+
   function setup() {
     widget = loadComponent(panelUrl, {
       moduleName: "digitalpals.model-usage",
       bar: fakeBar,
       settings: {
         enabledProviders: ["claude", "codex", "kimi"],
+        hideAccountEmails: false,
         refreshIntervalSec: 3600,
         barDisplayMode: "Percentages",
         warningThreshold: 25,
@@ -75,6 +153,15 @@ ShellRoot {
     malformedBackend = loadComponent(backendUrl, {
       settings: { enabledProviders: ["kimi"], refreshIntervalSec: 3600 }
     }, "UsageBackend.qml malformed boundary")
+    proxyBackend = loadComponent(backendUrl, {
+      settings: { enabledProviders: ["claude", "codex"], usageSource: "cliproxy",
+        cliproxyUrl: "https://proxy.test/prefix", cliproxyKeyFile: "/private/proxy key" }
+    }, "UsageBackend.qml CLIProxyAPI settings")
+    proxyWidget = loadComponent(panelUrl, {
+      moduleName: "test.proxy-widget", ipcTarget: "test.proxy-widget", bar: fakeBar,
+      settings: { enabledProviders: [], usageSource: "cliproxy",
+        cliproxyUrl: "https://proxy.test/prefix", cliproxyKeyFile: "/private/proxy key" }
+    }, "Panel.qml proxy discovery")
     if (malformedBackend) {
       malformedBackend.settings = { enabledProviders: ["kimi"], refreshIntervalSec: 3600 }
       malformedBackend.refresh()
@@ -101,6 +188,42 @@ ShellRoot {
   }
 
   function runChecks() {
+    if (proxyBackend) {
+      assertEqual(proxyBackend.fetchError, "", "CLIProxyAPI settings reach the backend")
+      assertEqual(proxyBackend.providers.length, 4, "CLIProxyAPI discovers all providers independent of local filters")
+      if (proxyBackend.providers.length > 0) {
+        assertEqual(proxyBackend.providers[0].source, "CLIProxyAPI management API", "proxy source is retained")
+        assertEqual(proxyBackend.providers[0].availableCount, 2, "proxy account coverage is retained")
+      }
+    }
+    if (proxyWidget) {
+      assertEqual(proxyWidget.providers.length, 4, "proxy popup includes newly discovered providers with no local selection")
+      proxyWidget.selectProviderId("codex")
+      assertEqual(proxyWidget.proxyAccounts.length, 3, "all three Codex subscriptions are available together")
+      assertEqual(proxyWidget.accountCards.count, 3, "three separate Codex account cards are rendered")
+      assertTrue(proxyWidget.accountOverview, "proxy defaults to account overview")
+      assertTrue(!proxyWidget.expandedAccountLimits, "weekly limits are the default")
+      var cards = []
+      for (var i = 0; i < proxyWidget.accountCards.count; i++)
+        cards.push(proxyWidget.accountCards.itemAt(i))
+      assertEqual(cards.length, 3, "three account delegates exist in the panel")
+      for (var i = 0; i < cards.length; i++) {
+        assertEqual(cards[i].windows.length, 1, "each account initially shows only its weekly quota")
+        assertEqual(cards[i].windows[0].id, "codex-secondary", "main weekly quota wins over scoped and session windows")
+        assertEqual(cards[i].windows[0].remaining, [20, 55, 90][i], "account quotas are kept separate")
+      }
+      proxyWidget.expandedAccountLimits = true
+      if (cards.length > 0) assertEqual(cards[0].windows.length, 4, "additional limits can be expanded")
+      proxyWidget.selectProviderId("gemini")
+      assertTrue(!proxyWidget.expandedAccountLimits, "provider navigation restores the compact view")
+      assertEqual(proxyWidget.provider.status, "unsupported", "unsupported quota is not shown as zero")
+      assertEqual(proxyWidget.viewOptions.length, 2, "proxy shows Limits and Costs only")
+      assertTrue(proxyWidget.hideAccountEmails, "account emails are hidden by default")
+      assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "Account 2", "hidden label contains no account identity")
+      assertTrue(proxyWidget.accountTooltip({account: "secret@example.invalid"}).indexOf("secret") < 0, "settings cannot reveal hidden account identity")
+      proxyWidget.settings = Object.assign({}, proxyWidget.settings, {hideAccountEmails: false})
+      assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "secret@example.invalid", "privacy setting can reveal account labels")
+    }
     if (widget) {
       assertEqual(widget.moduleName, "digitalpals.model-usage", "moduleName injection")
       assertEqual(widget.ipcTarget, "digitalpals.model-usage", "IPC target")
@@ -115,9 +238,9 @@ ShellRoot {
       assertTrue(widget.heroMeta(widget.provider).indexOf("fixture@example.invalid") < 0,
         "hero hides account identity")
       assertTrue(widget.accountTooltip(widget.provider).indexOf("Account: fixture@example.invalid") >= 0,
-        "account identity is available from the help tooltip")
+        "account identity is available in settings")
       assertTrue(widget.accountTooltip(widget.provider).indexOf("Source: Claude OAuth usage API") >= 0,
-        "account source is available from the help tooltip")
+        "account source is available in settings")
       assertEqual(widget.percentageMode, true, "percentages show with meaningful horizontal data")
       assertEqual(widget.percentageProviders.length, 3, "compact mode includes every meaningful provider")
       assertTrue(widget.alarming, "critical provider activates urgent state")
@@ -139,11 +262,15 @@ ShellRoot {
       assertEqual(widget.windowSeverity({ remaining: 20 }), "warning", "warning quota state")
       assertTrue(widget.errorBody({ message: "Expired", errorKind: "expired", authCommand: "kimi login" }).indexOf("kimi login") >= 0,
         "auth command is shown for expired credentials")
+      assertEqual(widget.errorBody({ message: "Sign in through CLIProxyAPI.", errorKind: "expired", authCommand: "" }),
+        "Sign in through CLIProxyAPI.", "managed credentials do not suggest local CLI login")
       widget.showCosts()
       assertEqual(widget.viewMode, "costs", "Costs IPC/view helper selects the isolated tab")
       widget.showLimits()
       assertEqual(widget.viewMode, "limits", "Limits IPC/view helper restores quota view")
       widget.close()
+
+      checkSettings()
 
       var positions = ["top", "bottom", "left", "right"]
       for (var i = 0; i < positions.length; i++) {
@@ -235,6 +362,18 @@ ShellRoot {
     }
   }
 
+  property var beforeKeySettings: ({})
+  property int keySavePhase: 0
+  function startKeySaveCheck() {
+    beforeKeySettings = JSON.parse(JSON.stringify(widget.settings))
+    widget.showSettings()
+    widget.settingsForm.setValue("usageSource", "cliproxy")
+    widget.settingsForm.managementKey = "qml-synthetic-management-key"
+    widget.settingsForm.submit()
+    keySavePhase = 0
+    waitForKeySave.restart()
+  }
+
   function writeResult() {
     writer.command = ["python3", "-c",
       "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')",
@@ -246,7 +385,8 @@ ShellRoot {
     var position = panelPositions[panelPositionIndex]
     fakeBar.position = position
     fakeBar.vertical = position === "left" || position === "right"
-    widget.open()
+    if (settingsPanelChecks) widget.showSettings()
+    else widget.open()
     assertTrue(widget.opened, position + " panel opens through the native controller")
     panelCloseTimer.restart()
   }
@@ -277,7 +417,17 @@ ShellRoot {
     property var shellConfig: ({ version: 1, plugins: [], bar: { layout: { left: [], center: [], right: [] } } })
     function firstPartyServiceFor(id) { return null }
     function serviceFor(id) { return null }
-    function updateEntryInline(moduleName, settings) { return true }
+    property bool rejectSave: false
+    property int saveCount: 0
+    property string savedId: ""
+    property var savedSettings: ({})
+    function updateEntryInline(moduleName, settings) {
+      if (rejectSave) return false
+      saveCount++
+      savedId = moduleName
+      savedSettings = JSON.parse(JSON.stringify(settings))
+      return true
+    }
   }
 
   QtObject {
@@ -329,7 +479,9 @@ ShellRoot {
       var costReady = root.richCostBackend && root.richCostBackend.providers.length === 3
       var malformedCostReady = root.malformedCostBackend && root.malformedCostBackend.fetchError !== ""
       var lastGoodReady = root.backendErrorCostBackend && root.backendErrorCostBackend.providers.length === 3
-      if ((richReady && malformedReady && costReady && malformedCostReady && lastGoodReady)
+      var proxyReady = root.proxyBackend && root.proxyBackend.providers.length === 4
+        && root.proxyWidget && root.proxyWidget.providers.length === 4
+      if ((richReady && malformedReady && costReady && malformedCostReady && lastGoodReady && proxyReady)
           || root.waitAttempts >= 120) {
         stop()
         root.runChecks()
@@ -363,6 +515,45 @@ ShellRoot {
         stop()
         root.assertEqual(root.backendErrorCostBackend.providers.length, 3,
           "backendError preserves the last-known-good cost payload")
+        root.startKeySaveCheck()
+      }
+    }
+  }
+
+  Timer {
+    id: waitForKeySave
+    interval: 25
+    repeat: true
+    property int attempts: 0
+    onTriggered: {
+      attempts++
+      if (root.widget.settingsForm.saving && attempts < 300) return
+      stop()
+      var form = root.widget.settingsForm
+      if (root.keySavePhase === 0) {
+        root.assertTrue(!root.widget.configuring, "key save completes and returns to usage: " + form.errorText)
+        root.assertEqual(form.managementKey, "", "successful save clears the key field")
+        root.assertTrue(String(mockShell.savedSettings.cliproxyKeyFile).indexOf("/management-keys/key-") > 0,
+          "GUI key save persists a generated private file path")
+        root.assertTrue(JSON.stringify(mockShell.savedSettings).indexOf("qml-synthetic-management-key") < 0,
+          "management key never reaches widget settings")
+        root.widget.showSettings()
+        root.assertEqual(form.managementKey, "", "saved key is never loaded into the editor")
+        var savedPath = root.widget.settings.cliproxyKeyFile
+        form.submit()
+        root.assertEqual(root.widget.settings.cliproxyKeyFile, savedPath, "blank key preserves saved credentials")
+        root.widget.showSettings()
+        form.managementKey = "replacement-that-must-be-rolled-back"
+        mockShell.rejectSave = true
+        form.submit()
+        root.keySavePhase = 1
+        attempts = 0
+        restart()
+      } else {
+        root.assertTrue(root.widget.configuring && form.errorText !== "", "failed config save retains an error")
+        mockShell.rejectSave = false
+        form.cancelRequested()
+        root.widget.settings = root.beforeKeySettings
         root.startPanelChecks()
       }
     }
@@ -378,7 +569,11 @@ ShellRoot {
         root.panelPositions[root.panelPositionIndex] + " panel closes through the native controller")
       root.panelPositionIndex++
       if (root.panelPositionIndex < root.panelPositions.length) panelNextTimer.restart()
-      else root.writeResult()
+      else if (!root.settingsPanelChecks) {
+        root.settingsPanelChecks = true
+        root.panelPositionIndex = 0
+        panelNextTimer.restart()
+      } else root.writeResult()
     }
   }
 

@@ -20,7 +20,11 @@ Item {
     Math.round(Number(setting("refreshIntervalSec", 900)) || 900)))
   readonly property var enabledProviderIds: normalizedProviderIds(setting(
     "enabledProviders", ["claude", "codex", "kimi"]))
+  readonly property string usageSource: String(setting("usageSource", "direct")) === "cliproxy" ? "cliproxy" : "direct"
+  readonly property string cliproxyUrl: String(setting("cliproxyUrl", "http://127.0.0.1:8317"))
+  readonly property string cliproxyKeyFile: String(setting("cliproxyKeyFile", ""))
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
+  readonly property string connectionId: JSON.stringify([usageSource, cliproxyUrl, cliproxyKeyFile])
   readonly property string scriptPath: localPath(Qt.resolvedUrl("scripts/usage-fetch.py"))
   readonly property double nextRefreshAt: lastAttemptAt > 0
     ? lastAttemptAt + refreshIntervalSec * 1000 : 0
@@ -62,16 +66,26 @@ Item {
   function startFetch() {
     pendingRefresh = false
     lastAttemptAt = Date.now()
-    fetchProcess.command = [
+    var command = [
       "python3", scriptPath,
       "--providers", enabledProviderIds.join(","),
+      "--source", usageSource,
       "--timeout", "12"
     ]
+    if (usageSource === "cliproxy") {
+      if (cliproxyUrl.trim() !== "") command.push("--cliproxy-url", cliproxyUrl.trim())
+      if (cliproxyKeyFile.trim() !== "") command.push("--cliproxy-key-file", cliproxyKeyFile.trim())
+    }
+    fetchProcess.command = command
     fetchProcess.running = true
   }
 
   function settle() {
     loading = false
+    if (fetchProcess.connectionId !== connectionId) {
+      Qt.callLater(function() { root.startFetch() })
+      return
+    }
     if (fetchProcess.outputTooLarge) {
       fetchError = "Model usage backend returned too much data"
     } else if (fetchProcess.timedOut) {
@@ -90,7 +104,7 @@ Item {
         if (backendError !== "") {
           fetchError = backendError
         } else {
-          payload = parsed
+          payload = usageSource === "cliproxy" ? UsageLogic.preserveProxyReadings(payload, parsed) : parsed
           fetchError = ""
           var generated = new Date(String(parsed.generatedAt || "")).getTime()
           lastSuccessAt = isFinite(generated) ? generated : Date.now()
@@ -102,6 +116,13 @@ Item {
   }
 
   onEnabledProviderIdsChanged: requestRefresh(false)
+  onConnectionIdChanged: {
+    payload = ({ schemaVersion: 1, generatedAt: "", providers: [] })
+    lastSuccessAt = 0
+    requestRefresh(false)
+  }
+  onCliproxyUrlChanged: { if (usageSource === "cliproxy") requestRefresh(false) }
+  onCliproxyKeyFileChanged: { if (usageSource === "cliproxy") requestRefresh(false) }
 
   Process {
     id: fetchProcess
@@ -111,6 +132,7 @@ Item {
     property int lastExit: 0
     property bool timedOut: false
     property bool outputTooLarge: false
+    property string connectionId: ""
     readonly property int maxBodyChars: 2 * 1024 * 1024
 
     function appendBody(data) {
@@ -137,6 +159,7 @@ Item {
     }
     onRunningChanged: {
       if (running) {
+        connectionId = root.connectionId
         body = ""
         exitSeen = false
         lastExit = 0

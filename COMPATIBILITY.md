@@ -22,6 +22,11 @@
 - Kimi Code normalization and transcript support validated against fixtures from
   the pinned `MoonshotAI/kimi-cli` revisions below; a live Kimi sign-in was not
   available on the validation machine.
+- CLIProxyAPI management contract checked against commit
+  `5b2785617d1e7de84a9f4dee599d275a4ccd8999`; validated with synthetic HTTP
+  integration tests and a live authenticated proxy with three Codex Pro accounts
+  and two Claude accounts. Supports managed Claude, Codex, Kimi, and Antigravity
+  quota endpoints; Kimi and Antigravity coverage is fixture-based.
 
 Quota APIs and local transcript formats are provider-owned interfaces. The
 fixture suite pins representative payloads so format drift produces a focused
@@ -30,6 +35,8 @@ compatibility update instead of silent fabricated data.
 Reference implementations inspected during development:
 
 - DigitalPals/fedora-config: `6aa074432f36548381ead91ed39d57c34529e327`
+- DigitalPals/fedora-config CLIProxyAPI widget reference: `431def720d4b905c1563d600be33ca50eed621bb`
+- router-for-me/CLIProxyAPI management API: `5b2785617d1e7de84a9f4dee599d275a4ccd8999`
 - MoonshotAI/kimi-cli quota APIs: `d723cc47ee43e5ca3c3c4ec2473f205d44acede2`
 - MoonshotAI/kimi-cli wire usage: `cbc15c076d17f70fec9f89c90c0502e68657f505`
 - pingdotgg/t3code: `afa83098064e7dca524a1e42dea3de03a883a0b6`

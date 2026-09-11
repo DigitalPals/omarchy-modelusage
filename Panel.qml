@@ -20,24 +20,35 @@ Ui.Panel {
   readonly property color surface: Color.popups.background
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property var providers: backend.providers
+  readonly property bool proxyMode: backend.usageSource === "cliproxy"
+  readonly property var providers: proxyMode ? backend.providers : UsageLogic.selectedProviders(backend.providers, backend.enabledProviderIds)
   property string selectedProviderId: ""
+  property bool expandedAccountLimits: false
   property bool providerCursorActive: false
   property string historyMode: "h24"
   property string viewMode: "limits"
+  property string settingsReturnView: "limits"
+  readonly property bool configuring: viewMode === "settings"
+  property alias settingsForm: configForm
   property double nowMs: Date.now()
 
   readonly property var viewOptions: [
     { value: "limits", label: "Limits" },
     { value: "costs", label: "Costs" }
   ]
+  readonly property bool hideAccountEmails: setting("hideAccountEmails", true) !== false
+
+  function accountDisplayName(account, index) {
+    return hideAccountEmails ? "Account " + index : String(account.account || "Account " + index)
+  }
 
   readonly property int criticalThreshold: UsageLogic.clamp(
     setting("criticalThreshold", 10), 0, 100)
   readonly property int warningThreshold: Math.max(criticalThreshold, UsageLogic.clamp(
     setting("warningThreshold", 25), 0, 100))
   readonly property string displayMode: String(setting("barDisplayMode", "Icon"))
-  readonly property var percentageProviders: UsageLogic.meaningfulProviders(providers)
+  readonly property var percentageProviders: UsageLogic.meaningfulProviders(
+    UsageLogic.selectedProviders(providers, setting("barProviders", ["claude", "codex", "kimi"])))
   readonly property bool percentageMode: displayMode === "Percentages"
     && !(bar && bar.vertical) && percentageProviders.length > 0
   readonly property bool alarming: anyProviderAlarming()
@@ -46,7 +57,11 @@ Ui.Panel {
       if (providers[i].id === selectedProviderId) return i
     return 0
   }
-  readonly property var provider: providers.length > 0 ? providers[providerIndex] : null
+  readonly property var providerSummary: providers.length > 0 ? providers[providerIndex] : null
+  readonly property var provider: providerSummary
+  readonly property var proxyAccounts: UsageLogic.listOrEmpty(providerSummary && providerSummary.accounts)
+  readonly property bool accountOverview: proxyMode && proxyAccounts.length > 0
+  property alias accountCards: accountRepeater
   readonly property var providerOptions: {
     var result = []
     for (var i = 0; i < providers.length; i++)
@@ -119,6 +134,40 @@ Ui.Panel {
     open()
   }
 
+  function showSettings() {
+    if (!configuring) settingsReturnView = viewMode
+    configForm.begin(settings)
+    viewMode = "settings"
+    open()
+    Qt.callLater(function() { configForm.focusFirst() })
+  }
+
+  function leaveSettings() {
+    configForm.discardKey()
+    viewMode = settingsReturnView
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function saveSettings(values) {
+    var entry = Object.assign({}, settings, values)
+    var changed = false
+    for (var key in values) {
+      if (JSON.stringify(settings[key]) !== JSON.stringify(values[key])) changed = true
+    }
+    if (changed) {
+      if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function"
+          || !bar.shell.updateEntryInline(moduleName, entry)) {
+        configForm.errorText = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
+        configForm.finishSave(false)
+        return false
+      }
+      settings = entry
+    }
+    configForm.finishSave(true)
+    leaveSettings()
+    return true
+  }
+
   function handleBarPress(buttonCode) {
     if (buttonCode === Qt.MiddleButton) nextProvider()
     else if (buttonCode === Qt.LeftButton) toggle()
@@ -138,7 +187,7 @@ Ui.Panel {
   }
 
   function windowSeverity(window) {
-    if (!window) return "none"
+    if (!window || window.remaining === null || window.remaining === undefined) return "none"
     var remaining = Number(window.remaining)
     if (!isFinite(remaining)) return "none"
     if (remaining <= criticalThreshold) return "critical"
@@ -185,13 +234,14 @@ Ui.Panel {
   function accountTooltip(provider) {
     if (!provider) return ""
     var lines = []
-    if (provider.account) lines.push("Account: " + String(provider.account))
+    if (!hideAccountEmails && provider.account) lines.push("Account: " + String(provider.account))
     if (provider.source) lines.push("Source: " + String(provider.source))
     return lines.join("\n")
   }
 
   function iconUrl(provider) {
     if (!provider) return ""
+    if (!UsageLogic.contains(["claude", "codex", "kimi"], provider.id)) return ""
     if (provider.id === "codex") {
       return Qt.resolvedUrl(colorLuminance(surface) >= 0.5
         ? "assets/codex-light.svg" : "assets/codex.svg")
@@ -201,6 +251,7 @@ Ui.Panel {
 
   function barIconUrl(provider) {
     if (!provider) return ""
+    if (!UsageLogic.contains(["claude", "codex", "kimi"], provider.id)) return ""
     return Qt.resolvedUrl("assets/" + provider.id + "-bar.svg")
   }
 
@@ -259,7 +310,7 @@ Ui.Panel {
   function errorBody(provider) {
     if (!provider) return ""
     var message = String(provider.message || "Usage data is unavailable.")
-    if (provider.errorKind === "no_credentials" || provider.errorKind === "expired")
+    if (provider.authCommand && (provider.errorKind === "no_credentials" || provider.errorKind === "expired"))
       message += " Run “" + provider.authCommand + "” in a terminal, then refresh."
     return message
   }
@@ -293,15 +344,20 @@ Ui.Panel {
   implicitHeight: percentageMode ? percentageGroup.implicitHeight : iconButton.implicitHeight
 
   onProvidersChanged: ensureSelection()
+  onSelectedProviderIdChanged: expandedAccountLimits = false
   onOpenedChanged: if (opened) {
     providerCursorActive = false
     nowMs = Date.now()
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
+    Qt.callLater(function() {
+      if (root.configuring) configForm.focusFirst()
+      else keyCatcher.forceActiveFocus()
+    })
+  } else if (configuring) viewMode = settingsReturnView
 
   onViewModeChanged: {
+    if (viewMode !== "settings") configForm.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
   }
@@ -335,6 +391,7 @@ Ui.Panel {
     function next(): string { root.nextProvider(); return "ok" }
     function limits(): string { root.showLimits(); return "ok" }
     function costs(): string { root.showCosts(); return "ok" }
+    function configure(): string { root.showSettings(); return "ok" }
   }
 
   Ui.BarIconButton {
@@ -451,13 +508,14 @@ Ui.Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
+    focusTarget: root.configuring ? configForm : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     Ui.PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.configuring
 
       onMoveRequested: function(dx, dy) {
         if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
@@ -477,6 +535,7 @@ Ui.Panel {
         if (text === "r" || text === "R") root.refreshNow()
         else if (text === "c" || text === "C") root.showCosts()
         else if (text === "u" || text === "U") root.showLimits()
+        else if (text === "s" || text === "S") root.showSettings()
       }
 
       Flickable {
@@ -496,10 +555,10 @@ Ui.Panel {
           spacing: Style.spacing.xxl
 
           Ui.PanelHero {
-            visible: root.viewMode === "limits" && !!root.provider
+            visible: root.viewMode === "limits"
             width: parent.width
             title: root.provider ? root.provider.name : "Model Usage"
-            meta: root.heroMeta(root.provider)
+            meta: root.accountOverview ? root.proxyAccounts.length + " connected accounts" : root.heroMeta(root.provider)
             detail: backend.loading ? "REFRESHING" : ""
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -509,13 +568,14 @@ Ui.Panel {
                 spacing: Style.spacing.xs
 
                 Ui.PanelActionButton {
-                  visible: root.accountTooltip(root.provider) !== ""
-                  iconText: "?"
-                  tooltipText: root.accountTooltip(root.provider)
+                  objectName: "usageSettingsButton"
+                  iconText: "󰒓"
+                  tooltipText: "Model Usage settings"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.body
                   bordered: true
+                  onClicked: root.showSettings()
                 }
 
                 Ui.PanelActionButton {
@@ -566,13 +626,24 @@ Ui.Panel {
             fontFamily: root.fontFamily
 
             trailingControl: Component {
-              Ui.PanelActionButton {
-                iconText: "󰑐"
-                tooltipText: "Refresh estimated costs"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                enabled: !costBackend.loading
-                onClicked: root.refreshNow()
+              Row {
+                spacing: Style.spacing.xs
+                Ui.PanelActionButton {
+                  iconText: "󰒓"
+                  tooltipText: "Model Usage settings"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  bordered: true
+                  onClicked: root.showSettings()
+                }
+                Ui.PanelActionButton {
+                  iconText: "󰑐"
+                  tooltipText: "Refresh estimated costs"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: !costBackend.loading
+                  onClicked: root.refreshNow()
+                }
               }
             }
 
@@ -591,6 +662,7 @@ Ui.Panel {
 
           Ui.ButtonGroup {
             id: viewSwitch
+            visible: !root.configuring
             width: parent.width
             options: root.viewOptions
             value: root.viewMode
@@ -602,23 +674,78 @@ Ui.Panel {
             onChanged: function(value) { root.viewMode = value }
           }
 
-          Ui.ButtonGroup {
+          UsageSettings {
+            id: configForm
+            visible: root.configuring
+            width: parent.width
+            foreground: root.foreground
+            urgent: root.urgent
+            surface: root.surface
+            fontFamily: root.fontFamily
+            accountDetails: root.accountTooltip(root.provider)
+            proxyProviders: root.proxyMode ? backend.providers : []
+            onSaveRequested: function(values) { root.saveSettings(values) }
+            onCancelRequested: root.leaveSettings()
+            onRevealRequested: function(item) {
+              var point = item.mapToItem(contentColumn, 0, 0)
+              var bottom = point.y + item.height + Style.spacing.md
+              if (point.y < panelFlick.contentY) panelFlick.contentY = point.y
+              else if (bottom > panelFlick.contentY + panelFlick.height)
+                panelFlick.contentY = Math.min(bottom - panelFlick.height,
+                  Math.max(0, panelFlick.contentHeight - panelFlick.height))
+            }
+          }
+
+          Flow {
             id: providerSwitch
             visible: root.viewMode === "limits" && root.providers.length > 1
-            options: root.providerOptions
-            value: root.provider ? String(root.provider.id) : ""
-            cursorIndex: root.providerCursorActive ? root.providerIndex : -1
-            foreground: root.foreground
-            background: root.surface
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: false
-            onChanged: function(value) {
-              root.providerCursorActive = true
-              root.selectProviderId(value)
+            width: parent.width
+            spacing: Style.spacing.md
+            Repeater {
+              model: root.providerOptions
+              Ui.Button {
+                required property var modelData
+                required property int index
+                text: modelData.label
+                width: Math.min(implicitWidth, providerSwitch.width)
+                selected: root.selectedProviderId === modelData.value
+                hasCursor: root.providerCursorActive && root.providerIndex === index
+                bordered: true
+                foreground: root.foreground
+                background: root.surface
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                onClicked: { root.providerCursorActive = true; root.selectProviderId(modelData.value) }
+                onHovered: function(isHovered) { root.handleProviderTabHover(isHovered) }
+              }
             }
-            onHovered: function(index, isHovered) {
-              root.handleProviderTabHover(isHovered)
+          }
+
+          Column {
+            id: accountOverviewSection
+            visible: root.viewMode === "limits" && root.accountOverview
+            width: parent.width
+            spacing: Style.spacing.lg
+
+            Repeater {
+              id: accountRepeater
+              model: root.proxyAccounts
+              ProxyAccountCard {
+                required property var modelData
+                required property int index
+                width: accountOverviewSection.width
+                account: modelData
+                accountNumber: index + 1
+              }
+            }
+
+            Ui.Button {
+              text: root.expandedAccountLimits ? "Show weekly limits" : "Show additional limits"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: root.expandedAccountLimits = !root.expandedAccountLimits
             }
           }
 
@@ -629,6 +756,7 @@ Ui.Panel {
             bottomPadding: Style.spacing.huge
             text: backend.loading
               ? "Loading AI subscription usage…"
+              : root.proxyMode ? "No managed accounts found. Check the accounts configured in CLIProxyAPI."
               : "No providers are enabled. Choose Claude, Codex, or Kimi in the widget settings."
             color: root.dim
             font.family: root.fontFamily
@@ -639,7 +767,7 @@ Ui.Panel {
 
           Ui.BorderSurface {
             id: errorCard
-            visible: root.viewMode === "limits" && !!root.provider && root.provider.status !== "ok"
+            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && root.provider.status === "error"
             width: parent.width
             implicitHeight: errorColumn.implicitHeight + errorCard.contentTopInset + errorCard.contentBottomInset
             color: root.alpha(root.urgent, 0.09)
@@ -680,7 +808,7 @@ Ui.Panel {
           }
 
           Text {
-            visible: root.viewMode === "limits" && !!root.provider && root.provider.status === "ok"
+            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && root.provider.status !== "error"
               && String(root.provider.notice || "") !== ""
             width: parent.width
             text: root.provider ? String(root.provider.notice || "") : ""
@@ -697,7 +825,7 @@ Ui.Panel {
 
           Column {
             id: limitsSection
-            visible: root.viewMode === "limits" && !!root.provider && root.provider.status === "ok"
+            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && root.provider.status === "ok"
               && UsageLogic.isListLike(root.provider.windows) && root.provider.windows.length > 0
             width: parent.width
             spacing: Style.spacing.lg
@@ -721,7 +849,7 @@ Ui.Panel {
 
           Column {
             id: creditsSection
-            visible: root.viewMode === "limits" && !!root.provider
+            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider
               && root.provider.status === "ok" && !!root.provider.credits
             width: parent.width
             spacing: Style.spacing.lg
@@ -746,7 +874,7 @@ Ui.Panel {
 
           UsageHistory {
             id: history
-            visible: root.viewMode === "limits" && !!root.provider && root.provider.history
+            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && !!root.provider.history
               && ((UsageLogic.isListLike(root.provider.history.h24) && root.provider.history.h24.length > 0)
                 || (UsageLogic.isListLike(root.provider.history.d7) && root.provider.history.d7.length > 0))
             width: parent.width
@@ -772,9 +900,10 @@ Ui.Panel {
             onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
           }
 
-          Ui.PanelSeparator { foreground: root.foreground }
+          Ui.PanelSeparator { visible: !root.configuring; foreground: root.foreground }
 
           Item {
+            visible: !root.configuring
             width: parent.width
             implicitHeight: Math.max(footerLeft.implicitHeight, footerRight.implicitHeight)
 
@@ -801,6 +930,114 @@ Ui.Panel {
             }
           }
         }
+      }
+    }
+  }
+
+  component ProxyAccountCard: Ui.BorderSurface {
+    id: accountCard
+    objectName: "proxyAccountCard"
+    property var account: ({})
+    property int accountNumber: 0
+    readonly property var windows: UsageLogic.accountWindows(account, root.expandedAccountLimits)
+    readonly property bool healthy: account.status === "ok"
+    implicitHeight: accountContent.implicitHeight + contentTopInset + contentBottomInset
+    color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
+    borderSpec: Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
+    padding: Style.spacing.xxl
+    radius: Style.cornerRadius
+
+    Column {
+      id: accountContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.leftMargin: accountCard.contentLeftInset
+      anchors.rightMargin: accountCard.contentRightInset
+      anchors.topMargin: accountCard.contentTopInset
+      spacing: Style.spacing.md
+
+      Text {
+        width: parent.width
+        text: UsageLogic.accountPlanLabel(accountCard.account)
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: true
+        wrapMode: Text.WordWrap
+      }
+      Text {
+        width: parent.width
+        text: root.accountDisplayName(accountCard.account, accountCard.accountNumber)
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideMiddle
+      }
+
+      Repeater {
+        model: accountCard.healthy ? accountCard.windows : []
+        Column {
+          id: accountWindow
+          required property var modelData
+          objectName: "proxyAccountWindow"
+          readonly property bool known: modelData.remaining !== null && modelData.remaining !== undefined
+            && isFinite(Number(modelData.remaining))
+          readonly property bool stressed: root.windowSeverity(modelData) === "warning" || root.windowSeverity(modelData) === "critical"
+          width: accountContent.width
+          spacing: Style.spacing.sm
+          Row {
+            width: parent.width
+            Text {
+              width: parent.width - accountPercent.implicitWidth
+              text: String(accountWindow.modelData.label || "Usage limit")
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+            Text {
+              id: accountPercent
+              text: accountWindow.known ? Math.round(Number(accountWindow.modelData.remaining)) + "% left" : "—"
+              color: accountWindow.stressed ? root.urgent : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+          }
+          BlockMeter {
+            visible: accountWindow.known
+            width: parent.width
+            value: accountWindow.known ? Number(accountWindow.modelData.remaining) / 100 : 0
+            fillColor: accountWindow.stressed ? root.urgent : root.foreground
+            trackColor: root.alpha(root.foreground, 0.14)
+          }
+          Text {
+            width: parent.width
+            visible: text !== ""
+            text: root.resetText(accountWindow.modelData)
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+        }
+      }
+
+      Text {
+        width: parent.width
+        visible: text !== ""
+        text: accountCard.account.status === "error" ? root.errorBody(accountCard.account)
+          : accountCard.account.stale || !accountCard.healthy ? String(accountCard.account.notice || "Quota unavailable")
+          : accountCard.windows.length === 0 ? "No subscription limits reported." : ""
+        textFormat: Text.PlainText
+        color: accountCard.account.status === "error" ? root.urgent : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
       }
     }
   }
@@ -853,7 +1090,7 @@ Ui.Panel {
           id: limitPercent
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          text: limitCard.window && isFinite(Number(limitCard.window.remaining))
+          text: limitCard.window && limitCard.window.remaining !== null && limitCard.window.remaining !== undefined && isFinite(Number(limitCard.window.remaining))
             ? Math.round(Number(limitCard.window.remaining)) + "% left" : "—"
           color: limitCard.stressed ? root.urgent : root.foreground
           font.family: root.fontFamily
@@ -863,6 +1100,7 @@ Ui.Panel {
       }
 
       BlockMeter {
+        visible: !!limitCard.window && limitCard.window.remaining !== null && limitCard.window.remaining !== undefined
         width: parent.width
         value: limitCard.window ? Number(limitCard.window.remaining) / 100 : 0
         fillColor: limitCard.stressed ? root.urgent : root.foreground

@@ -22,8 +22,9 @@ class ProjectContractTests(unittest.TestCase):
         self.assertNotIn("aliases", manifest)
         keys = {entry["key"] for entry in manifest["barWidget"]["schema"]}
         self.assertEqual(keys, {
-            "refreshIntervalSec", "enabledProviders", "barDisplayMode",
+            "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
             "warningThreshold", "criticalThreshold",
+            "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails",
         })
 
     def test_packaged_paths_and_assets_are_self_contained(self):
@@ -141,13 +142,13 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn("text: providerChip.remainingText", panel)
         self.assertIn("root.handleProviderChipPress", panel)
 
-    def test_account_details_are_kept_behind_help_tooltip(self):
+    def test_account_details_are_available_in_settings(self):
         panel = (ROOT / "Panel.qml").read_text()
         self.assertIn('return provider && provider.plan ? String(provider.plan) : ""', panel)
         self.assertIn('lines.push("Account: " + String(provider.account))', panel)
         self.assertIn('lines.push("Source: " + String(provider.source))', panel)
-        self.assertIn('iconText: "?"', panel)
-        self.assertIn("tooltipText: root.accountTooltip(root.provider)", panel)
+        self.assertIn('iconText: "󰒓"', panel)
+        self.assertIn("accountDetails: root.accountTooltip(root.provider)", panel)
 
 
 if __name__ == "__main__":

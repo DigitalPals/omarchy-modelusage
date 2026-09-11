@@ -20,11 +20,45 @@
     "defaults": {
       "refreshIntervalSec": 900,
       "enabledProviders": ["claude", "codex", "kimi"],
+      "usageSource": "direct",
+      "cliproxyUrl": "http://127.0.0.1:8317",
+      "cliproxyKeyFile": "",
+      "hideAccountEmails": true,
       "barDisplayMode": "Icon",
+      "barProviders": ["claude", "codex", "kimi"],
       "warningThreshold": 25,
       "criticalThreshold": 10
     },
     "schema": [
+      {
+        "key": "usageSource",
+        "type": "enum",
+        "label": "Quota source",
+        "options": ["direct", "cliproxy"],
+        "defaultValue": "direct",
+        "description": "Read local CLI sign-ins directly or query accounts managed by CLIProxyAPI. Costs always use local transcripts."
+      },
+      {
+        "key": "cliproxyUrl",
+        "type": "string",
+        "label": "CLIProxyAPI server URL",
+        "defaultValue": "http://127.0.0.1:8317",
+        "description": "Server, management.html, or /v0/management URL. HTTPS certificates are verified."
+      },
+      {
+        "key": "cliproxyKeyFile",
+        "type": "string",
+        "label": "CLIProxyAPI management key file",
+        "defaultValue": "",
+        "description": "Managed automatically by the settings menu when saving a Management API key. Advanced users can supply an existing private key file path here."
+      },
+      {
+        "key": "hideAccountEmails",
+        "type": "boolean",
+        "label": "Hide account emails",
+        "defaultValue": true,
+        "description": "Replace account usernames and email addresses with numbered labels and hide account identity in settings."
+      },
       {
         "key": "refreshIntervalSec",
         "type": "integer",
@@ -39,7 +73,7 @@
         "key": "enabledProviders",
         "type": "multiselect",
         "label": "Providers",
-        "description": "Only selected providers are queried and shown.",
+        "description": "Select local CLI providers. CLIProxyAPI discovers all managed providers automatically.",
         "noSelectionText": "No providers",
         "placeholderText": "Search providers...",
         "emptyText": "No providers found",
@@ -57,6 +91,18 @@
         "options": ["Icon", "Percentages"],
         "defaultValue": "Icon",
         "description": "Percentages shows compact remaining quota on horizontal bars and falls back to the icon on vertical bars."
+      },
+      {
+        "key": "barProviders",
+        "type": "multiselect",
+        "label": "Menu bar providers",
+        "description": "Enabled providers allowed to show percentage chips in the menu bar. Hidden providers remain in the popup.",
+        "defaultValue": ["claude", "codex", "kimi"],
+        "options": [
+          { "value": "claude", "label": "Claude Code" },
+          { "value": "codex", "label": "OpenAI Codex" },
+          { "value": "kimi", "label": "Kimi Code" }
+        ]
       },
       {
         "key": "warningThreshold",

@@ -32,3 +32,26 @@ Private state is stored below
 `0700`; files use mode `0600`. Transcript paths, session identifiers, message
 identifiers, and de-duplication keys are hashed before they enter durable state.
 Prompts, responses, tool calls, tool results, and credentials are not cached.
+
+In CLIProxyAPI mode, the plugin reads a user-owned management key file with
+private permissions (default: `$XDG_CONFIG_HOME/omarchy/model-usage/cliproxy.key`,
+where `XDG_CONFIG_HOME` defaults to `~/.config`). This user-provided credential
+is separate from generated state. The key is sent only to the configured
+management server; redirects are rejected and HTTPS certificates are verified.
+Upstream provider tokens stay on CLIProxyAPI, which substitutes `$TOKEN$` for
+read-only quota calls. Management responses and account checks are bounded.
+The backend never downloads auth files or stores their raw metadata. The backend does not request client API keys or the model catalog.
+
+Account usernames and emails are hidden by default in the UI via `hideAccountEmails`.
+The setting affects display only; account labels remain in the in-memory backend
+payload so they can be shown when the user disables the setting.
+
+The GUI accepts the management key in a masked field and passes it to the
+storage helper over stdin, never argv, environment variables, logs, or
+`shell.json`. The helper creates a `0600` file inside the private `0700`
+`$XDG_CONFIG_HOME/omarchy/model-usage/management-keys/` directory. Only its path
+is saved in widget settings. A failed settings update discards the staged file;
+successful replacement removes the previous GUI-managed key file while leaving
+manually configured files intact. Blank input preserves the existing key.
+The form clears entered keys on Save, Cancel, or leaving settings, and never
+reads stored keys back into the UI.

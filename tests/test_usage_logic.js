@@ -36,4 +36,40 @@ assert.equal(JSON.stringify(context.firstItems(listLike, 1)), '["first"]');
 assert.equal(JSON.stringify(context.listOrEmpty(null)), "[]");
 assert.equal(context.errorTitle({ id: "claude", name: "Claude Code", errorKind: "expired" }), "Claude Code sign-in expired");
 
+const providers = [provider("claude", 72), provider("codex", 44), provider("kimi", null, "error")];
+const selected = context.selectedProviders(providers, { 0: "codex", 1: "kimi", length: 2 });
+assert.equal(selected.length, 2);
+assert.equal(selected[0].id, "codex");
+assert.equal(context.meaningfulProviders(selected).length, 1);
+assert.equal(context.selectedProviders(providers, []).length, 0);
+assert.equal(providers.length, 3);
+
+const priorAccount = { ...provider("antigravity", 75), accountId: "a", plan: "Pro", fetchedAt: "then" };
+const oldProxy = { source: "cliproxy", providers: [{ ...priorAccount, accounts: [priorAccount] }] };
+const failedAccount = { ...priorAccount, status: "error", windows: [], message: "Timeout" };
+const stale = context.preserveProxyReadings(oldProxy, { source: "cliproxy",
+  providers: [{ ...failedAccount, accounts: [failedAccount] }] });
+assert.equal(stale.providers[0].accounts[0].windows[0].remaining, 75);
+assert.equal(stale.providers[0].accounts[0].stale, true);
+assert.equal(stale.providers[0].fetchedAt, "then");
+const outage = context.preserveProxyReadings(oldProxy, { providers: [{ id: "cliproxy", status: "error", message: "Offline" }] });
+assert.equal(outage.providers[0].id, "antigravity");
+assert.equal(outage.providers[0].stale, true);
+const paused = context.preserveProxyReadings(oldProxy, { providers: [{ ...priorAccount, status: "disabled", windows: [] }] });
+assert.equal(paused.providers[0].status, "disabled");
+assert.equal(paused.providers[0].windows.length, 0);
 console.log("UsageLogic.js: all assertions passed");
+
+const codexWindows = [
+  {id: "additional-secondary", label: "Code review · Weekly limit", windowSeconds: 604800},
+  {id: "codex-primary", label: "5 hour limit", windowSeconds: 18000},
+  {id: "codex-secondary", label: "Weekly limit", windowSeconds: 604800}
+];
+assert.equal(context.accountWindows({windows: codexWindows}, false).length, 1);
+assert.equal(context.accountWindows({windows: codexWindows}, false)[0].id, "codex-secondary");
+assert.equal(context.accountWindows({windows: codexWindows}, true).length, 3);
+assert.equal(context.accountWindows({windows: [{label: "Monthly limit"}]}, false)[0].label, "Monthly limit");
+assert.equal(context.accountWindows({windows: []}, false).length, 0);
+assert.equal(context.accountPlanLabel({id: "codex", planType: "pro"}), "Codex Pro · 20×");
+assert.equal(context.accountPlanLabel({id: "codex", planType: "prolite"}), "Codex Pro · 5×");
+assert.equal(context.accountPlanLabel({id: "codex", plan: "ChatGPT Pro"}), "Codex Pro · 20×");

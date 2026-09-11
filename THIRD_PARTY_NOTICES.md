@@ -28,6 +28,8 @@ The plugin's architecture and component usage follow Omarchy Quattro. The Claude
 
 The existing Fedora/Quickshell Model Usage module at commit `6aa074432f36548381ead91ed39d57c34529e327` was the functional and segmented-meter design reference. That checkout did not contain a repository-level license. No source file, theme implementation, or asset from that repository is redistributed here; the backend and Omarchy-native QML were independently implemented against current provider and Omarchy interfaces.
 
+CLIProxyAPI source selection and account-pool behavior were also reviewed at Fedora commit `431def720d4b905c1563d600be33ca50eed621bb`. The management protocol was checked against [`router-for-me/CLIProxyAPI`](https://github.com/router-for-me/CLIProxyAPI) at commit `5b2785617d1e7de84a9f4dee599d275a4ccd8999`. This integration is independently implemented; no source or assets from either reference are redistributed.
+
 ## T3 Code
 
 The estimated-cost feature adapts the transcript parsing, de-duplication, model pricing, and aggregation approach from [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) at commit `afa83098064e7dca524a1e42dea3de03a883a0b6`. The React interface and Effect/TypeScript service were not redistributed; the implementation here is a native QML/Python port with a separate contract, privacy-hardened cache identifiers, Kimi token coverage, and explicit unavailable-price states.
@@ -67,3 +69,29 @@ Current Kimi credential locations, endpoint shapes, fixed-point wallet units, an
 ## Provider marks
 
 Claude, Anthropic, OpenAI, Codex, Kimi, and Moonshot AI names and marks are the property of their respective owners. Their inclusion identifies compatible services and does not imply affiliation or endorsement.
+
+## OmaProxy
+
+The account browsing, email privacy, and Antigravity quota-summary protocol were informed by [`soojy/omaproxy`](https://github.com/soojy/omaproxy) at commit `f61b92f02b3e75f75dc6c6cbd8c1556fdc3c5901`. The interface uses this plugin’s native Omarchy components and fixed-block meters. OmaProxy’s license follows:
+
+> MIT License
+>
+> Copyright (c) 2026 OmaProxy contributors
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
