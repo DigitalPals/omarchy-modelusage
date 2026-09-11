@@ -585,7 +585,7 @@ def parse_codex_rate_limits(
     reset_credits = limits_result.get("rateLimitResetCredits")
     if isinstance(reset_credits, dict):
         available = number(reset_credits.get("availableCount"))
-        if available is not None:
+        if available is not None and available >= 0 and available.is_integer():
             if credits is None:
                 credits = {
                     "label": "Credits",
@@ -1015,7 +1015,11 @@ def parse_cliproxy_codex(payload: Any) -> tuple[list[dict[str, Any]], dict[str, 
             snapshot["credits"] = {"hasCredits": credit.get("has_credits"),
                                    "unlimited": credit.get("unlimited"), "balance": credit.get("balance")}
         snapshots[bucket_id] = snapshot
-    windows, credits, plan, _ = parse_codex_rate_limits({"rateLimitsByLimitId": snapshots})
+    normalized: dict[str, Any] = {"rateLimitsByLimitId": snapshots}
+    reset_credits = payload.get("rate_limit_reset_credits")
+    if isinstance(reset_credits, dict):
+        normalized["rateLimitResetCredits"] = {"availableCount": reset_credits.get("available_count")}
+    windows, credits, plan, _ = parse_codex_rate_limits(normalized)
     return windows, credits, plan
 
 

@@ -96,6 +96,13 @@ function accountPlanLabel(account) {
   return String(account.plan || account.name || account.id || "Account")
 }
 
+function accountResetLabel(account) {
+  if (!account || account.id !== "codex" || account.status !== "ok") return ""
+  var count = account.credits && account.credits.resetCreditsAvailable
+  if (typeof count !== "number" || !isFinite(count) || count < 0 || Math.floor(count) !== count) return ""
+  return count + " banked reset" + (count === 1 ? "" : "s")
+}
+
 function accountWindows(account, expanded) {
   var rows = listOrEmpty(account && account.windows)
   if (expanded) return rows

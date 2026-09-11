@@ -102,8 +102,30 @@ class CliProxyTests(unittest.TestCase):
         self.assertEqual(by_id["additional-0-primary"]["used"], 0.5)
         self.assertEqual(by_id["additional-0-primary"]["resetsAt"], 1_900_000_600)
         self.assertEqual(credits["remaining"], 17.5)
+        self.assertEqual(credits["resetCreditsAvailable"], 2)
         with self.assertRaises(usage.ProviderFailure):
             usage.parse_cliproxy_codex([])
+
+    def test_codex_banked_resets_are_per_account_and_work_without_paid_credits(self):
+        client = mock.Mock()
+        for count in (0, 1, 3):
+            payload = fixture("cliproxy-codex-usage.json")
+            payload.pop("credits")
+            payload["rate_limit_reset_credits"] = {"available_count": count, "applicable_available_count": 0}
+            client.usage.return_value = payload
+            row = usage.fetch_cliproxy_account("codex", {"auth_index": str(count), "chatgpt_account_id": "account"}, client, 2)
+            self.assertEqual(row["status"], "ok")
+            self.assertEqual(row["credits"]["resetCreditsAvailable"], count)
+            self.assertIsNone(row["credits"]["remaining"])
+
+    def test_codex_missing_or_invalid_banked_resets_are_unknown(self):
+        for reset_credits in (None, {}, {"applicable_available_count": 1},
+                              *({"available_count": count} for count in (None, True, -1, 1.5, "bad"))):
+            with self.subTest(reset_credits=reset_credits):
+                payload = fixture("cliproxy-codex-usage.json")
+                payload["rate_limit_reset_credits"] = reset_credits
+                _, credits, _ = usage.parse_cliproxy_codex(payload)
+                self.assertIsNone(credits["resetCreditsAvailable"])
 
     def test_management_errors_are_safe_and_bounded(self):
         client = usage.CliProxyClient("https://proxy.test", "private-key")

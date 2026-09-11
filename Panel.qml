@@ -957,15 +957,47 @@ Ui.Panel {
       anchors.topMargin: accountCard.contentTopInset
       spacing: Style.spacing.md
 
-      Text {
+      Item {
         width: parent.width
-        text: UsageLogic.accountPlanLabel(accountCard.account)
-        textFormat: Text.PlainText
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: true
-        wrapMode: Text.WordWrap
+        implicitHeight: Math.max(accountPlan.implicitHeight, resetBadge.visible ? resetBadge.implicitHeight : 0)
+
+        Text {
+          id: accountPlan
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.max(0, parent.width - (resetBadge.visible ? resetBadge.width + Style.spacing.md : 0))
+          text: UsageLogic.accountPlanLabel(accountCard.account)
+          textFormat: Text.PlainText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: true
+          verticalAlignment: Text.AlignVCenter
+          wrapMode: Text.WordWrap
+        }
+
+        Rectangle {
+          id: resetBadge
+          objectName: "accountResetBadge"
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          visible: resetLabel.text !== ""
+          implicitWidth: resetLabel.implicitWidth + Style.spacing.md * 2
+          implicitHeight: resetLabel.implicitHeight + Style.spacing.sm * 2
+          radius: height / 2
+          color: "transparent"
+          border.color: root.alpha(root.foreground, 0.18)
+
+          Text {
+            id: resetLabel
+            objectName: "accountResetLabel"
+            anchors.centerIn: parent
+            text: UsageLogic.accountResetLabel(accountCard.account)
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
       }
       Text {
         width: parent.width

@@ -73,3 +73,18 @@ assert.equal(context.accountWindows({windows: []}, false).length, 0);
 assert.equal(context.accountPlanLabel({id: "codex", planType: "pro"}), "Codex Pro · 20×");
 assert.equal(context.accountPlanLabel({id: "codex", planType: "prolite"}), "Codex Pro · 5×");
 assert.equal(context.accountPlanLabel({id: "codex", plan: "ChatGPT Pro"}), "Codex Pro · 20×");
+
+const resetAccount = { ...provider("codex", 55), accountId: "reset-account", credits: { resetCreditsAvailable: 2 } };
+assert.equal(context.accountResetLabel(resetAccount), "2 banked resets");
+assert.equal(context.accountResetLabel({ ...resetAccount, credits: { resetCreditsAvailable: 1 } }), "1 banked reset");
+assert.equal(context.accountResetLabel({ ...resetAccount, credits: { resetCreditsAvailable: 0 } }), "0 banked resets");
+for (const count of [undefined, null, -1, 1.5, true, "2", NaN, Infinity])
+  assert.equal(context.accountResetLabel({ ...resetAccount, credits: { resetCreditsAvailable: count } }), "");
+assert.equal(context.accountResetLabel({ ...resetAccount, credits: null }), "");
+assert.equal(context.accountResetLabel({ ...resetAccount, id: "claude" }), "");
+assert.equal(context.accountResetLabel({ ...resetAccount, status: "disabled" }), "");
+const resetFailure = { ...resetAccount, status: "error", credits: null, message: "Timeout" };
+const resetStale = context.preserveProxyReadings({ source: "cliproxy", providers: [{ ...resetAccount, accounts: [resetAccount] }] },
+  { source: "cliproxy", providers: [{ ...resetFailure, accounts: [resetFailure] }] });
+assert.equal(context.accountResetLabel(resetStale.providers[0].accounts[0]), "2 banked resets");
+assert.equal(resetStale.providers[0].accounts[0].stale, true);

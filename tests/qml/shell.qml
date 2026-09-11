@@ -36,6 +36,16 @@ ShellRoot {
   }
   function finite(value) { return isFinite(Number(value)) && Number(value) >= 0 }
 
+  function namedChild(item, name) {
+    if (item.objectName === name) return item
+    var children = item.children || []
+    for (var i = 0; i < children.length; i++) {
+      var found = namedChild(children[i], name)
+      if (found) return found
+    }
+    return null
+  }
+
   function positiveChartSegments(item) {
     if (!item) return 0
     var count = 0
@@ -211,6 +221,10 @@ ShellRoot {
         assertEqual(cards[i].windows.length, 1, "each account initially shows only its weekly quota")
         assertEqual(cards[i].windows[0].id, "codex-secondary", "main weekly quota wins over scoped and session windows")
         assertEqual(cards[i].windows[0].remaining, [20, 55, 90][i], "account quotas are kept separate")
+        var badge = namedChild(cards[i], "accountResetBadge")
+        var label = namedChild(cards[i], "accountResetLabel")
+        assertTrue(badge !== null && badge.width > 0 && badge.height > 0, "reset badge has a visible size")
+        assertEqual(label ? label.text : "", i + " banked reset" + (i === 1 ? "" : "s"), "each account shows its own banked resets including zero")
       }
       proxyWidget.expandedAccountLimits = true
       if (cards.length > 0) assertEqual(cards[0].windows.length, 4, "additional limits can be expanded")
