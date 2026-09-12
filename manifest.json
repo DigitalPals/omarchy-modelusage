@@ -30,6 +30,7 @@
       "cliproxyUrl": "http://127.0.0.1:8317",
       "cliproxyKeyFile": "",
       "hideAccountEmails": true,
+      "squareUsageCards": true,
       "barDisplayMode": "Percentages",
       "barProviders": [
         "claude",
@@ -79,6 +80,13 @@
         "label": "Hide account emails",
         "defaultValue": true,
         "description": "Replace account usernames and email addresses with numbered labels and hide account identity in settings."
+      },
+      {
+        "key": "squareUsageCards",
+        "type": "boolean",
+        "label": "Square usage cards",
+        "defaultValue": true,
+        "description": "Use square corners for cards in Limits instead of the theme's corner style."
       },
       {
         "key": "refreshIntervalSec",

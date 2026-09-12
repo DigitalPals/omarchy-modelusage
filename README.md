@@ -196,6 +196,8 @@ omarchy-shell digitalpals.model-usage configure
 
 Open the popup and click the **gear icon** beside Refresh to configure Model Usage. The Limits gear configures quotas and appearance; the Costs gear configures history sources and model prices. Both remain available when no providers are enabled. The fixed footer keeps **Cancel** and **Save changes** visible while scrolling. Saving writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
 
+Under **Limits → gear → Display**, **Square usage cards** is enabled by default for account, limit, credit, and error cards. Turn it off to follow the theme's corners. Click **Save changes** to apply it.
+
 In local CLI mode, each provider has two controls: **Monitor** enables quota checks and includes it in the popup; **Menu bar** allows its percentage chip in the bar. Choose **Provider percentages** under **Menu bar display** to show those chips. Hiding a provider from the bar keeps it available in the popup. The widget icon remains accessible when all chips are hidden, on vertical bars, or when no selected provider has quota data.
 
 In CLIProxyAPI mode, all discovered providers are monitored automatically; the provider list controls their menu-bar visibility. The Monitor column is hidden in this mode. Choosing **Widget icon** hides the menu-bar provider controls while preserving your selections.
@@ -214,6 +216,7 @@ In **Costs → gear → Custom prices**, add the exact model ID and its input/ou
 | `cliproxyUrl` | `http://127.0.0.1:8317` | CLIProxyAPI server or management URL |
 | `cliproxyKeyFile` | empty | Set automatically when saving a key in the GUI; can also point to an existing private key file |
 | `hideAccountEmails` | `true` | Replace account identities with numbered labels and hide them in settings |
+| `squareUsageCards` | `true` | Use square corners for cards in Limits; otherwise follow the theme |
 | `barDisplayMode` | `Percentages` | `Icon` or compact `Percentages` |
 | `barProviders` | all three | Enabled providers allowed to show percentage chips; independent of popup visibility |
 | `warningThreshold` | `25` | Mark urgent at or below this percentage remaining |

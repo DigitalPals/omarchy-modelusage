@@ -40,6 +40,7 @@ Ui.Panel {
     { value: "costs", label: "Costs" }
   ]
   readonly property bool hideAccountEmails: setting("hideAccountEmails", true) !== false
+  readonly property real usageCardRadius: setting("squareUsageCards", true) === true ? 0 : Style.cornerRadius
 
   function accountDisplayName(account, index) {
     return hideAccountEmails ? "Account " + index : String(account.account || "Account " + index)
@@ -840,7 +841,7 @@ Ui.Panel {
             color: root.alpha(root.urgent, 0.09)
             borderSpec: Border.flat(root.alpha(root.urgent, 0.4), Style.spacing.hairline)
             padding: Style.spacing.xxl
-            radius: Style.cornerRadius
+            radius: root.usageCardRadius
 
             Column {
               id: errorColumn
@@ -1024,7 +1025,7 @@ Ui.Panel {
     color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
     borderSpec: Border.flat(root.alpha(root.foreground, 0.22), Style.spacing.hairline)
     padding: Style.spacing.xxl
-    radius: Style.cornerRadius
+    radius: root.usageCardRadius
 
     Column {
       id: accountContent
@@ -1221,7 +1222,7 @@ Ui.Panel {
       ? Border.flat(root.alpha(root.urgent, severity === "critical" ? 0.45 : 0.28), Style.spacing.hairline)
       : Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
     padding: Style.spacing.xxl
-    radius: Style.cornerRadius
+    radius: root.usageCardRadius
 
     Column {
       id: limitContent
@@ -1306,7 +1307,7 @@ Ui.Panel {
     color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
     borderSpec: Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
     padding: Style.spacing.xxl
-    radius: Style.cornerRadius
+    radius: root.usageCardRadius
 
     Column {
       id: creditsContent

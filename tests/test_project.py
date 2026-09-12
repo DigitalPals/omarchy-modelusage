@@ -24,7 +24,7 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(keys, {
             "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
             "warningThreshold", "criticalThreshold",
-            "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails", "costPriceOverrides",
+            "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails", "squareUsageCards", "costPriceOverrides",
             "costLocalProviders", "costKeeperUrl", "costKeeperPasswordFile", "costT3Servers",
         })
 

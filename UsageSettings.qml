@@ -81,6 +81,7 @@ Column {
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       hideAccountEmails: value("hideAccountEmails", true) !== false,
+      squareUsageCards: value("squareUsageCards", true) === true,
       barDisplayMode: value("barDisplayMode", "Percentages"),
       refreshIntervalSec: String(value("refreshIntervalSec", 900)),
       warningThreshold: String(value("warningThreshold", 25)),
@@ -319,6 +320,19 @@ Column {
       }
     }
     Hint { text: "Use Account 1, Account 2, … instead of account identities." }
+    Row {
+      width: parent.width
+      Label { width: parent.width - squareCardsSwitch.width; text: "Square usage cards"; anchors.verticalCenter: parent.verticalCenter }
+      ProviderToggle {
+        id: squareCardsSwitch
+        objectName: "squareUsageCardsToggle"
+        width: Style.space(82)
+        checked: root.draft.squareUsageCards === true
+        Accessible.name: "Square usage cards"
+        onToggled: root.setValue("squareUsageCards", !checked)
+      }
+    }
+    Hint { text: "Override theme corners for cards in Limits. Turn off to follow the theme." }
   }
 
   Column {
