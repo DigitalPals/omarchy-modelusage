@@ -23,8 +23,6 @@ Item {
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property var models: payload ? UsageLogic.listOrEmpty(payload.models) : []
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
-  readonly property var pricing: payload && payload.pricing ? payload.pricing : ({ status: "unavailable" })
-  readonly property var coverage: payload ? UsageLogic.listOrEmpty(payload.coverage) : []
   readonly property bool hasResult: !!(payload && payload.generatedAt && periods.length > 0)
   readonly property real chartMaximum: maximumPeriodValue()
 
@@ -119,36 +117,6 @@ Item {
     if (metric === "cost" && records > 0) parts.push(percent(priceCoverage(totals)) + " priced")
     parts.push("local transcripts")
     return parts.join(" · ")
-  }
-
-  function noticeText() {
-    if (!hasResult) return ""
-    var records = Number(totals.records || 0)
-    var unpriced = Number(totals.unpricedRecords || 0)
-    var messages = []
-    var missing = []
-    if (records > 0 && totals.costUsd === null)
-      messages.push("Prices are unavailable for this activity; token totals are still complete.")
-    else if (unpriced > 0)
-      messages.push(percent(priceCoverage(totals)) + " of usage records have a price; the estimate is partial.")
-    if (pricing.status === "cached" && String(pricing.message || "") !== "")
-      messages.push(String(pricing.message))
-    else if (pricing.status === "unavailable" && records > 0 && totals.costUsd !== null)
-      messages.push("The model-price table is unavailable; provider-reported costs are shown where present.")
-    for (var i = 0; i < coverage.length; i++) {
-      if (coverage[i].status === "missing")
-        missing.push(String(coverage[i].name || coverage[i].id || "provider"))
-      if (coverage[i].status === "failed")
-        messages.push(String(coverage[i].message || "Transcript files could not be read."))
-      if (coverage[i].status === "partial"
-          && (Number(coverage[i].sessions || 0) > 0
-            || Number(coverage[i].skippedFiles || 0) > 0)) {
-        messages.push(String(coverage[i].message || ""))
-      }
-    }
-    if (missing.length > 0)
-      messages.push("No local transcripts were found for " + missing.join(", ") + "; their activity is not included.")
-    return messages.join(" ")
   }
 
   Column {
@@ -272,32 +240,6 @@ Item {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         font.italic: true
-        wrapMode: Text.WordWrap
-      }
-    }
-
-    Ui.BorderSurface {
-      id: noticeCard
-      visible: root.noticeText() !== ""
-      width: parent.width
-      implicitHeight: notice.implicitHeight + contentTopInset + contentBottomInset
-      color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
-      borderSpec: Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
-      padding: Style.spacing.xl
-      radius: Style.cornerRadius
-
-      Text {
-        id: notice
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.leftMargin: noticeCard.contentLeftInset
-        anchors.rightMargin: noticeCard.contentRightInset
-        anchors.topMargin: noticeCard.contentTopInset
-        text: root.noticeText()
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
       }
     }
@@ -598,7 +540,7 @@ Item {
               implicitHeight: Math.max(modelName.implicitHeight + modelMeta.implicitHeight
                 + Style.spacing.labelGap, modelValue.implicitHeight)
 
-              Text {
+              TextEdit {
                 id: modelName
                 anchors.left: parent.left
                 anchors.right: modelValue.left
@@ -607,7 +549,10 @@ Item {
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideMiddle
+                readOnly: true
+                selectByMouse: true
+                textFormat: TextEdit.PlainText
+                wrapMode: TextEdit.Wrap
               }
 
               Text {
@@ -617,6 +562,11 @@ Item {
                 anchors.topMargin: Style.spacing.labelGap
                 text: String(parent.modelData.providerName || "") + " · "
                   + root.formatTokens(parent.modelData.totalTokens) + " tokens"
+                  + (Number(parent.modelData.customPricedRecords || 0) > 0 ? " · custom prices"
+                    : Number(parent.modelData.basePricedRecords || 0) > 0 ? " · base rates"
+                    : parent.modelData.costSource === "providerReported" ? " · reported cost" : "")
+                anchors.right: parent.right
+                wrapMode: Text.WordWrap
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption

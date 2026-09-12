@@ -27,7 +27,8 @@
       "barDisplayMode": "Icon",
       "barProviders": ["claude", "codex", "kimi"],
       "warningThreshold": 25,
-      "criticalThreshold": 10
+      "criticalThreshold": 10,
+      "costPriceOverrides": "{}"
     },
     "schema": [
       {
@@ -121,6 +122,13 @@
         "max": 100,
         "step": 1,
         "defaultValue": 10
+      },
+      {
+        "key": "costPriceOverrides",
+        "type": "string",
+        "label": "Custom model prices",
+        "defaultValue": "{}",
+        "description": "Managed by Custom model prices in widget settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
       }
     ]
   }

@@ -264,7 +264,7 @@ class CoverageTests(unittest.TestCase):
                 (transcript_root / name).write_text("{}\n", encoding="utf-8")
             now_ms = int((transcript_root / "one.jsonl").stat().st_mtime * 1000)
 
-            def parser(path, _start):
+            def parser(path, _start, _cursor):
                 return [costs.UsageRecord(
                     "claude", now_ms, path.stem, path.stem,
                     1, 0, 0, 0, 0, None, path.stem,
@@ -291,10 +291,10 @@ class CoverageTests(unittest.TestCase):
             for name in ("one.jsonl", "two.jsonl"):
                 (transcript_root / name).write_text("{}\n", encoding="utf-8")
             now_ms = int((transcript_root / "one.jsonl").stat().st_mtime * 1000)
-            parser = mock.Mock(return_value=[])
+            parser = mock.Mock(wraps=costs.parse_claude_file)
             with (
                 mock.patch.object(costs, "transcript_root", return_value=transcript_root),
-                mock.patch.object(costs, "MAX_TRANSCRIPT_SCAN_BYTES", 3),
+                mock.patch.object(costs, "MAX_TRANSCRIPT_SCAN_BYTES", 6),
                 mock.patch.dict(costs.PARSERS, {"claude": parser}),
             ):
                 records, coverage = costs.scan_transcripts(
@@ -319,7 +319,7 @@ class CoverageTests(unittest.TestCase):
                     costs, "transcript_root", return_value=transcript_root
                 ),
                 mock.patch.dict(
-                    costs.PARSERS, {"claude": lambda _path, _start: None}
+                    costs.PARSERS, {"claude": lambda _path, _start, _cursor: None}
                 ),
             ):
                 _, coverage = costs.scan_transcripts(["claude"], root / "state", now_ms)
@@ -341,7 +341,7 @@ class CoverageTests(unittest.TestCase):
                 "claude", now_ms, "test", "session", 1, 0, 0, 0, 0, None, None
             )
 
-            def parser(path, _start):
+            def parser(path, _start, _cursor):
                 return [record] if path.name == "good.jsonl" else None
 
             with (

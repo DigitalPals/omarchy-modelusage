@@ -25,8 +25,8 @@ from model_usage_common import atomic_write_json, clean_message
 
 
 SCHEMA_VERSION = 1
-SCAN_CACHE_VERSION = 1
-RATE_CACHE_VERSION = 1
+SCAN_CACHE_VERSION = 2  # Resumable byte position, hashed guard, and Codex state.
+RATE_CACHE_VERSION = 2  # v1 discarded provider prefixes and could cache conflicting rates.
 PROVIDER_ORDER = ("claude", "codex", "kimi")
 PROVIDER_NAMES = {
     "claude": "Claude Code",
@@ -38,6 +38,10 @@ LITELLM_RATES_URL = (
     "model_prices_and_context_window.json"
 )
 RATE_TTL_SECONDS = 24 * 60 * 60
+RATE_REFRESH_FLOOR_SECONDS = 60
+MAX_OVERRIDE_BYTES = 64 * 1024
+MAX_PRICE_OVERRIDES = 128
+MAX_PRICE_PER_MILLION = 1_000_000_000
 CACHE_RETENTION_DAYS = 32
 MTIME_SLACK_SECONDS = 36 * 60 * 60
 MAX_RATE_BYTES = 32 * 1024 * 1024
@@ -53,6 +57,7 @@ MAX_SCAN_CACHE_BYTES = 32 * 1024 * 1024
 MAX_SCAN_CACHE_FILES = 10_000
 MAX_MODEL_NAME_CHARS = 256
 MAX_MODEL_GROUPS = 512
+TRANSCRIPT_GUARD_BYTES = 64
 
 
 class TranscriptLimitError(ValueError):
@@ -130,7 +135,97 @@ def read_bounded_json(path: Path, max_bytes: int) -> Any:
     return json.loads(raw)
 
 
-def bounded_jsonl_lines(path: Path) -> Iterable[str]:
+def initial_codex_state() -> dict[str, Any]:
+    return dict(model="", session_id="", last_signature=None, saw_session_meta=False,
+                suppressing_fork_copies=False, fork_copy_anchor_ms=0)
+
+
+class TranscriptCursor:
+    """Read a fixed file snapshot, retaining only usage state and hashed guards."""
+
+    def __init__(self, stats: os.stat_result, budget: list[int], entry: dict[str, Any] | None = None):
+        self.stats = stats
+        self.budget = budget
+        self.entry = entry
+        self.state = initial_codex_state()
+        self.position: dict[str, Any] | None = None
+        self.base: list[UsageRecord] = []
+        self.resumed = False
+        self.tail = False
+        self.tail_count = 0
+
+    def spend(self, count: int) -> None:
+        self.budget[0] -= count
+        if self.budget[0] < 0:
+            raise TranscriptLimitError("changed transcript input exceeds the scan limit")
+
+    def lines(self, path: Path) -> Iterable[str]:
+        if self.stats.st_size > MAX_TRANSCRIPT_FILE_BYTES:
+            raise TranscriptLimitError("transcript file is unexpectedly large")
+        with path.open("rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+                self.stats.st_dev, self.stats.st_ino, self.stats.st_size, self.stats.st_mtime_ns
+            ):
+                raise OSError("transcript changed before it could be read")
+            start = 0
+            entry = self.entry
+            pos = entry.get("position") if entry else None
+            if (entry and pos and self.stats.st_size > entry["s"]
+                    and pos["device"] == self.stats.st_dev and pos["inode"] == self.stats.st_ino):
+                offset = pos["offset"]
+                guard_size = min(TRANSCRIPT_GUARD_BYTES, offset)
+                handle.seek(offset - guard_size)
+                guard = handle.read(guard_size)
+                self.spend(len(guard))
+                if len(guard) == guard_size and hashlib.sha256(guard).hexdigest() == pos["guard"]:
+                    start = offset
+                    self.state.update(pos["state"])
+                    self.base = entry["records"][:len(entry["records"]) - entry.get("tailCount", 0)]
+                    self.resumed = True
+            # Check the budget before reading a large changed file. A failed
+            # guard uses the full-file budget, never the optimistic tail size.
+            if self.stats.st_size - start > self.budget[0]:
+                raise TranscriptLimitError("changed transcript input exceeds the scan limit")
+            handle.seek(start)
+            offset = start
+            committed_state = dict(self.state)
+            while handle.tell() < self.stats.st_size:
+                remaining = self.stats.st_size - handle.tell()
+                raw = handle.readline(min(MAX_TRANSCRIPT_LINE_BYTES + 1, remaining))
+                if not raw:
+                    raise OSError("transcript was truncated during the scan")
+                self.spend(len(raw))
+                if len(raw) > MAX_TRANSCRIPT_LINE_BYTES:
+                    raise TranscriptLimitError("transcript line is unexpectedly large")
+                self.tail = not raw.endswith(b"\n")
+                yield raw.decode("utf-8", errors="replace")
+                if not self.tail:
+                    offset = handle.tell()
+                    committed_state = dict(self.state)
+            guard_size = min(TRANSCRIPT_GUARD_BYTES, offset)
+            handle.seek(offset - guard_size)
+            guard = handle.read(guard_size)
+            self.spend(len(guard))
+            # A concurrent writer is retried on the next refresh. Never persist
+            # records and a resume position assembled from different snapshots.
+            ended = os.fstat(handle.fileno())
+            if ended.st_size != self.stats.st_size or ended.st_mtime_ns != self.stats.st_mtime_ns:
+                raise OSError("transcript changed during the scan")
+            self.position = dict(offset=offset, guard=hashlib.sha256(guard).hexdigest(),
+                                 device=self.stats.st_dev, inode=self.stats.st_ino, state=committed_state)
+
+
+def append_record(records: list[UsageRecord], record: UsageRecord, cursor: TranscriptCursor | None) -> None:
+    records.append(record)
+    if cursor is not None and cursor.tail:
+        cursor.tail_count += 1
+
+
+def bounded_jsonl_lines(path: Path, cursor: TranscriptCursor | None = None) -> Iterable[str]:
+    if cursor is not None:
+        yield from cursor.lines(path)
+        return
     with path.open("rb") as handle:
         consumed = 0
         while True:
@@ -203,6 +298,33 @@ def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
     )
 
 
+def valid_hash(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def decode_position(value: Any, size: int) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    for key in ("offset", "device", "inode"):
+        number = value.get(key)
+        if type(number) is not int or number < 0:
+            return None
+    if value["offset"] > size or not valid_hash(value.get("guard")):
+        return None
+    state = value.get("state")
+    if not isinstance(state, dict) or set(state) != set(initial_codex_state()):
+        return None
+    if (not isinstance(state["model"], str) or len(state["model"]) > MAX_MODEL_NAME_CHARS
+            or (state["session_id"] != "" and not valid_hash(state["session_id"]))
+            or (state["last_signature"] is not None and not valid_hash(state["last_signature"]))
+            or type(state["saw_session_meta"]) is not bool
+            or type(state["suppressing_fork_copies"]) is not bool
+            or type(state["fork_copy_anchor_ms"]) is not int
+            or not 0 <= state["fork_copy_anchor_ms"] <= 10**16):
+        return None
+    return {key: value[key] for key in ("offset", "device", "inode", "guard", "state")}
+
+
 def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
     try:
         document = read_bounded_json(path, MAX_SCAN_CACHE_BYTES)
@@ -223,16 +345,25 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
         provider = entry.get("p")
         if provider not in PROVIDER_ORDER:
             continue
-        size = finite_number(entry.get("s"))
-        modified = finite_number(entry.get("m"))
+        # Nanosecond mtimes exceed float's exact integer range. Keep JSON ints
+        # intact or an unchanged file can miss the cache on every refresh.
+        size = entry.get("s")
+        modified = entry.get("m")
         rows = entry.get("r")
         if (
-            size is None
-            or modified is None
+            type(size) is not int
+            or size < 0 or size > MAX_TRANSCRIPT_FILE_BYTES
+            or type(modified) is not int or modified < 0
             or not isinstance(rows, list)
             or len(rows) > MAX_TRANSCRIPT_RECORDS_PER_FILE
             or cached_records + len(rows) > MAX_TRANSCRIPT_RECORDS_TOTAL
         ):
+            continue
+        position = decode_position(entry.get("position"), int(size))
+        if entry.get("position") is not None and position is None:
+            continue
+        tail_count = entry.get("tailCount", 0)
+        if type(tail_count) is not int or not 0 <= tail_count <= len(rows):
             continue
         records: list[UsageRecord] = []
         corrupt = False
@@ -248,6 +379,8 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
                 "m": int(modified),
                 "p": provider,
                 "records": records,
+                "position": position,
+                "tailCount": tail_count,
             }
             cached_records += len(records)
     return cache
@@ -271,6 +404,8 @@ def save_scan_cache(path: Path, cache: dict[str, dict[str, Any]]) -> None:
             "m": int(entry["m"]),
             "p": entry["p"],
             "r": [serialize_record(record) for record in records],
+            "position": entry.get("position"),
+            "tailCount": entry.get("tailCount", 0),
         }
         cached_records += len(records)
     atomic_write_json(path, {"schemaVersion": SCAN_CACHE_VERSION, "files": files})
@@ -310,11 +445,11 @@ def record_from_claude(document: Any) -> UsageRecord | None:
     return record if record.total_tokens > 0 else None
 
 
-def parse_claude_file(path: Path, retention_start_ms: int) -> list[UsageRecord] | None:
+def parse_claude_file(path: Path, retention_start_ms: int, cursor: TranscriptCursor | None = None) -> list[UsageRecord] | None:
     records: list[UsageRecord] = []
     seen: set[str] = set()
     try:
-        for line in bounded_jsonl_lines(path):
+        for line in bounded_jsonl_lines(path, cursor):
             if '"usage"' not in line:
                 continue
             try:
@@ -329,7 +464,7 @@ def parse_claude_file(path: Path, retention_start_ms: int) -> list[UsageRecord] 
                 seen.add(record.dedupe_key)
             if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
                 raise TranscriptLimitError("too many usage records in one transcript")
-            records.append(record)
+            append_record(records, record, cursor)
     except (OSError, TranscriptLimitError):
         return None
     return records
@@ -348,16 +483,11 @@ def codex_forked(payload: dict[str, Any]) -> bool:
     return isinstance(spawn, dict) and isinstance(spawn.get("parent_thread_id"), str)
 
 
-def parse_codex_file(path: Path, retention_start_ms: int) -> list[UsageRecord] | None:
+def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCursor | None = None) -> list[UsageRecord] | None:
     records: list[UsageRecord] = []
-    model = ""
-    session_id = ""
-    last_signature: str | None = None
-    saw_session_meta = False
-    suppressing_fork_copies = False
-    fork_copy_anchor_ms = 0
+    state = cursor.state if cursor is not None else initial_codex_state()
     try:
-        for line in bounded_jsonl_lines(path):
+        for line in bounded_jsonl_lines(path, cursor):
             if not any(marker in line for marker in ('"session_meta"', '"turn_context"', '"token_count"')):
                 continue
             try:
@@ -369,36 +499,36 @@ def parse_codex_file(path: Path, retention_start_ms: int) -> list[UsageRecord] |
             payload = document["payload"]
             record_type = document.get("type")
             if record_type == "session_meta":
-                if saw_session_meta:
+                if state["saw_session_meta"]:
                     continue
-                saw_session_meta = True
+                state["saw_session_meta"] = True
                 raw_id = payload.get("id") or payload.get("session_id")
                 if isinstance(raw_id, str):
-                    session_id = opaque_id("codex:" + raw_id)
+                    state["session_id"] = opaque_id("codex:" + raw_id)
                 timestamp = parse_timestamp_ms(document.get("timestamp"))
                 if timestamp is not None and codex_forked(payload):
-                    suppressing_fork_copies = True
-                    fork_copy_anchor_ms = timestamp
+                    state["suppressing_fork_copies"] = True
+                    state["fork_copy_anchor_ms"] = timestamp
                 continue
             if record_type == "turn_context":
-                model = bounded_model(payload.get("model"))
+                state["model"] = bounded_model(payload.get("model"))
                 continue
             if payload.get("type") != "token_count":
                 continue
             info = payload.get("info")
             last = info.get("last_token_usage") if isinstance(info, dict) else None
             timestamp = parse_timestamp_ms(document.get("timestamp"))
-            if not isinstance(last, dict) or timestamp is None or not model:
+            if not isinstance(last, dict) or timestamp is None or not state["model"]:
                 continue
-            signature = json.dumps(last, separators=(",", ":"), sort_keys=True)
-            if signature == last_signature:
+            signature = opaque_id(json.dumps(last, separators=(",", ":"), sort_keys=True))
+            if signature == state["last_signature"]:
                 continue
-            last_signature = signature
-            if suppressing_fork_copies:
-                if timestamp - fork_copy_anchor_ms < FORK_COPY_MAX_GAP_MS:
-                    fork_copy_anchor_ms = timestamp
+            state["last_signature"] = signature
+            if state["suppressing_fork_copies"]:
+                if timestamp - state["fork_copy_anchor_ms"] < FORK_COPY_MAX_GAP_MS:
+                    state["fork_copy_anchor_ms"] = timestamp
                     continue
-                suppressing_fork_copies = False
+                state["suppressing_fork_copies"] = False
             input_tokens = nonnegative_int(last.get("input_tokens"))
             cached = nonnegative_int(last.get("cached_input_tokens"))
             cache_creation = nonnegative_int(last.get("cache_write_input_tokens"))
@@ -406,8 +536,8 @@ def parse_codex_file(path: Path, retention_start_ms: int) -> list[UsageRecord] |
             record = UsageRecord(
                 provider="codex",
                 timestamp_ms=timestamp,
-                model=model,
-                session_id=session_id,
+                model=state["model"],
+                session_id=state["session_id"],
                 uncached_input=max(0, input_tokens - cached - cache_creation),
                 cached_input=cached,
                 cache_creation=cache_creation,
@@ -419,7 +549,7 @@ def parse_codex_file(path: Path, retention_start_ms: int) -> list[UsageRecord] |
             if record.total_tokens > 0 and record.timestamp_ms >= retention_start_ms:
                 if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
                     raise TranscriptLimitError("too many usage records in one transcript")
-                records.append(record)
+                append_record(records, record, cursor)
     except (OSError, TranscriptLimitError):
         return None
     return records
@@ -438,12 +568,12 @@ def kimi_events(message_type: str, payload: Any) -> Iterable[tuple[str, dict[str
     yield message_type, payload
 
 
-def parse_kimi_file(path: Path, retention_start_ms: int) -> list[UsageRecord] | None:
+def parse_kimi_file(path: Path, retention_start_ms: int, cursor: TranscriptCursor | None = None) -> list[UsageRecord] | None:
     records: list[UsageRecord] = []
     raw_session = path.parent.name
     session_id = opaque_id("kimi:" + raw_session) if raw_session else ""
     try:
-        for line in bounded_jsonl_lines(path):
+        for line in bounded_jsonl_lines(path, cursor):
             if '"token_usage"' not in line:
                 continue
             try:
@@ -488,13 +618,13 @@ def parse_kimi_file(path: Path, retention_start_ms: int) -> list[UsageRecord] | 
                 if record.total_tokens > 0:
                     if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
                         raise TranscriptLimitError("too many usage records in one transcript")
-                    records.append(record)
+                    append_record(records, record, cursor)
     except (OSError, TranscriptLimitError):
         return None
     return records
 
 
-PARSERS: dict[str, Callable[[Path, int], list[UsageRecord] | None]] = {
+PARSERS: dict[str, Callable[..., list[UsageRecord] | None]] = {
     "claude": parse_claude_file,
     "codex": parse_codex_file,
     "kimi": parse_kimi_file,
@@ -590,7 +720,7 @@ def scan_transcripts(
     walked: set[str] = set()
     live_by_provider: dict[str, set[str] | None] = {}
     cache_changed = False
-    scanned_input_bytes = 0
+    scan_budget = [MAX_TRANSCRIPT_SCAN_BYTES]
 
     for provider in provider_ids:
         root = transcript_root(provider)
@@ -625,21 +755,45 @@ def scan_transcripts(
                 and entry.get("p") == provider
                 and entry.get("s") == size
                 and entry.get("m") == modified
+                and (not entry.get("position") or (
+                    entry["position"]["device"] == stats.st_dev
+                    and entry["position"]["inode"] == stats.st_ino))
             )
+            cursor = None
             if cache_hit:
-                parsed = entry["records"]
+                parsed = [record for record in entry["records"] if record.timestamp_ms >= retention_start_ms]
             else:
                 if entry is not None:
                     del cache[key]
                     cache_changed = True
-                if (
-                    size > MAX_TRANSCRIPT_FILE_BYTES
-                    or scanned_input_bytes + size > MAX_TRANSCRIPT_SCAN_BYTES
-                ):
+                can_resume = entry and entry.get("position") and size > entry["s"] and entry["p"] == provider
+                if size > MAX_TRANSCRIPT_FILE_BYTES or (not can_resume and size > scan_budget[0]):
                     parsed = None
                 else:
-                    scanned_input_bytes += size
-                    parsed = PARSERS[provider](path, retention_start_ms)
+                    cursor = TranscriptCursor(stats, scan_budget, entry if entry and entry["p"] == provider else None)
+                    parsed = PARSERS[provider](path, retention_start_ms, cursor)
+                    if parsed is not None:
+                        # One dedupe set spans the old prefix, appended lines,
+                        # and provisional EOF records. The next scan replaces
+                        # provisional records, it never appends them twice.
+                        tail_start = len(parsed) - cursor.tail_count
+                        complete = cursor.base + parsed[:tail_start]
+                        tail = parsed[tail_start:]
+                        merged = []
+                        seen: set[str] = set()
+                        tail_count = 0
+                        for rows, provisional in ((complete, False), (tail, True)):
+                            for record in rows:
+                                if record.timestamp_ms < retention_start_ms:
+                                    continue
+                                if record.dedupe_key is not None:
+                                    if record.dedupe_key in seen:
+                                        continue
+                                    seen.add(record.dedupe_key)
+                                merged.append(record)
+                                tail_count += int(provisional)
+                        cursor.tail_count = tail_count
+                        parsed = merged if len(merged) <= MAX_TRANSCRIPT_RECORDS_PER_FILE else None
             if parsed is None:
                 source["skippedFiles"] += 1
                 continue
@@ -652,6 +806,8 @@ def scan_transcripts(
                     "m": modified,
                     "p": provider,
                     "records": parsed,
+                    "position": cursor.position if cursor else None,
+                    "tailCount": cursor.tail_count if cursor else 0,
                 }
                 cache_changed = True
             source["scannedFiles"] += 1
@@ -695,7 +851,7 @@ def scan_transcripts(
 
 
 def normalize_model_name(model: str) -> str:
-    normalized = model.strip().lower().rsplit("/", 1)[-1]
+    normalized = model.strip().lower()
     return normalized[:MAX_MODEL_NAME_CHARS]
 
 
@@ -724,12 +880,69 @@ def parse_rate_table(document: Any) -> dict[str, tuple[float, float, float, floa
             continue
         cache_read = finite_number(raw.get("cache_read_input_token_cost"))
         cache_create = finite_number(raw.get("cache_creation_input_token_cost"))
-        rates[normalize_model_name(name)] = (
+        key = normalize_model_name(name)
+        if not key or len(name.strip()) > MAX_MODEL_NAME_CHARS:
+            continue
+        rates[key] = (
             input_rate,
             output_rate,
             cache_read if cache_read is not None and cache_read >= 0 else input_rate,
             cache_create if cache_create is not None and cache_create >= 0 else input_rate,
         )
+    # Preserve canonical and provider-qualified entries. A bare alias is safe
+    # only when every qualified entry agrees on all four rates.
+    aliases: dict[str, tuple[float, float, float, float] | None] = {}
+    for key, rate in rates.items():
+        bare = key.rsplit("/", 1)[-1]
+        if not bare or bare == key or bare in rates:
+            continue
+        if bare not in aliases:
+            aliases[bare] = rate
+        elif aliases[bare] != rate:
+            aliases[bare] = None
+    rates.update({key: rate for key, rate in aliases.items() if rate is not None})
+    return rates
+
+
+def lookup_rate(model: str, rates: dict[str, tuple[float, float, float, float]]):
+    key = normalize_model_name(model).split("[", 1)[0]
+    if key.rsplit("/", 1)[-1] in UNPRICEABLE_MODELS:
+        return None
+    return rates.get(key)
+
+
+def parse_price_overrides(raw: str) -> dict[str, tuple[float, float, float, float]]:
+    """Exact, case-sensitive model IDs; prices in USD per million tokens."""
+    if len(raw.encode("utf-8")) > MAX_OVERRIDE_BYTES:
+        raise ValueError("Custom prices exceed the 64 KiB limit.")
+    try:
+        document = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise ValueError("Custom prices must be a JSON object.") from None
+    if not isinstance(document, dict) or len(document) > MAX_PRICE_OVERRIDES:
+        raise ValueError("Custom prices must contain at most 128 models.")
+    rates = {}
+    fields = ("inputCostPerMillionTokens", "outputCostPerMillionTokens",
+              "cacheReadCostPerMillionTokens", "cacheWriteCostPerMillionTokens")
+    for model, prices in document.items():
+        key = model.strip()
+        if not key or len(key) > MAX_MODEL_NAME_CHARS or key in rates or any(ord(c) < 32 for c in key):
+            raise ValueError("Custom prices require unique model IDs of 1–256 characters.")
+        # Unattributed Kimi activity and synthetic messages must stay unpriced.
+        if key.lower().rsplit("/", 1)[-1].split("[", 1)[0] in ("<unattributed>", "<synthetic>", "synthetic"):
+            raise ValueError("Custom prices require an attributable model ID.")
+        if not isinstance(prices, dict) or set(prices) - set(fields):
+            raise ValueError("Custom prices contain unsupported fields.")
+        values = []
+        for index, field in enumerate(fields):
+            value = prices.get(field, prices.get(fields[0]) if index >= 2 else None)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("Custom prices require numeric input/output rates; cache rates are optional.")
+            number = finite_number(value)
+            if number is None or not 0 <= number <= MAX_PRICE_PER_MILLION:
+                raise ValueError("Custom prices must be between 0 and 1,000,000,000 USD per million tokens.")
+            values.append(number / 1_000_000)
+        rates[key] = tuple(values)
     return rates
 
 
@@ -788,13 +1001,14 @@ def fetch_rate_document(timeout: float) -> Any:
 
 
 def load_rates(
-    state_dir: Path | None, timeout: float, now: int
+    state_dir: Path | None, timeout: float, now: int, force: bool = False
 ) -> tuple[dict[str, tuple[float, float, float, float]], dict[str, Any]]:
     cache_path = state_path("cost-model-rates.json", state_dir)
     cached = load_rate_cache(cache_path)
     cached_at = cached[0] if cached else None
     cached_rates = cached[1] if cached else {}
-    if cached_at is not None and now - cached_at < RATE_TTL_SECONDS:
+    max_age = RATE_REFRESH_FLOOR_SECONDS if force else RATE_TTL_SECONDS
+    if cached_at is not None and 0 <= now - cached_at < max_age:
         return cached_rates, {
             "status": "cached",
             "source": LITELLM_RATES_URL,
@@ -876,6 +1090,9 @@ def empty_cell() -> dict[str, Any]:
         "records": 0,
         "pricedRecords": 0,
         "providerReportedRecords": 0,
+        "customPricedRecords": 0,
+        "basePricedRecords": 0,
+        "variantPricedRecords": 0,
         "unpricedRecords": 0,
         "rateMatchedRecords": 0,
         "rateAvailableRecords": 0,
@@ -887,6 +1104,7 @@ def add_record(
     cell: dict[str, Any],
     record: UsageRecord,
     rates: dict[str, tuple[float, float, float, float]],
+    overrides: dict[str, tuple[float, float, float, float]] | None = None,
 ) -> None:
     cell["uncachedInputTokens"] += record.uncached_input
     cell["cachedInputTokens"] += record.cached_input
@@ -897,13 +1115,13 @@ def add_record(
     if record.session_id:
         cell["sessions"].add(record.session_id)
 
-    normalized_model = normalize_model_name(record.model)
-    rate = None if normalized_model in UNPRICEABLE_MODELS else rates.get(normalized_model)
-    if record.reported_cost_usd is not None:
+    custom = (overrides or {}).get(record.model.strip()) if record.provider != "kimi" else None
+    rate = custom if custom is not None else lookup_rate(record.model, rates)
+    if record.reported_cost_usd is not None and custom is None:
         cell["cost"] += record.reported_cost_usd
         cell["pricedRecords"] += 1
         cell["providerReportedRecords"] += 1
-    elif rate is not None and normalize_model_name(record.model) not in UNPRICEABLE_MODELS:
+    elif rate is not None:
         input_rate, output_rate, cache_read_rate, cache_create_rate = rate
         cell["cost"] += (
             record.uncached_input * input_rate
@@ -913,6 +1131,12 @@ def add_record(
         )
         cell["pricedRecords"] += 1
         cell["rateMatchedRecords"] += 1
+        if custom is not None:
+            cell["customPricedRecords"] += 1
+        else:
+            cell["basePricedRecords"] += 1
+            if "[" in record.model:
+                cell["variantPricedRecords"] += 1
     else:
         cell["unpricedRecords"] += 1
 
@@ -946,10 +1170,12 @@ def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
         cache_savings = (
             round(float(cell["cacheSavings"]), 8) if cell["rateAvailableRecords"] > 0 else None
         )
-        if cell["unpricedRecords"] > 0 or (
-            cell["providerReportedRecords"] > 0 and cell["rateMatchedRecords"] > 0
-        ):
+        source_kinds = sum(cell[key] > 0 for key in (
+            "providerReportedRecords", "customPricedRecords", "basePricedRecords"))
+        if cell["unpricedRecords"] > 0 or source_kinds > 1:
             source = "mixed"
+        elif cell["customPricedRecords"] == records:
+            source = "customPriced"
         elif cell["providerReportedRecords"] == records:
             source = "providerReported"
         else:
@@ -966,6 +1192,10 @@ def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
         "records": records,
         "pricedRecords": priced,
         "unpricedRecords": int(cell["unpricedRecords"]),
+        "providerReportedRecords": int(cell["providerReportedRecords"]),
+        "customPricedRecords": int(cell["customPricedRecords"]),
+        "basePricedRecords": int(cell["basePricedRecords"]),
+        "variantPricedRecords": int(cell["variantPricedRecords"]),
         "sessions": len(cell["sessions"]),
         "costSource": source,
     }
@@ -1025,6 +1255,7 @@ def aggregate_usage(
     now_ms: int,
     rates: dict[str, tuple[float, float, float, float]],
     zone_name: str | None = None,
+    overrides: dict[str, tuple[float, float, float, float]] | None = None,
 ) -> dict[str, Any]:
     zone = local_zone(zone_name)
     period, period_keys, bucket_for = period_window(days, now_ms, zone)
@@ -1052,11 +1283,11 @@ def aggregate_usage(
         if model_key not in model_cells and len(model_cells) >= MAX_MODEL_GROUPS:
             model_key = (record.provider, "<other>")
         model_cell = model_cells.setdefault(model_key, empty_cell())
-        add_record(provider_cell, record, rates)
-        add_record(model_cell, record, rates)
-        add_record(period_cells[bucket], record, rates)
-        add_record(period_provider_cells[bucket][record.provider], record, rates)
-        add_record(total, record, rates)
+        add_record(provider_cell, record, rates, overrides)
+        add_record(model_cell, record, rates, overrides)
+        add_record(period_cells[bucket], record, rates, overrides)
+        add_record(period_provider_cells[bucket][record.provider], record, rates, overrides)
+        add_record(total, record, rates, overrides)
 
     providers: list[dict[str, Any]] = []
     for provider in provider_ids:
@@ -1118,17 +1349,20 @@ def build_payload(
     now_ms: int | None = None,
     zone_name: str | None = None,
     rates_override: tuple[dict[str, tuple[float, float, float, float]], dict[str, Any]] | None = None,
+    force_rates: bool = False,
+    price_overrides: str = "{}",
 ) -> dict[str, Any]:
     started = time.monotonic()
+    overrides = parse_price_overrides(price_overrides)
     stamp_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     records, coverage = scan_transcripts(provider_ids, state_dir, stamp_ms)
     needs_rates = any(
-        record.provider != "kimi" and record.reported_cost_usd is None for record in records
+        record.provider != "kimi" and record.model.strip() not in overrides for record in records
     )
     if rates_override is not None:
         rates, pricing = rates_override
-    elif needs_rates:
-        rates, pricing = load_rates(state_dir, timeout, stamp_ms // 1000)
+    elif needs_rates or force_rates:
+        rates, pricing = load_rates(state_dir, timeout, stamp_ms // 1000, force=force_rates)
     else:
         rates = {}
         pricing = {
@@ -1138,7 +1372,8 @@ def build_payload(
             "knownModels": 0,
             "message": "No model-price lookup was needed for this result.",
         }
-    result = aggregate_usage(records, provider_ids, days, stamp_ms, rates, zone_name)
+    pricing = {**pricing, "basis": "currentBaseRates", "customModels": len(overrides)}
+    result = aggregate_usage(records, provider_ids, days, stamp_ms, rates, zone_name, overrides)
     sessions_by_provider = {row["id"]: row["sessions"] for row in result["providers"]}
     coverage_by_provider = {row["id"]: row for row in coverage}
     for source in coverage:
@@ -1168,6 +1403,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--time-zone")
+    parser.add_argument("--refresh-prices", action="store_true")
+    parser.add_argument("--price-overrides", default="{}", help="Exact-model rates as JSON, in USD per million tokens")
     args = parser.parse_args(argv)
     try:
         payload = build_payload(
@@ -1176,6 +1413,8 @@ def main(argv: list[str] | None = None) -> int:
             max(1.0, min(20.0, args.timeout)),
             args.state_dir,
             zone_name=args.time_zone,
+            force_rates=args.refresh_prices,
+            price_overrides=args.price_overrides,
         )
     except Exception as exc:
         payload = {

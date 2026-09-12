@@ -17,6 +17,7 @@ Column {
   property string errorText: ""
   property var draft: ({})
   property alias managementKey: managementKeyField.text
+  property alias priceEditor: priceEditor
   readonly property bool saving: keyWriter.running
   property var pendingValues: null
   property string pendingKey: ""
@@ -76,6 +77,7 @@ Column {
       warningThreshold: String(value("warningThreshold", 25)),
       criticalThreshold: String(value("criticalThreshold", 10))
     }
+    priceEditor.begin(String(value("costPriceOverrides", "{}")))
     errorText = ""
   }
 
@@ -101,6 +103,8 @@ Column {
   function submit() {
     if (saving) return false
     var next = Object.assign({}, draft)
+    try { next.costPriceOverrides = priceEditor.serialize() }
+    catch (error) { errorText = String(error.message || error); return false }
     var ranges = [
       ["refreshIntervalSec", "Refresh interval", 60, 3600],
       ["warningThreshold", "Warning threshold", 1, 100],
@@ -377,6 +381,16 @@ Column {
         }
       }
     }
+  }
+
+  CostPriceEditor {
+    id: priceEditor
+    width: parent.width
+    foreground: root.foreground
+    urgent: root.urgent
+    fontFamily: root.fontFamily
+    onRevealRequested: function(item) { root.revealRequested(item) }
+    onEdited: root.errorText = ""
   }
 
   Hint {

@@ -34,6 +34,8 @@ CLIProxyAPI source selection and account-pool behavior were also reviewed at Fed
 
 The estimated-cost feature adapts the transcript parsing, de-duplication, model pricing, and aggregation approach from [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) at commit `afa83098064e7dca524a1e42dea3de03a883a0b6`. The React interface and Effect/TypeScript service were not redistributed; the implementation here is a native QML/Python port with a separate contract, privacy-hardened cache identifiers, Kimi token coverage, and explicit unavailable-price states.
 
+The model lookup, custom-rate precedence, forced-refresh behavior, and guarded incremental scanning were updated with reference to commit [`ca6416ec2d1d194738bc78a81df4b82a75cb72e2`](https://github.com/pingdotgg/t3code/tree/ca6416ec2d1d194738bc78a81df4b82a75cb72e2). The Python scanner retains this project’s bounded reads, explicit partial coverage, and SHA-256 identifiers and guards.
+
 T3 Code is distributed under the MIT license:
 
 > MIT License

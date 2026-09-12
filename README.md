@@ -107,7 +107,7 @@ ${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/cost-scan-cache.json
 ${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/cost-model-rates.json
 ```
 
-`history.json` contains bounded quota percentages. The cost scan cache contains only timestamps, model names, token counters, reported cost values, and SHA-256 identifiers for transcript paths, sessions, and deduplication keys. It never contains prompts, responses, or tool output. The model-rate cache is a compact copy of public LiteLLM prices.
+`history.json` contains bounded quota percentages. The cost scan cache contains only timestamps, model names, token counters, reported cost values, SHA-256 identifiers for transcript paths, sessions, and deduplication keys, and bounded resume metadata (byte position, device/inode, hashed tail guard, and sanitized Codex parser state). It never contains prompts, responses, or tool output. The model-rate cache is a compact copy of public LiteLLM prices.
 
 ## What it shows
 
@@ -125,7 +125,9 @@ A failure in one provider is isolated; healthy providers remain selectable and r
 
 ### What “estimated cost” means
 
-Costs are the approximate public API value of locally recorded tokens, not money charged to a Claude, ChatGPT, or Kimi subscription. Claude-reported transcript costs take precedence; other attributable models use LiteLLM's public input, output, cache-read, and cache-creation rates. Pricing is fetched at most daily and cached for offline use.
+Costs are the approximate API value of locally recorded tokens, not money charged to a Claude, ChatGPT, or Kimi subscription. Exact-model custom prices take precedence when configured; otherwise Claude-reported transcript costs take precedence over LiteLLM's public input, output, cache-read, and cache-creation rates. The Costs view identifies custom prices, provider-reported costs, and public base-rate estimates.
+
+Public prices refresh automatically after 24 hours and are cached for offline use. **Refresh in Costs** also refreshes prices before that deadline, with a one-minute minimum between successful downloads. Provider-qualified model IDs keep their own rates; conflicting reseller prices cannot overwrite a canonical model. Bracketed variants such as `[1m]` use the base model's current rates and are identified as base-rate estimates. Historical prices, long-context premiums, and priority/flex/batch tiers are not inferred.
 
 Claude and Codex transcripts contain enough historical model information for estimation. Kimi's `wire.jsonl` contains reliable token counters but not reliable historical model attribution, so Kimi is shown as token-only and unpriced instead of being guessed. Transcript scanning starts only when the Costs tab is opened with missing/stale data or explicitly refreshed.
 
@@ -166,6 +168,8 @@ In CLIProxyAPI mode, all discovered providers are monitored automatically; the p
 
 The form also includes quota source, CLIProxyAPI URL and a masked Management API key field, refresh interval, and warning/critical thresholds. Key storage is handled automatically. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
 
+Under **Custom model prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits. Kimi remains token-only because its historical model is unknown.
+
 | Key | Default | Meaning |
 |---|---:|---|
 | `refreshIntervalSec` | `900` | Automatic refresh interval; clamped to 60–3600 seconds |
@@ -178,6 +182,7 @@ The form also includes quota source, CLIProxyAPI URL and a masked Management API
 | `barProviders` | all three | Enabled providers allowed to show percentage chips; independent of popup visibility |
 | `warningThreshold` | `25` | Mark urgent at or below this percentage remaining |
 | `criticalThreshold` | `10` | Critical threshold in percentage remaining |
+| `costPriceOverrides` | `"{}"` | JSON string managed by Custom model prices; exact IDs mapped to USD-per-million rates |
 
 Examples:
 
@@ -197,8 +202,9 @@ omarchy bar set digitalpals.model-usage criticalThreshold 5 --json
 - `UsageBackend.qml` owns one bounded asynchronous Python process, coalesces duplicate refresh requests, applies the configured interval, and rejects malformed contract output.
 - `scripts/usage-fetch.py` performs parallel, failure-isolated provider collection and emits the versioned provider-neutral contract documented in [docs/backend-contract.md](docs/backend-contract.md).
 - `CostBackend.qml` owns an independent, on-demand transcript scan, keeps the last known-good result across malformed responses, and never changes quota polling.
-- `scripts/cost-fetch.py` streams CLI JSONL, applies provider-specific deduplication, caches sanitized per-file usage records, prices attributable models, and emits [the estimated-cost contract](docs/cost-contract.md).
-- `UsageCosts.qml` renders the metric/period controls, time chart, token mix, coverage notices, and provider/model breakdowns without parsing raw history in QML.
+- `scripts/cost-fetch.py` streams CLI JSONL, applies provider-specific deduplication, resumes growing files from a guarded byte position, caches sanitized usage records, prices attributable models, and emits [the estimated-cost contract](docs/cost-contract.md).
+- `CostPriceEditor.qml` provides validated custom-price fields inside settings, with exact model matching and Save/Cancel behavior.
+- `UsageCosts.qml` renders the metric/period controls, time chart, token mix, pricing coverage percentages, and provider/model breakdowns without parsing raw history in QML.
 - `BlockMeter.qml` renders one track item per fixed block plus only the partial boundary fragment—there is no duplicate full-width fill layer.
 - `UsageHistory.qml` receives small pre-bucketed arrays; large history files are never parsed in QML.
 
@@ -220,6 +226,8 @@ The suite performs:
 - Claude, Codex, and Kimi normalization tests, including multiple/scoped windows and credits.
 - CLIProxyAPI HTTP integration, account-pool selection, disabled accounts, management/upstream errors, private key handling, redirect rejection, and source-isolated history.
 - Claude/Codex/Kimi transcript parsing, repeat/fork deduplication, token accounting, pricing, partial/unavailable costs, private cache tests, and adversarial input-ceiling tests.
+- Canonical/provider price collisions, ambiguous aliases, context variants, custom-price precedence, forced-refresh throttling, and incremental/cold scan equivalence across partial lines, replacements, and rewrites.
+- When Quickshell is available, an invisible QML test exercises custom-price editing, validation, persistence payloads, queued refreshes, and preservation of the last good result.
 - missing/expired credentials, HTTP errors, timeouts, rate limiting, malformed data, and provider-failure isolation.
 - bounded XDG history persistence and corrupt-history recovery.
 - JavaScript threshold and compact-percentage tests.
@@ -250,7 +258,7 @@ MODEL_USAGE_LIVE_TESTS=1 MODEL_USAGE_TEST_ALL_EDGES=1 ./tests/run
 
 `qmllint` cannot resolve child properties of Omarchy's dynamic `QtObject` theme tokens, the injected `bar` object, or Quickshell's native `QProcess::ExitStatus` signal type from the supplied import tree. The harness disables those two warning categories, treats every other warning as a failure, and uses the live Quickshell contract as the authoritative compile/runtime check for the dynamic bindings.
 
-When developing from a symlink below `~/.config/omarchy/plugins/`, saving any plugin file triggers Quattro's normal third-party-plugin hot reload.
+When developing from a symlink below `~/.config/omarchy/plugins/`, do not assume saving a file or rescanning plugins updates the running QML components. On this machine, the watcher does not watch the checkout behind that symlink, and a rescan did not reliably apply a nested component change. After validation, use `omarchy restart shell`, confirm a new shell PID, reopen the affected view, and inspect the actual result. See [AGENTS.md](AGENTS.md) for the verified live-application procedure.
 
 Maintainers should follow the [release checklist](docs/releasing.md) before tagging a version.
 
@@ -266,9 +274,9 @@ Maintainers should follow the [release checklist](docs/releasing.md) before tagg
 
 **History is empty.** History begins after the first successful limit fetch. Errors are not recorded as zero usage.
 
-**Costs are unavailable but tokens appear.** The transcript was readable but its historical model could not be matched to a price, or the LiteLLM table has never been downloaded successfully. Connect once and refresh, or use the Tokens metric; unknown prices are intentionally not displayed as zero.
+**Costs are unavailable but tokens appear.** The transcript was readable but its historical model could not be matched to a price, or the LiteLLM table has never been downloaded successfully. Connect and refresh Costs, configure an exact-model custom price, or use the Tokens metric; unknown prices are intentionally not displayed as zero. Invalid custom-price settings produce an error and preserve the last good result rather than silently falling back to different prices.
 
-**The first Costs scan is slower.** A cold scan streams recent transcript files. Later scans reuse a per-file size/mtime cache and normally parse only changed sessions.
+**The first Costs scan is slower.** A cold scan streams recent transcript files. Later scans reuse unchanged files and read only the appended bytes of growing sessions. Replaced, shortened, or detected rewritten files restart from the beginning. The first scan after this upgrade rebuilds old scan and price caches; stale flattened prices are never reused.
 
 **Kimi has no dollar estimate.** Current Kimi Code wire records expose token usage without reliable historical model identity. The plugin reports those tokens but will not invent a price.
 

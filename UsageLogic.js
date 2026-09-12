@@ -174,3 +174,64 @@ function preserveProxyReadings(previous, next) {
   })
   return next
 }
+
+// Custom cost rates are stored as JSON for the manifest's string setting, but
+// edited as ordinary fields. Model IDs deliberately keep case and prefixes.
+function encodeCostPrices(rows) {
+  var fields = ["inputCostPerMillionTokens", "outputCostPerMillionTokens",
+    "cacheReadCostPerMillionTokens", "cacheWriteCostPerMillionTokens"]
+  var result = Object.create(null)
+  if (rows.length > 128) throw new Error("Custom prices support at most 128 models.")
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    var model = String(row.model || "").trim()
+    if (!model || model.length > 256 || /[\x00-\x1f]/.test(model))
+      throw new Error("Enter a model ID of 1–256 characters for custom price " + (i + 1) + ".")
+    if (Object.prototype.hasOwnProperty.call(result, model))
+      throw new Error("Each custom price must use a different model ID.")
+    var bare = model.toLowerCase().split("/").pop().split("[")[0]
+    if (["<unattributed>", "<synthetic>", "synthetic"].indexOf(bare) >= 0)
+      throw new Error("Custom prices require an attributable model ID.")
+    var prices = {}
+    for (var j = 0; j < fields.length; j++) {
+      var raw = row[fields[j]]
+      var value = raw === undefined ? "" : String(raw).trim()
+      if (j >= 2 && value === "") continue
+      if (value === "" || !/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)
+          || !isFinite(Number(value)) || Number(value) > 1000000000)
+        throw new Error("Enter input/output prices from 0 to 1,000,000,000 USD per million tokens; cache prices may be blank.")
+      prices[fields[j]] = Number(value)
+    }
+    result[model] = prices
+  }
+  var json = JSON.stringify(result)
+  if (encodeURIComponent(json).replace(/%[0-9A-F]{2}/gi, "x").length > 65536)
+    throw new Error("Custom prices exceed the 64 KiB limit.")
+  return json
+}
+
+function decodeCostPrices(raw) {
+  if (typeof raw !== "string" || raw.length > 65536)
+    throw new Error("Saved custom prices are invalid. Remove them to restore automatic pricing.")
+  var document = JSON.parse(raw)
+  if (!document || typeof document !== "object" || Array.isArray(document))
+    throw new Error("Saved custom prices must be an object.")
+  var fields = ["inputCostPerMillionTokens", "outputCostPerMillionTokens",
+    "cacheReadCostPerMillionTokens", "cacheWriteCostPerMillionTokens"]
+  var rows = Object.keys(document).map(function(model) {
+    var prices = document[model]
+    if (!prices || typeof prices !== "object" || Array.isArray(prices)
+        || Object.keys(prices).some(function(key) { return fields.indexOf(key) < 0 }))
+      throw new Error("Saved custom prices contain unsupported fields.")
+    var row = { model: model }
+    for (var i = 0; i < fields.length; i++) {
+      var value = prices[fields[i]]
+      if (value !== undefined && (typeof value !== "number" || !isFinite(value)))
+        throw new Error("Saved custom prices must be numeric.")
+      row[fields[i]] = value === undefined ? "" : String(value)
+    }
+    return row
+  })
+  encodeCostPrices(rows)
+  return rows
+}

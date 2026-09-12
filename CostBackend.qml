@@ -26,6 +26,8 @@ Item {
   property double lastSuccessAt: 0
   property double lastAttemptAt: 0
   property bool pendingRefresh: false
+  property bool pendingPriceRefresh: false
+  property bool launchPending: false
   property bool requested: false
 
   readonly property var enabledProviderIds: normalizedProviderIds(setting(
@@ -35,6 +37,7 @@ Item {
     Math.round(Number(setting("refreshIntervalSec", 900)) || 900))) * 1000
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
+  readonly property string priceOverrides: String(setting("costPriceOverrides", "{}"))
 
   signal refreshed()
 
@@ -80,11 +83,12 @@ Item {
 
   function refresh() {
     requested = true
-    requestRefresh()
+    requestRefresh(true)
   }
 
-  function requestRefresh() {
-    if (fetchProcess.running) {
+  function requestRefresh(forcePrices) {
+    pendingPriceRefresh = pendingPriceRefresh || forcePrices === true
+    if (fetchProcess.running || launchPending || pendingRefresh) {
       pendingRefresh = true
       return
     }
@@ -92,18 +96,26 @@ Item {
   }
 
   function startFetch() {
+    if (fetchProcess.running || launchPending) return
+    launchPending = true
+    loading = true
     pendingRefresh = false
     lastAttemptAt = Date.now()
-    fetchProcess.command = [
+    var command = [
       "python3", scriptPath,
       "--providers", enabledProviderIds.join(","),
       "--days", String(periodDays),
-      "--timeout", "10"
+      "--timeout", "10",
+      "--price-overrides", priceOverrides
     ]
+    if (pendingPriceRefresh) command.push("--refresh-prices")
+    pendingPriceRefresh = false
+    fetchProcess.command = command
     fetchProcess.running = true
   }
 
   function settle() {
+    launchPending = false
     loading = false
     if (fetchProcess.outputTooLarge) {
       fetchError = "Estimated-cost backend returned too much data"
@@ -133,10 +145,13 @@ Item {
         }
       }
     }
-    if (pendingRefresh) Qt.callLater(function() { root.startFetch() })
+    if (pendingRefresh) Qt.callLater(function() {
+      if (root.pendingRefresh) root.startFetch()
+    })
   }
 
   onEnabledProviderIdsChanged: if (requested) requestRefresh()
+  onPriceOverridesChanged: if (requested) requestRefresh()
 
   Process {
     id: fetchProcess
@@ -172,6 +187,7 @@ Item {
     }
     onRunningChanged: {
       if (running) {
+        root.launchPending = false
         body = ""
         exitSeen = false
         lastExit = 0

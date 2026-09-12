@@ -24,7 +24,7 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(keys, {
             "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
             "warningThreshold", "criticalThreshold",
-            "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails",
+            "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails", "costPriceOverrides",
         })
 
     def test_packaged_paths_and_assets_are_self_contained(self):

@@ -88,3 +88,21 @@ const resetStale = context.preserveProxyReadings({ source: "cliproxy", providers
   { source: "cliproxy", providers: [{ ...resetFailure, accounts: [resetFailure] }] });
 assert.equal(context.accountResetLabel(resetStale.providers[0].accounts[0]), "2 banked resets");
 assert.equal(resetStale.providers[0].accounts[0].stale, true);
+
+const customRows = [{model: " vendor/Model[1m] ", inputCostPerMillionTokens: "2",
+  outputCostPerMillionTokens: "8", cacheReadCostPerMillionTokens: "0", cacheWriteCostPerMillionTokens: ""}];
+const customJson = context.encodeCostPrices(customRows);
+assert.deepEqual(JSON.parse(customJson), {"vendor/Model[1m]": {
+  inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8, cacheReadCostPerMillionTokens: 0}});
+assert.equal(context.encodeCostPrices(context.decodeCostPrices(customJson)), customJson);
+assert.equal(context.encodeCostPrices([]), "{}");
+for (const value of ["", "-1", "Infinity", "NaN", "0x10", "true", "1e10"])
+  assert.throws(() => context.encodeCostPrices([{...customRows[0], inputCostPerMillionTokens: value}]));
+assert.throws(() => context.encodeCostPrices([customRows[0], customRows[0]]));
+assert.throws(() => context.encodeCostPrices([{...customRows[0], model: "<unattributed>"}]));
+for (const raw of ["null", "[]", "{", '{"x":{"inputCostPerMillionTokens":true,"outputCostPerMillionTokens":2}}',
+  '{"x":{"inputCostPerMillionTokens":2}}', '{"x":{"inputCostPerMillionTokens":2,"outputCostPerMillionTokens":2,"extra":2}}'])
+  assert.throws(() => context.decodeCostPrices(raw));
+const specialId = context.encodeCostPrices([{...customRows[0], model: "__proto__"}]);
+assert.ok(Object.prototype.hasOwnProperty.call(JSON.parse(specialId), "__proto__"));
+console.log("Custom cost price validation: passed");

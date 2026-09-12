@@ -34,7 +34,7 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
   if ! "$qml_lint" -W 0 --missing-property disable --signal-handler-parameters disable \
     -I "$lint_root" \
     "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" \
-    "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" \
+    "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" "$repo_root/CostPriceEditor.qml" \
     "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
     "$repo_root/UsageSettings.qml" "$repo_root/ResetBackend.qml" \
     "$repo_root/ResetConfirmation.qml" >"$lint_log" 2>&1; then
@@ -47,6 +47,30 @@ else
 fi
 
 if command -v quickshell >/dev/null 2>&1 && [[ -d "$quattro_root/shell/Ui" ]]; then
+  cost_root="$test_root/cost"
+  mkdir -p "$cost_root/config" "$cost_root/cache"
+  cp "$repo_root/tests/qml/cost-shell.qml" "$cost_root/shell.qml"
+  ln -s "$quattro_root/shell/Ui" "$cost_root/Ui"
+  ln -s "$quattro_root/shell/Commons" "$cost_root/Commons"
+  repo_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root")
+  QT_QPA_PLATFORM=offscreen \
+  XDG_CONFIG_HOME="$cost_root/config" XDG_CACHE_HOME="$cost_root/cache" \
+  MODEL_USAGE_REPO_URL="$repo_url" \
+  MODEL_USAGE_FAKE_COST_BACKEND="$repo_root/tests/fake_cost_backend.py" \
+  MODEL_USAGE_COST_FIXTURE="$repo_root/tests/fixtures/normalized-costs.json" \
+  PATH="$repo_root/tests/fake-bin:$PATH" \
+  QML_IMPORT_PATH="$quattro_root/shell${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
+    timeout 12 quickshell -p "$cost_root" --no-color >"$cost_root/runtime.log" 2>&1 || {
+      cat "$cost_root/runtime.log"
+      exit 1
+    }
+  if ! rg -q 'Cost QML contract: passed' "$cost_root/runtime.log" \
+      || rg -n 'Error:|ReferenceError|TypeError|Binding loop|Unable to assign|failed to load|failed to instantiate|COST TEST FAILED' "$cost_root/runtime.log"; then
+    cat "$cost_root/runtime.log"
+    exit 1
+  fi
+  echo "Cost QML contract: passed (synthetic prices and processes, no popup windows)"
+
   reset_root="$test_root/reset"
   mkdir -p "$reset_root/config" "$reset_root/cache"
   cp "$repo_root/tests/qml/reset-shell.qml" "$reset_root/shell.qml"

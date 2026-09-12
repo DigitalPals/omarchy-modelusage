@@ -8,6 +8,12 @@ All notable changes to this project will be documented here. The format follows
 
 ### Added
 
+- Custom model prices in settings with exact-ID matching, optional cache rates,
+  explicit zero prices, Save/Cancel, and visible cost provenance.
+- Manual Costs refresh can update the public price table before its daily TTL,
+  with a one-minute minimum between successful downloads.
+- Incremental transcript scanning with guarded resume positions, persisted Codex
+  state, provisional EOF handling, and existing privacy and resource limits.
 - Clickable Codex banked resets in CLIProxyAPI mode, with account-specific
   confirmation, expiry-ordered credit selection, and idempotent retry handling.
 
@@ -25,6 +31,16 @@ All notable changes to this project will be documented here. The format follows
 - CLIProxyAPI quota source for managed Claude, Codex, and Kimi accounts, with
   server/key-file settings, multi-account capacity selection, partial-check
   notices, and separate per-server history. Local transcript costs remain independent.
+
+### Fixed
+
+- Preserve canonical and provider-qualified prices instead of allowing reseller
+  entries to overwrite rates. Ambiguous aliases remain unpriced; bracketed model
+  variants use clearly identified base-rate estimates.
+- Rebuild obsolete flattened price caches and preserve exact nanosecond mtimes
+  so unchanged transcripts reliably reuse their scan cache.
+- Preserve refresh requests during process startup and coalesce queued settings
+  and forced-price changes into one follow-up scan.
 
 ### Security
 

@@ -31,7 +31,7 @@ Private state is stored below
 `${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/`. The directory uses mode
 `0700`; files use mode `0600`. Transcript paths, session identifiers, message
 identifiers, and de-duplication keys are hashed before they enter durable state.
-Prompts, responses, tool calls, tool results, and credentials are not cached.
+Prompts, responses, tool calls, tool results, and credentials are not cached. Incremental scan positions retain bounded numeric file identity/offset metadata, a SHA-256 tail guard, and sanitized parser state; they never retain the raw guard bytes. Custom prices are non-secret, validated settings bounded to 64 KiB and 128 models.
 
 In CLIProxyAPI mode, the plugin reads a user-owned management key file with
 private permissions (default: `$XDG_CONFIG_HOME/omarchy/model-usage/cliproxy.key`,
