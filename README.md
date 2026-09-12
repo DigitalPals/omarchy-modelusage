@@ -147,7 +147,7 @@ ${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/cost-model-rates.json
 - Reset countdowns and useful absolute reset times.
 - Claude/Kimi extra usage, Codex credit balances, and Codex reset-credit counts when exposed.
 - Compact 24H and 7D history based on the binding active quota window (the highest used percentage); samples survive shell restarts.
-- A separate Costs tab with 24H, 7D, and 30D API-equivalent estimates, token totals, cached-input savings, time charts, and provider/model breakdowns.
+- A separate Costs tab with compact 24H, 7D, and 30D controls, an API estimate/Tokens menu, time charts, and provider totals. Token details and the full model breakdown expand on demand; Tokens opens its details automatically.
 - Honest pricing coverage: unknown or offline pricing renders as unavailable, never as a fabricated `$0.00`.
 - Clean missing, expired, HTTP, provider-rate-limit, timeout, malformed-data, and CLI-unavailable states.
 
@@ -156,6 +156,8 @@ A failure in one provider is isolated; healthy providers remain selectable and r
 ### What “estimated cost” means
 
 Costs are the approximate API value of recorded tokens, not subscription charges. Every local and remote source uses the same pricing: exact-model custom rates when configured, otherwise public LiteLLM rates. Upstream T3 totals and transcript-reported dollar amounts do not override this common calculation. Unknown prices remain unpriced; measured tokens are retained.
+
+The overview warns when fewer than 90% of recorded responses have prices. At 90% or higher, coverage remains available in Token details without a warning beside the total. Coverage counts responses, not their share of tokens or dollar value.
 
 Public prices refresh automatically after 24 hours and are cached for offline use. **Refresh in Costs** also refreshes prices before that deadline, with a one-minute minimum between successful downloads. Provider-qualified model IDs keep their own rates; conflicting reseller prices cannot overwrite a canonical model. Bracketed variants such as `[1m]` use the base model's current rates and are identified as base-rate estimates. Historical prices, long-context premiums, and priority/flex/batch tiers are not inferred.
 
@@ -171,6 +173,7 @@ Costs supports Codex and Claude history. Kimi remains available for quotas. Tran
 - `j` / `k` or Down / Up: scroll.
 - `r` or Enter: refresh.
 - `c`: open the Costs tab.
+- In Costs, `m` opens the metric menu, `d` toggles token details, and `b` toggles the model breakdown.
 - `u`: return to the Limits tab.
 - Gear icon or `s`: open settings. Tab / Shift+Tab moves between form controls; Escape cancels the draft.
 - Tab / Shift+Tab: move to the neighboring bar panel through Omarchy's panel coordinator.

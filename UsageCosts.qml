@@ -14,6 +14,13 @@ Item {
   property string errorText: ""
   property int periodDays: 30
   property string metric: "cost"
+  property bool tokenDetailsExpanded: false
+  property bool modelsExpanded: false
+  readonly property bool menuOpen: metricMenu.menuOpen
+  readonly property int displayedPeriodDays: payload && payload.period && Number(payload.period.days) > 0
+    ? Number(payload.period.days) : periodDays
+  readonly property bool incompletePricing: Number(totals.unpricedRecords || 0) > 0
+  readonly property bool lowPricingCoverage: incompletePricing && priceCoverage(totals) < 0.9
   property color foreground: Color.foreground
   property color urgent: Color.urgent
   property color surface: Color.popups.background
@@ -28,8 +35,14 @@ Item {
   readonly property real chartMaximum: maximumPeriodValue()
 
   signal periodRequested(int days)
+  signal menuClosed()
 
   implicitHeight: content.implicitHeight
+  onMetricChanged: tokenDetailsExpanded = metric === "tokens"
+  onVisibleChanged: if (!visible) closeMenu()
+
+  function openMetricMenu() { metricMenu.openMenu() }
+  function closeMenu() { metricMenu.closeMenu() }
 
   function alpha(color, opacity) {
     return Qt.rgba(color.r, color.g, color.b, opacity)
@@ -39,7 +52,7 @@ Item {
     if (value === null || value === undefined || !isFinite(Number(value))) return "—"
     var amount = Number(value)
     if (Math.abs(amount) > 0 && Math.abs(amount) < 0.01) return "$" + amount.toFixed(4)
-    return "$" + amount.toFixed(2)
+    return "$" + amount.toLocaleString(Qt.locale("en_US"), "f", 2)
   }
 
   function formatTokens(value) {
@@ -57,11 +70,6 @@ Item {
     var absolute = Math.abs(value)
     var digits = absolute >= 100 ? 0 : (absolute >= 10 ? 1 : 2)
     return value.toFixed(digits).replace(/\.0+$/, "")
-  }
-
-  function percent(value) {
-    var amount = Number(value)
-    return isFinite(amount) ? Math.round(amount * 100) + "%" : "0%"
   }
 
   function priceCoverage(row) {
@@ -89,7 +97,7 @@ Item {
 
   function axisLabel(period) {
     if (!period) return ""
-    if (periodDays === 1) {
+    if (displayedPeriodDays === 1) {
       var date = new Date(String(period.start || ""))
       return isNaN(date.getTime()) ? "" : Qt.formatTime(date, "HH:mm")
     }
@@ -106,16 +114,30 @@ Item {
     if (!row) return ""
     if (row.status === "missing" || row.status === "failed")
       return String(row.message || "Usage coverage unavailable")
+    if (row.historyStatus === "unavailable") return "History unavailable"
     return formatTokens(row.totalTokens) + " tokens"
-      + (Number(row.records || 0) > 0 && Number(row.unpricedRecords || 0) > 0
-        ? " · " + percent(priceCoverage(row)) + " priced" : "")
+      + (Number(row.records || 0) > 0
+        ? " · " + pricingPercent(row) + " of responses priced" : "")
+  }
+
+  function pricingPercent(row) {
+    // A small unpriced remainder must never round up to complete coverage.
+    return Math.min(Number(row.unpricedRecords || 0) > 0 ? 99 : 100,
+      Math.floor(priceCoverage(row) * 100)) + "%"
+  }
+
+  function pricingNotice() {
+    if (!lowPricingCoverage) return ""
+    if (Number(totals.pricedRecords || 0) === 0) return "Pricing unavailable · tokens are still included"
+    return "Incomplete estimate · " + pricingPercent(totals) + " of responses priced"
   }
 
   function summaryDetail() {
     var records = Number(totals.records || 0)
-    var parts = [records + " responses"]
-    if (totals.sessions !== null && totals.sessions !== undefined) parts.push(totals.sessions + " sessions")
-    if (metric === "cost" && records > 0) parts.push(percent(priceCoverage(totals)) + " priced")
+    var parts = [displayedPeriodDays === 1 ? "24 hours" : displayedPeriodDays + " days",
+      records.toLocaleString(Qt.locale("en_US"), "f", 0) + " responses"]
+    if (totals.sessions !== null && totals.sessions !== undefined)
+      parts.push(Number(totals.sessions).toLocaleString(Qt.locale("en_US"), "f", 0) + " sessions")
     return parts.join(" · ")
   }
 
@@ -126,22 +148,32 @@ Item {
     spacing: Style.spacing.xxl
 
     Item {
+      id: costControls
       width: parent.width
-      implicitHeight: Math.max(sectionTitle.implicitHeight, periodSwitch.implicitHeight)
+      implicitHeight: Math.max(metricMenu.implicitHeight, periodSwitch.implicitHeight)
 
-      Ui.PanelSectionHeader {
-        id: sectionTitle
+      UsageSelect {
+        id: metricMenu
+        objectName: "costMetricMenu"
         anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
-        text: "ACTIVITY"
+        width: Math.min(implicitWidth, Math.max(0, costControls.width - periodSwitch.width - Style.spacing.md))
+        options: [
+          { value: "cost", label: "API estimate" },
+          { value: "tokens", label: "Tokens" }
+        ]
+        value: root.metric
+        label: "Metric"
         foreground: root.foreground
+        surface: root.surface
         fontFamily: root.fontFamily
+        onChanged: function(value) { root.metric = value }
+        onMenuClosed: root.menuClosed()
       }
 
-      Ui.ButtonGroup {
+      UsageTabs {
         id: periodSwitch
+        objectName: "costPeriodTabs"
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
         options: [
           { value: "1", label: "24H" },
           { value: "7", label: "7D" },
@@ -151,26 +183,9 @@ Item {
         foreground: root.foreground
         fontFamily: root.fontFamily
         fontSize: Style.font.caption
-        focusable: false
         onChanged: function(value) { root.periodRequested(Number(value)) }
       }
     }
-
-    Ui.ButtonGroup {
-      width: parent.width
-      options: [
-        { value: "cost", label: "API estimate" },
-        { value: "tokens", label: "Tokens" }
-      ]
-      value: root.metric
-      foreground: root.foreground
-      background: root.surface
-      fontFamily: root.fontFamily
-      fontSize: Style.font.bodySmall
-      focusable: false
-      onChanged: function(value) { root.metric = value }
-    }
-
 
     Text {
       visible: root.loading && !root.hasResult
@@ -237,11 +252,21 @@ Item {
       Text {
         visible: root.metric === "cost"
         width: parent.width
-        text: "API-equivalent estimate · not subscription spend"
+        text: "Estimated API value, not subscription spend"
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        font.italic: true
+        wrapMode: Text.WordWrap
+      }
+
+      Text {
+        objectName: "costPricingNotice"
+        visible: root.metric === "cost" && root.lowPricingCoverage
+        width: parent.width
+        text: root.pricingNotice()
+        color: root.urgent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
       }
     }
@@ -253,7 +278,7 @@ Item {
       spacing: Style.spacing.lg
 
       Ui.PanelSectionHeader {
-        text: root.periodDays === 1 ? "HOURLY" : "DAILY"
+        text: root.displayedPeriodDays === 1 ? "HOURLY" : "DAILY"
         foreground: root.foreground
         fontFamily: root.fontFamily
       }
@@ -397,17 +422,117 @@ Item {
     }
 
     Column {
-      visible: root.hasResult
+      visible: root.hasResult && root.providers.length > 0
       width: parent.width
       spacing: Style.spacing.lg
 
       Ui.PanelSectionHeader {
-        text: "TOKEN MIX"
+        text: "BY PROVIDER"
         foreground: root.foreground
         fontFamily: root.fontFamily
       }
 
+      Ui.BorderSurface {
+        id: providerSurface
+        width: parent.width
+        implicitHeight: providerRows.implicitHeight + contentTopInset + contentBottomInset
+        color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
+        borderSpec: Border.flat(root.alpha(root.foreground, 0.22), Style.spacing.hairline)
+        padding: Style.spacing.xl
+        radius: Style.cornerRadius
+
+        Column {
+          id: providerRows
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: parent.top
+          anchors.leftMargin: providerSurface.contentLeftInset
+          anchors.rightMargin: providerSurface.contentRightInset
+          anchors.topMargin: providerSurface.contentTopInset
+          spacing: Style.spacing.lg
+
+          Repeater {
+            model: root.providers
+
+            delegate: Item {
+              required property var modelData
+              width: providerRows.width
+              implicitHeight: Math.max(providerName.implicitHeight, providerValue.implicitHeight)
+                + (providerMeta.visible ? providerMeta.implicitHeight + Style.spacing.labelGap : 0)
+
+              Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.topMargin: Style.space(4)
+                width: Style.space(7)
+                height: width
+                radius: width / 2
+                color: root.providerColor(String(parent.modelData.id || ""))
+              }
+
+              Text {
+                id: providerName
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(14)
+                anchors.right: providerValue.left
+                anchors.rightMargin: Style.spacing.controlGap
+                text: String(parent.modelData.name || parent.modelData.id || "")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.weight: Font.Medium
+                elide: Text.ElideRight
+              }
+
+              Text {
+                id: providerMeta
+                visible: parent.modelData.status === "missing" || parent.modelData.status === "failed"
+                  || parent.modelData.historyStatus === "unavailable"
+                anchors.right: parent.right
+                wrapMode: Text.WordWrap
+                anchors.left: providerName.left
+                anchors.top: providerName.bottom
+                anchors.topMargin: Style.spacing.labelGap
+                text: root.providerMetaText(parent.modelData)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                id: providerValue
+                anchors.right: parent.right
+                anchors.top: parent.top
+                text: root.primaryValue(parent.modelData)
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.weight: Font.Medium
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Column {
+      visible: root.hasResult
+      width: parent.width
+      spacing: Style.spacing.lg
+
+      UsageDisclosure {
+        objectName: "costTokenDisclosure"
+        width: parent.width
+        text: "Token details"
+        checked: root.tokenDetailsExpanded
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onToggled: root.tokenDetailsExpanded = checked
+      }
+
       Grid {
+        objectName: "costTokenDetails"
+        visible: root.tokenDetailsExpanded
         width: parent.width
         columns: 2
         columnSpacing: Style.spacing.xxl
@@ -444,93 +569,22 @@ Item {
           }
         }
       }
-    }
-
-    Column {
-      visible: root.hasResult && root.providers.length > 0
-      width: parent.width
-      spacing: Style.spacing.lg
-
-      Ui.PanelSectionHeader {
-        text: "BY PROVIDER"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-      }
-
-      Ui.BorderSurface {
-        id: providerSurface
+      Column {
+        visible: root.tokenDetailsExpanded
         width: parent.width
-        implicitHeight: providerRows.implicitHeight + contentTopInset + contentBottomInset
-        color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
-        borderSpec: Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
-        padding: Style.spacing.xl
-        radius: Style.cornerRadius
+        spacing: Style.spacing.md
 
-        Column {
-          id: providerRows
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.top: parent.top
-          anchors.leftMargin: providerSurface.contentLeftInset
-          anchors.rightMargin: providerSurface.contentRightInset
-          anchors.topMargin: providerSurface.contentTopInset
-          spacing: Style.spacing.lg
-
-          Repeater {
-            model: root.providers
-
-            delegate: Item {
-              required property var modelData
-              width: providerRows.width
-              implicitHeight: Math.max(providerName.implicitHeight + providerMeta.implicitHeight
-                + Style.spacing.labelGap, providerValue.implicitHeight)
-
-              Rectangle {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.topMargin: Style.space(4)
-                width: Style.space(7)
-                height: width
-                radius: width / 2
-                color: root.providerColor(String(parent.modelData.id || ""))
-              }
-
-              Text {
-                id: providerName
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(14)
-                anchors.right: providerValue.left
-                anchors.rightMargin: Style.spacing.controlGap
-                text: String(parent.modelData.name || parent.modelData.id || "")
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.weight: Font.Medium
-                elide: Text.ElideRight
-              }
-
-              Text {
-                id: providerMeta
-                anchors.left: providerName.left
-                anchors.top: providerName.bottom
-                anchors.topMargin: Style.spacing.labelGap
-                text: root.providerMetaText(parent.modelData)
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Text {
-                id: providerValue
-                anchors.right: parent.right
-                anchors.top: parent.top
-                text: root.primaryValue(parent.modelData)
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.weight: Font.Medium
-              }
-            }
+        Repeater {
+          model: root.providers
+          delegate: Text {
+            required property var modelData
+            width: parent.width
+            text: String(modelData.name || modelData.id || "") + " · " + root.providerMetaText(modelData)
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
         }
       }
@@ -541,18 +595,24 @@ Item {
       width: parent.width
       spacing: Style.spacing.lg
 
-      Ui.PanelSectionHeader {
-        text: "BY MODEL"
+      UsageDisclosure {
+        objectName: "costModelDisclosure"
+        width: parent.width
+        text: "Model breakdown · " + root.models.length + (root.models.length === 1 ? " model" : " models")
+        checked: root.modelsExpanded
         foreground: root.foreground
         fontFamily: root.fontFamily
+        onToggled: root.modelsExpanded = checked
       }
 
       Ui.BorderSurface {
         id: modelSurface
+        objectName: "costModelDetails"
+        visible: root.modelsExpanded
         width: parent.width
         implicitHeight: modelRows.implicitHeight + contentTopInset + contentBottomInset
         color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
-        borderSpec: Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
+        borderSpec: Border.flat(root.alpha(root.foreground, 0.22), Style.spacing.hairline)
         padding: Style.spacing.xl
         radius: Style.cornerRadius
 
@@ -567,10 +627,12 @@ Item {
           spacing: Style.spacing.lg
 
           Repeater {
-            model: UsageLogic.firstItems(root.models, 8)
+            model: root.modelsExpanded ? root.models : []
 
             delegate: Item {
               required property var modelData
+              required property int index
+              objectName: "costModel-" + index
               width: modelRows.width
               implicitHeight: Math.max(modelName.implicitHeight + modelMeta.implicitHeight
                 + Style.spacing.labelGap, modelValue.implicitHeight)
@@ -628,7 +690,8 @@ Item {
       width: parent.width
       topPadding: Style.spacing.huge
       bottomPadding: Style.spacing.huge
-      text: "No transcript usage was found in this period."
+      text: root.totals.historyStatus === "unavailable"
+        ? "Session history is unavailable for this period." : "No transcript usage was found in this period."
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

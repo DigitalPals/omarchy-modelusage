@@ -342,7 +342,7 @@ Ui.Panel {
     if (viewMode === "costs") {
       if (costBackend.fetchError !== "") return costBackend.fetchError
       if (costBackend.lastSuccessAt > 0)
-        return "Updated " + Qt.formatTime(new Date(costBackend.lastSuccessAt), "HH:mm:ss")
+        return "Updated " + Qt.formatTime(new Date(costBackend.lastSuccessAt), "HH:mm")
       return costBackend.loading ? "Loading session history…" : "Open Costs to load session history"
     }
     if (backend.fetchError !== "") return backend.fetchError
@@ -351,10 +351,7 @@ Ui.Panel {
   }
 
   function footerRight() {
-    if (viewMode === "costs") {
-      var duration = costBackend.payload ? Number(costBackend.payload.scanDurationMs) : 0
-      return duration > 0 ? "Scan " + duration + "ms" : ""
-    }
+    if (viewMode === "costs") return ""
     if (backend.nextRefreshAt <= 0) return ""
     var seconds = Math.max(0, Math.floor((backend.nextRefreshAt - nowMs) / 1000))
     var minutes = Math.floor(seconds / 60)
@@ -379,11 +376,13 @@ Ui.Panel {
     })
   } else {
     navigation.closeProviderMenu()
+    if (costsView) costsView.closeMenu()
     if (configuring) viewMode = settingsReturnView
   }
 
   onViewModeChanged: {
     navigation.closeProviderMenu()
+    if (costsView) costsView.closeMenu()
     if (viewMode !== "settings") configForm.discardKey()
     if (viewMode !== "cost-settings") costConfigForm.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
@@ -571,7 +570,7 @@ Ui.Panel {
     Ui.PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.configuring || resetBackend.active || navigation.menuOpen
+      blocked: root.configuring || resetBackend.active || navigation.menuOpen || costsView.menuOpen
 
       onMoveRequested: function(dx, dy) {
         if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
@@ -591,6 +590,9 @@ Ui.Panel {
         else if (text === "c" || text === "C") root.showCosts()
         else if (text === "u" || text === "U") root.showLimits()
         else if (text === "p" || text === "P") navigation.openProviderMenu()
+        else if (root.viewMode === "costs" && (text === "m" || text === "M")) costsView.openMetricMenu()
+        else if (root.viewMode === "costs" && (text === "d" || text === "D")) costsView.tokenDetailsExpanded = !costsView.tokenDetailsExpanded
+        else if (root.viewMode === "costs" && (text === "b" || text === "B")) costsView.modelsExpanded = !costsView.modelsExpanded
         else if (text === "s" || text === "S") root.showSettings()
       }
 
@@ -697,7 +699,7 @@ Ui.Panel {
               width: parent.width
               text: {
                 if (root.viewMode === "costs")
-                  return costBackend.loading ? "Loading session history…" : "API-equivalent value · session history"
+                  return costBackend.loading ? "Loading session history…" : ""
                 var context = root.accountOverview
                   ? root.proxyAccounts.length + " connected accounts" : root.heroMeta(root.provider)
                 if (root.providers.length === 1 && root.provider)
@@ -934,6 +936,10 @@ Ui.Panel {
             surface: root.surface
             fontFamily: root.fontFamily
             onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
+            onMenuClosed: Qt.callLater(function() {
+              if (root.opened && !root.configuring && !resetBackend.active)
+                keyCatcher.forceActiveFocus()
+            })
           }
 
           Ui.PanelSeparator { visible: !root.configuring; foreground: root.foreground }
@@ -945,6 +951,14 @@ Ui.Panel {
 
             Text {
               id: footerLeft
+              HoverHandler { id: footerHover }
+              Ui.PanelToolTip {
+                visible: footerHover.hovered && root.viewMode === "costs" && costBackend.lastSuccessAt > 0
+                text: "Updated " + Qt.formatDateTime(new Date(costBackend.lastSuccessAt), "MMM d, HH:mm:ss")
+                  + (costBackend.payload && Number(costBackend.payload.scanDurationMs) > 0
+                    ? " · Scan " + costBackend.payload.scanDurationMs + "ms" : "")
+                fontFamily: root.fontFamily
+              }
               anchors.left: parent.left
               anchors.right: footerRight.left
               anchors.rightMargin: Style.spacing.controlGap

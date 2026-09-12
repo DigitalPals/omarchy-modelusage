@@ -6,6 +6,7 @@ ShellRoot {
   property var form: null
   property var backend: null
   property var view: null
+  property var overview: null
   property string pickedClient: ""
   property var saved: null
   property int responses: 0
@@ -50,6 +51,18 @@ ShellRoot {
       periods: [{start: "2030-01-15", records: 0, costUsd: 0, totalTokens: 0,
         historyStatus: "unavailable", providers: []}]
     }})
+    var models = []
+    for (var i = 0; i < 10; i++)
+      models.push({model: "model-" + i, providerName: "Example", costUsd: 10, totalTokens: 1000})
+    overview = create("UsageCosts.qml", {width: 420, payload: {
+      generatedAt: "2030-01-15T12:00:00Z", period: {days: 30},
+      totals: {records: 1000, pricedRecords: 999, unpricedRecords: 1, costUsd: 1234.56,
+        totalTokens: 1000000, sessions: 6},
+      providers: [{id: "example", name: "Example", records: 1000, pricedRecords: 999,
+        unpricedRecords: 1, costUsd: 1234.56, totalTokens: 1000000}],
+      models: models, periods: [{start: "2030-01-15", costUsd: 1234.56, totalTokens: 1000000}]
+    }})
+    overview.periodRequested.connect(function(days) { root.overview.periodDays = days })
     backend = create("CostBackend.qml", {settings: {costLocalProviders: ["claude"]}})
     backend.refreshed.connect(function() {
       root.responses++
@@ -68,6 +81,40 @@ ShellRoot {
     repeat: true
     onTriggered: {
       if (root.phase === 0) {
+        root.check(!root.find(root.overview, "costModelDetails").visible, "model breakdown starts collapsed")
+        root.check(!root.find(root.overview, "costTokenDetails").visible, "cost overview starts without token details")
+        root.check(root.find(root.overview, "costModel-0") === null, "collapsed models are not instantiated")
+        root.check(root.find(root.overview, "costSummaryValue").text === "$1,234.56", "currency has readable thousands separators")
+        root.check(!root.find(root.overview, "costPricingNotice").visible, "high pricing coverage does not warn")
+        root.check(root.overview.providerMetaText(root.overview.providers[0]).indexOf("99%") >= 0,
+          "small gaps remain available in details without rounding up to complete coverage")
+        var originalOverview = root.overview.payload
+        var boundaryOverview = JSON.parse(JSON.stringify(originalOverview))
+        boundaryOverview.totals.pricedRecords = 900
+        boundaryOverview.totals.unpricedRecords = 100
+        root.overview.payload = boundaryOverview
+        root.check(!root.find(root.overview, "costPricingNotice").visible, "exactly 90 percent does not warn")
+        boundaryOverview = JSON.parse(JSON.stringify(boundaryOverview))
+        boundaryOverview.totals.pricedRecords = 899
+        boundaryOverview.totals.unpricedRecords = 101
+        root.overview.payload = boundaryOverview
+        root.check(root.find(root.overview, "costPricingNotice").visible, "coverage below 90 percent warns")
+        boundaryOverview = JSON.parse(JSON.stringify(boundaryOverview))
+        boundaryOverview.totals.pricedRecords = 0
+        boundaryOverview.totals.unpricedRecords = 1000
+        root.overview.payload = boundaryOverview
+        root.check(root.overview.pricingNotice().indexOf("Pricing unavailable") === 0, "unavailable pricing still warns")
+        root.overview.payload = originalOverview
+        root.find(root.overview, "costMetricMenu").changed("tokens")
+        root.check(root.find(root.overview, "costTokenDetails").visible, "Tokens automatically opens token details")
+        root.check(root.find(root.overview, "costSummaryValue").text === "1M", "metric selection updates the total")
+        root.check(!root.find(root.overview, "costPricingNotice").visible, "unpriced costs do not qualify measured tokens")
+        root.find(root.overview, "costMetricMenu").changed("cost")
+        root.check(!root.find(root.overview, "costTokenDetails").visible, "returning to estimates restores the compact view")
+        root.find(root.overview, "costPeriodTabs").setCurrentIndex(0)
+        root.check(root.overview.periodDays === 1, "period tab requests 24 hours")
+        root.check(root.overview.summaryDetail().indexOf("30 days") === 0, "old totals retain their actual period during a new scan")
+        root.overview.modelsExpanded = true
         root.check(root.find(root.view, "costSummaryValue").text === "—", "missing history is not a zero estimate")
         root.check(root.find(root.view, "costHistoryGap-0").visible, "missing chart history is marked")
         root.check(root.find(root.view, "costSource-remote") === null, "source diagnostics are absent from Costs")
@@ -85,6 +132,10 @@ ShellRoot {
         root.form.priceEditor.addPrice()
         root.phase++
       } else if (root.phase === 1) {
+        root.check(root.find(root.overview, "costModel-9") !== null, "expanded breakdown includes models beyond the former top eight")
+        root.check(root.find(root.overview, "costModelDetails").visible, "expanded models render")
+        root.overview.modelsExpanded = false
+        root.check(root.find(root.overview, "costModel-9") === null, "collapsing releases model rows")
         root.check(root.find(root.form, "costSource-remote").text.indexOf("Unavailable") >= 0, "source diagnostics are available in Costs settings")
         root.check(!root.form.submit(), "blank added rows block Save")
         root.edit("costModel-1", "free-model")

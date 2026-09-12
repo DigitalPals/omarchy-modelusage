@@ -130,7 +130,7 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn('{ value: "costs", label: "Costs" }', panel)
         self.assertIn("CostBackend {", panel)
         self.assertIn("UsageCosts {", panel)
-        self.assertIn("API-equivalent estimate · not subscription spend", costs)
+        self.assertIn("Estimated API value, not subscription spend", costs)
         self.assertIn('return "—"', costs)
         self.assertIn("periodDays", backend)
         self.assertIn('choices=(1, 7, 30)', (ROOT / "scripts" / "cost-fetch.py").read_text())
