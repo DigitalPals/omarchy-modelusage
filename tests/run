@@ -36,7 +36,7 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
   lint_log="$lint_root/qmllint.log"
   if ! "$qml_lint" -W 0 --missing-property disable --signal-handler-parameters disable \
     -I "$lint_root" \
-    "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" "$repo_root/UsageActivityBackend.qml" \
+    "$repo_root/Panel.qml" "$repo_root/UsageNavigation.qml" "$repo_root/UsageBackend.qml" "$repo_root/UsageActivityBackend.qml" \
     "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" "$repo_root/CostPriceEditor.qml" "$repo_root/CostSettings.qml" \
     "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
     "$repo_root/UsageSettings.qml" "$repo_root/ResetBackend.qml" \

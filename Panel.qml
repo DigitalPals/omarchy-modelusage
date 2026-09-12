@@ -25,7 +25,6 @@ Ui.Panel {
     ? backend.providers : UsageLogic.selectedProviders(backend.providers, backend.enabledProviderIds))
   property string selectedProviderId: ""
   property bool expandedAccountLimits: false
-  property bool providerCursorActive: false
   property string historyMode: "h24"
   property string viewMode: "limits"
   property string settingsReturnView: "limits"
@@ -114,12 +113,7 @@ Ui.Panel {
     }
   }
 
-  function handleProviderTabHover(isHovered) {
-    if (isHovered) providerCursorActive = true
-  }
-
   function nextProvider() {
-    providerCursorActive = true
     selectProvider(providerIndex + 1)
   }
 
@@ -365,7 +359,7 @@ Ui.Panel {
     var seconds = Math.max(0, Math.floor((backend.nextRefreshAt - nowMs) / 1000))
     var minutes = Math.floor(seconds / 60)
     var remainder = String(seconds % 60).padStart(2, "0")
-    return "Next " + minutes + ":" + remainder
+    return "Next refresh " + minutes + ":" + remainder
   }
 
   visible: true
@@ -375,7 +369,6 @@ Ui.Panel {
   onProvidersChanged: ensureSelection()
   onSelectedProviderIdChanged: expandedAccountLimits = false
   onOpenedChanged: if (opened) {
-    providerCursorActive = false
     nowMs = Date.now()
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
@@ -384,9 +377,13 @@ Ui.Panel {
       else if (root.configuring) activeSettingsForm.focusFirst()
       else keyCatcher.forceActiveFocus()
     })
-  } else if (configuring) viewMode = settingsReturnView
+  } else {
+    navigation.closeProviderMenu()
+    if (configuring) viewMode = settingsReturnView
+  }
 
   onViewModeChanged: {
+    navigation.closeProviderMenu()
     if (viewMode !== "settings") configForm.discardKey()
     if (viewMode !== "cost-settings") costConfigForm.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
@@ -574,11 +571,10 @@ Ui.Panel {
     Ui.PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.configuring || resetBackend.active
+      blocked: root.configuring || resetBackend.active || navigation.menuOpen
 
       onMoveRequested: function(dx, dy) {
         if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
-          root.providerCursorActive = true
           root.selectProvider(root.providerIndex + dx)
         }
         if (dy !== 0) {
@@ -594,6 +590,7 @@ Ui.Panel {
         if (text === "r" || text === "R") root.refreshNow()
         else if (text === "c" || text === "C") root.showCosts()
         else if (text === "u" || text === "U") root.showLimits()
+        else if (text === "p" || text === "P") navigation.openProviderMenu()
         else if (text === "s" || text === "S") root.showSettings()
       }
 
@@ -628,125 +625,92 @@ Ui.Panel {
           width: panelFlick.width
           spacing: Style.spacing.xxl
 
-          Ui.PanelHero {
-            visible: root.viewMode === "limits"
+          Column {
+            visible: !root.configuring
             width: parent.width
-            title: root.provider ? root.provider.name : "Model Usage"
-            meta: root.accountOverview ? root.proxyAccounts.length + " connected accounts" : root.heroMeta(root.provider)
-            detail: backend.loading ? "REFRESHING" : ""
-            foreground: root.foreground
-            fontFamily: root.fontFamily
+            spacing: Style.spacing.md
 
-            trailingControl: Component {
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(panelTitle.implicitHeight, headerActions.implicitHeight)
+
+              Text {
+                id: panelTitle
+                anchors.left: parent.left
+                anchors.right: headerActions.left
+                anchors.rightMargin: Style.spacing.md
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Model Usage"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
               Row {
+                id: headerActions
+                anchors.right: parent.right
                 spacing: Style.spacing.xs
 
                 Ui.PanelActionButton {
-                  objectName: "usageSettingsButton"
+                  objectName: root.viewMode === "costs" ? "costSettingsButton" : "usageSettingsButton"
                   iconText: "󰒓"
-                  tooltipText: "Model Usage settings"
+                  tooltipText: root.viewMode === "costs" ? "Cost sources and prices" : "Model Usage settings"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.body
-                  bordered: true
-                  onClicked: root.showSettings()
+                  onClicked: root.viewMode === "costs" ? root.showCostSettings() : root.showSettings()
                 }
 
                 Ui.PanelActionButton {
                   iconText: "󰑐"
-                  tooltipText: "Refresh usage"
+                  tooltipText: root.viewMode === "costs" ? "Refresh estimated costs" : "Refresh usage"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: !backend.loading
+                  fontSize: Style.font.body
+                  enabled: !(root.viewMode === "costs" ? costBackend.loading : backend.loading)
                   onClicked: root.refreshNow()
                 }
               }
             }
 
-            iconComponent: Component {
-              Item {
-                width: Style.font.display
-                height: Style.font.display
-
-                Image {
-                  id: providerImage
-                  anchors.fill: parent
-                  source: root.iconUrl(root.provider)
-                  sourceSize.width: Style.font.display * 2
-                  sourceSize.height: Style.font.display * 2
-                  fillMode: Image.PreserveAspectFit
-                }
-
-                Text {
-                  anchors.centerIn: parent
-                  visible: providerImage.status !== Image.Ready
-                  text: UsageLogic.providerMark(root.provider ? root.provider.id : "")
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.display
-                  font.bold: true
-                }
-              }
-            }
-          }
-
-          Ui.PanelHero {
-            visible: root.viewMode === "costs"
-            width: parent.width
-            title: "Estimated Costs"
-            meta: "API-equivalent value · session history"
-            detail: costBackend.loading ? "LOADING" : ""
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-
-            trailingControl: Component {
-              Row {
-                spacing: Style.spacing.xs
-                Ui.PanelActionButton {
-                  iconText: "󰒓"
-                  objectName: "costSettingsButton"
-                  tooltipText: "Cost sources and prices"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  bordered: true
-                  onClicked: root.showCostSettings()
-                }
-                Ui.PanelActionButton {
-                  iconText: "󰑐"
-                  tooltipText: "Refresh estimated costs"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  enabled: !costBackend.loading
-                  onClicked: root.refreshNow()
-                }
-              }
+            UsageNavigation {
+              id: navigation
+              width: parent.width
+              viewMode: root.viewMode
+              viewOptions: root.viewOptions
+              providerOptions: root.providerOptions
+              providerId: root.selectedProviderId
+              foreground: root.foreground
+              surface: root.surface
+              fontFamily: root.fontFamily
+              onViewRequested: function(value) { root.viewMode = value }
+              onProviderRequested: function(value) { root.selectProviderId(value) }
+              onMenuClosed: Qt.callLater(function() {
+                if (root.opened && !root.configuring && !resetBackend.active)
+                  keyCatcher.forceActiveFocus()
+              })
             }
 
-            iconComponent: Component {
-              Text {
-                text: "$"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
-                font.weight: Font.DemiBold
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+            Text {
+              width: parent.width
+              text: {
+                if (root.viewMode === "costs")
+                  return costBackend.loading ? "Loading session history…" : "API-equivalent value · session history"
+                var context = root.accountOverview
+                  ? root.proxyAccounts.length + " connected accounts" : root.heroMeta(root.provider)
+                if (root.providers.length === 1 && root.provider)
+                  context = root.provider.name + (context ? " · " + context : "")
+                return context + (backend.loading ? (context ? " · " : "") + "Refreshing…" : "")
               }
+              visible: text !== ""
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
-          }
-
-          Ui.ButtonGroup {
-            id: viewSwitch
-            visible: !root.configuring
-            width: parent.width
-            options: root.viewOptions
-            value: root.viewMode
-            foreground: root.foreground
-            background: root.surface
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: false
-            onChanged: function(value) { root.viewMode = value }
           }
 
           UsageSettings {
@@ -791,31 +755,6 @@ Ui.Panel {
             }
           }
 
-          Flow {
-            id: providerSwitch
-            visible: root.viewMode === "limits" && root.providers.length > 1
-            width: parent.width
-            spacing: Style.spacing.md
-            Repeater {
-              model: root.providerOptions
-              Ui.Button {
-                required property var modelData
-                required property int index
-                text: modelData.label
-                width: Math.min(implicitWidth, providerSwitch.width)
-                selected: root.selectedProviderId === modelData.value
-                hasCursor: root.providerCursorActive && root.providerIndex === index
-                bordered: true
-                foreground: root.foreground
-                background: root.surface
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall
-                onClicked: { root.providerCursorActive = true; root.selectProviderId(modelData.value) }
-                onHovered: function(isHovered) { root.handleProviderTabHover(isHovered) }
-              }
-            }
-          }
-
           Column {
             id: accountOverviewSection
             visible: root.viewMode === "limits" && root.accountOverview
@@ -835,8 +774,10 @@ Ui.Panel {
             }
 
             Ui.Button {
-              text: root.expandedAccountLimits ? "Show weekly limits" : "Show additional limits"
-              bordered: true
+              text: "Additional limits " + (root.expandedAccountLimits ? "▴" : "▾")
+              focusable: true
+              horizontalPadding: Style.spacing.sm
+              Accessible.name: root.expandedAccountLimits ? "Hide additional limits" : "Show additional limits"
               foreground: root.foreground
               fontFamily: root.fontFamily
               fontSize: Style.font.bodySmall
@@ -1038,7 +979,7 @@ Ui.Panel {
     readonly property bool healthy: account.status === "ok"
     implicitHeight: accountContent.implicitHeight + contentTopInset + contentBottomInset
     color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
-    borderSpec: Border.controlSpec("normal", root.foreground, Color.accent, root.urgent)
+    borderSpec: Border.flat(root.alpha(root.foreground, 0.22), Style.spacing.hairline)
     padding: Style.spacing.xxl
     radius: Style.cornerRadius
 

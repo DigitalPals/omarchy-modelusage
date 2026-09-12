@@ -167,6 +167,7 @@ Costs supports Codex and Claude history. Kimi remains available for quotas. Tran
 - Middle click: select the next enabled provider.
 - Right click: intentionally unused; the plugin does not invent an unrelated action.
 - `h` / `l` or Left / Right: select provider in Limits.
+- Provider menu or `p`: choose a provider in Limits; Up / Down selects an option, Enter confirms, and Escape dismisses.
 - `j` / `k` or Down / Up: scroll.
 - `r` or Enter: refresh.
 - `c`: open the Costs tab.
