@@ -17,10 +17,11 @@ Column {
   property string errorText: ""
   property var draft: ({})
   property alias managementKey: managementKeyField.text
+  property alias keeperPassword: keeperPasswordField.text
   property alias priceEditor: priceEditor
   readonly property bool saving: keyWriter.running
   property var pendingValues: null
-  property string pendingKey: ""
+  property var pendingKeys: ({})
   property bool keySaveDecided: false
   property var proxyProviders: []
   readonly property var providerOptions: proxyMode ? UsageLogic.listOrEmpty(proxyProviders) : [
@@ -46,7 +47,8 @@ Column {
 
   function discardKey() {
     managementKey = ""
-    pendingKey = ""
+    keeperPassword = ""
+    pendingKeys = ({})
     pendingValues = null
     if (keyWriter.running && !keySaveDecided) keyWriter.running = false
   }
@@ -57,7 +59,7 @@ Column {
       keyWriter.write(saved ? "commit\n" : "abort\n")
     }
     pendingValues = null
-    if (saved) managementKey = ""
+    if (saved) { managementKey = ""; keeperPassword = "" }
   }
 
   function begin(settings) {
@@ -69,6 +71,10 @@ Column {
       usageSource: value("usageSource", "direct") === "cliproxy" ? "cliproxy" : "direct",
       cliproxyUrl: String(value("cliproxyUrl", "http://127.0.0.1:8317")),
       cliproxyKeyFile: String(value("cliproxyKeyFile", "")),
+      costSource: value("costSource", "direct") === "keeper" ? "keeper" : "direct",
+      costKeeperUrl: String(value("costKeeperUrl", "")),
+      costKeeperPasswordFile: String(value("costKeeperPasswordFile", "")),
+      costLocalBackfill: value("costLocalBackfill", false) === true,
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       hideAccountEmails: value("hideAccountEmails", true) !== false,
@@ -136,10 +142,24 @@ Column {
       errorText = "Enter a nonempty management API key using ASCII characters."
       return false
     }
+    next.costKeeperUrl = String(next.costKeeperUrl).trim()
+    var password = keeperPassword.trim()
+    if ((next.costSource === "keeper" || (proxyMode && (next.costKeeperUrl !== "" || password !== "")))
+        && !/^https?:\/\/[^\s/?#@]+(?::[0-9]+)?(?:\/[^\s?#]*)?$/.test(next.costKeeperUrl)) {
+      errorText = "Enter the CPA Usage Keeper HTTP or HTTPS URL."
+      return false
+    }
+    if (keeperPassword !== "" && (password === "" || password.length > 8191 || /[^\x20-\x7e]/.test(password))) {
+      errorText = "Enter a nonempty Keeper password using ASCII characters."
+      return false
+    }
+    var keys = ({})
+    if (proxyMode && key !== "") keys.cliproxyKeyFile = key
+    if ((next.costSource === "keeper" || proxyMode) && password !== "") keys.costKeeperPasswordFile = password
     errorText = ""
-    if (proxyMode && key !== "") {
+    if (Object.keys(keys).length > 0) {
       pendingValues = next
-      pendingKey = key
+      pendingKeys = keys
       keySaveDecided = false
       keyWriter.running = true
     } else saveRequested(next)
@@ -151,24 +171,27 @@ Column {
     command: ["python3", "-u", decodeURIComponent(String(Qt.resolvedUrl("scripts/management-key.py")).replace(/^file:\/\//, ""))]
     stdinEnabled: true
     onStarted: {
-      write(JSON.stringify({ key: root.pendingKey, previousPath: root.draft.cliproxyKeyFile }) + "\n")
-      root.pendingKey = ""
+      write(JSON.stringify({ keys: root.pendingKeys, previousPaths: {
+        cliproxyKeyFile: root.draft.cliproxyKeyFile,
+        costKeeperPasswordFile: root.draft.costKeeperPasswordFile
+      } }) + "\n")
+      root.pendingKeys = ({})
     }
     stdout: SplitParser {
       onRead: function(data) {
         if (!root.pendingValues || root.keySaveDecided) return
         var response = null
         try { response = JSON.parse(data) } catch (error) {}
-        if (!response || typeof response.path !== "string") return
-        var values = Object.assign({}, root.pendingValues, { cliproxyKeyFile: response.path })
+        if (!response || !response.paths) return
+        var values = Object.assign({}, root.pendingValues, response.paths)
         root.saveRequested(values)
       }
     }
     stderr: SplitParser { splitMarker: "" }
     onRunningChanged: if (!running) {
-      root.pendingKey = ""
+      root.pendingKeys = ({})
       if (root.pendingValues && !root.keySaveDecided)
-        root.errorText = "Could not save the management key. Check that your configuration directory is writable and try again."
+        root.errorText = "Could not save credentials. Check that your configuration directory is writable and try again."
       root.pendingValues = null
     }
   }
@@ -222,7 +245,7 @@ Column {
       onChanged: function(value) { root.setValue("usageSource", value) }
       onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
     }
-    Hint { text: "Costs are always estimated from local CLI transcripts." }
+    Hint { text: "Quota limits and estimated costs have separate data sources." }
   }
 
   Column {
@@ -256,6 +279,74 @@ Column {
       text: "Use the key you sign in to the management panel with. Saved privately on this device. Leave blank to keep your existing key."
     }
     Hint { text: "Save to discover all proxy providers and accounts automatically. Limits shows each account’s quotas." }
+  }
+
+  Column {
+    width: parent.width
+    spacing: Style.spacing.md
+    Label { text: "Costs source" }
+    Ui.ButtonGroup {
+      objectName: "costSourceControl"
+      options: [{ value: "direct", label: "Local transcripts" }, { value: "keeper", label: "CLIProxyAPI history" }]
+      value: String(root.draft.costSource || "direct")
+      foreground: root.foreground
+      background: root.surface
+      fontFamily: root.fontFamily
+      fontSize: Style.font.bodySmall
+      onChanged: function(value) { root.setValue("costSource", value) }
+      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+    }
+    Hint { text: "Proxy history includes all apps and devices using that proxy. Filter by app in Costs." }
+    Column {
+      visible: root.draft.costSource === "keeper" || root.draft.usageSource === "cliproxy"
+      width: parent.width
+      spacing: Style.spacing.md
+      Label { text: "CPA Usage Keeper URL" }
+      Field {
+        objectName: "costKeeperUrlField"
+        settingKey: "costKeeperUrl"
+        placeholderText: "https://proxy.example.com/keeper"
+        Accessible.name: "CPA Usage Keeper URL"
+      }
+      Label { text: "Keeper login password" }
+      Ui.TextField {
+        id: keeperPasswordField
+        objectName: "keeperPasswordField"
+        width: parent.width
+        password: true
+        maximumLength: 8191
+        placeholderText: "Leave blank to keep saved password"
+        foreground: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        selectByMouse: true
+        Accessible.name: "Keeper login password"
+        onTextEdited: root.errorText = ""
+        onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+      }
+      Hint { text: "Keeper records proxy traffic continuously. History begins when collection starts; API estimates use your model prices below." }
+      Hint {
+        visible: root.draft.usageSource === "cliproxy"
+        text: "Use the Keeper connected to this proxy to show the last-used account in the percentage menubar. Account activity updates every 15 seconds, even with local transcript costs."
+      }
+      Row {
+        width: parent.width
+        Label {
+          width: parent.width - backfillSwitch.width
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Recover earlier local usage"
+        }
+        ProviderToggle {
+          id: backfillSwitch
+          objectName: "costLocalBackfillToggle"
+          width: Style.space(82)
+          checked: root.draft.costLocalBackfill === true
+          Accessible.name: "Recover earlier local usage"
+          onToggled: root.setValue("costLocalBackfill", !checked)
+        }
+      }
+      Hint { text: "Adds this device’s earlier Codex proxy sessions, with overlap removed. Old logs do not identify the proxy server and may include another proxy. Other devices and gaps remain incomplete." }
+    }
   }
 
   Column {

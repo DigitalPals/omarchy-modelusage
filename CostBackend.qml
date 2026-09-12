@@ -38,6 +38,14 @@ Item {
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
   readonly property string priceOverrides: String(setting("costPriceOverrides", "{}"))
+  readonly property string costSource: String(setting("costSource", "direct")) === "keeper" ? "keeper" : "direct"
+  readonly property string keeperUrl: String(setting("costKeeperUrl", ""))
+  readonly property string keeperPasswordFile: String(setting("costKeeperPasswordFile", ""))
+  readonly property bool localBackfill: setting("costLocalBackfill", false) === true
+  property string clientFilter: "all"
+  readonly property string connectionId: JSON.stringify([costSource,
+    costSource === "keeper" ? keeperUrl : "", costSource === "keeper" ? keeperPasswordFile : "",
+    costSource === "keeper" ? clientFilter : "all", costSource === "keeper" && localBackfill])
 
   signal refreshed()
 
@@ -86,6 +94,13 @@ Item {
     requestRefresh(true)
   }
 
+  function selectClient(value) {
+    var allowed = ["all", "t3", "codex-cli", "codex-exec", "digital-brain", "other"]
+    if (allowed.indexOf(value) < 0 || clientFilter === value) return
+    requested = true
+    clientFilter = value
+  }
+
   function requestRefresh(forcePrices) {
     pendingPriceRefresh = pendingPriceRefresh || forcePrices === true
     if (fetchProcess.running || launchPending || pendingRefresh) {
@@ -106,18 +121,29 @@ Item {
       "--providers", enabledProviderIds.join(","),
       "--days", String(periodDays),
       "--timeout", "10",
+      "--source", costSource,
       "--price-overrides", priceOverrides
     ]
+    if (costSource === "keeper") {
+      command.push("--keeper-url", keeperUrl)
+      if (keeperPasswordFile !== "") command.push("--keeper-password-file", keeperPasswordFile)
+      command.push("--client", clientFilter)
+      if (localBackfill) command.push("--local-backfill")
+    }
     if (pendingPriceRefresh) command.push("--refresh-prices")
     pendingPriceRefresh = false
     fetchProcess.command = command
+    fetchProcess.connectionId = connectionId
     fetchProcess.running = true
   }
 
   function settle() {
     launchPending = false
     loading = false
-    if (fetchProcess.outputTooLarge) {
+    if (fetchProcess.connectionId !== connectionId) {
+      // A response from an old archive must never repopulate the new source.
+      pendingRefresh = requested
+    } else if (fetchProcess.outputTooLarge) {
       fetchError = "Estimated-cost backend returned too much data"
     } else if (fetchProcess.timedOut) {
       fetchError = "Estimated-cost scan timed out"
@@ -152,6 +178,13 @@ Item {
 
   onEnabledProviderIdsChanged: if (requested) requestRefresh()
   onPriceOverridesChanged: if (requested) requestRefresh()
+  onConnectionIdChanged: {
+    payload = ({ schemaVersion: 1, generatedAt: "", source: costSource,
+      pricing: {}, coverage: [], totals: {}, providers: [], models: [], periods: [] })
+    lastSuccessAt = 0
+    fetchError = ""
+    if (requested) requestRefresh()
+  }
 
   Process {
     id: fetchProcess
@@ -161,6 +194,7 @@ Item {
     property int lastExit: 0
     property bool timedOut: false
     property bool outputTooLarge: false
+    property string connectionId: ""
     readonly property int maxBodyChars: 4 * 1024 * 1024
 
     function appendBody(data) {

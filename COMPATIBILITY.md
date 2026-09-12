@@ -17,6 +17,12 @@
 
 ## Provider compatibility
 
+- CPA Usage Keeper `v1.15.4` with CLIProxyAPI `7.2.158`: authenticated history
+  exports, canonical tokens, source isolation, and custom prices tested with
+  HTTP fixtures and live Codex traffic. The deployed systemd collector recovers
+  pending queue events, persists SQLite history across service restarts, and
+  reconnects its TLS usage subscription. Other proxy providers are covered by
+  normalized fixtures; local transcript collection remains available separately.
 - Claude Code CLI available during validation: `2.1.239`
 - OpenAI Codex CLI available during validation: `0.149.0`
 - Kimi Code normalization and transcript support validated against fixtures from

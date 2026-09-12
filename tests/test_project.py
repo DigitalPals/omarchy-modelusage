@@ -25,6 +25,7 @@ class ProjectContractTests(unittest.TestCase):
             "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
             "warningThreshold", "criticalThreshold",
             "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails", "costPriceOverrides",
+            "costSource", "costKeeperUrl", "costKeeperPasswordFile", "costLocalBackfill",
         })
 
     def test_packaged_paths_and_assets_are_self_contained(self):

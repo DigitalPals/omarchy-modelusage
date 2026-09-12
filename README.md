@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/DigitalPals/omarchy-modelusage/actions/workflows/ci.yml/badge.svg)](https://github.com/DigitalPals/omarchy-modelusage/actions/workflows/ci.yml)
 
-Native Omarchy Quattro quota and activity monitoring for Claude Code, OpenAI Codex, and Kimi Code, with direct CLI and CLIProxyAPI quota sources. A compact bar widget opens a keyboard-friendly panel with provider limits, reset times, credits, persistent quota history, and on-demand API-equivalent cost estimates from local CLI transcripts.
+Native Omarchy Quattro quota and activity monitoring for Claude Code, OpenAI Codex, and Kimi Code, with direct CLI and CLIProxyAPI quota sources. A compact bar widget opens a keyboard-friendly panel with provider limits, reset times, credits, persistent quota history, and on-demand API-equivalent cost estimates from local CLI transcripts or archived CLIProxyAPI traffic.
 
 <p align="center">
   <img src="docs/model-usage-panel.png" alt="Model Usage panel showing Claude Code quota windows, extra usage, and history" width="560">
@@ -91,13 +91,40 @@ The collector lists managed accounts and asks CLIProxyAPI to make read-only upst
 
 In CLIProxyAPI mode, click a nonzero **banked resets** badge to review that account's current reset credits. The confirmation shows each reset's effect and expiry, selects the earliest expiry first (non-expiring credits last), and lets you choose another credit before clicking **Apply reset**. Account labels respect **Hide account emails**. The action spends one selected credit only on that account, then refreshes usage. Confirmations expire after two minutes and are dismissed when the configured connection changes. If the outcome is uncertain, **Retry same reset** reuses the original request identifier; closing the popup preserves that retry while the widget remains loaded. The upstream reset endpoints are internal ChatGPT APIs and may change.
 
-Provider buttons wrap to fit the panel. Failed refreshes preserve the last known reading in memory with a stale-data notice; switching servers clears those readings. At most 32 accounts per provider are checked, with four concurrent checks per provider and a shared deadline. The menu-bar percentage continues to describe the account with the most remaining capacity across its binding windows.
+Provider buttons wrap to fit the panel. Failed refreshes preserve the last known reading in memory with a stale-data notice; switching servers clears those readings. At most 32 accounts per provider are checked, with four concurrent checks per provider and a shared deadline. In **Percentages** menubar mode, each provider shows only its icon and remaining quota; account names appear in the tooltip. When the last-used account is known, the percentage belongs to that account. Account activity refreshes every 15 seconds through the configured CPA Usage Keeper, independently of quota refreshes and the Costs source. Configure the Keeper URL and password in settings for the same proxy. Hover for the last recorded request time. Round-robin and concurrent requests can use different accounts, so this identifies the most recently recorded request, not a guaranteed account for the next request. Without matching activity, or when account timestamps are tied, the bar still shows the best-capacity account’s quota. The tooltip identifies this pool summary and explains that the last-used account is unknown. Failed activity refreshes retain the last-known account with a tooltip notice. Icon mode includes last-used details in its tooltip.
 
-**Hide account emails** is enabled by default in widget settings. Account cards use numbered labels (Account 1, Account 2, …), and account identities are omitted from the settings details. Turn it off and Save to show usernames/email addresses. This is a display preference; quota collection continues normally.
+**Hide account emails** is enabled by default in widget settings. Account cards and menubar tooltips use numbered labels (Account 1, Account 2, …), and account identities are omitted from the settings details. Turn it off and Save to show usernames/email addresses. This is a display preference; quota collection continues normally.
 
-Proxy history records that menu-bar pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. Costs continue to read local CLI transcripts; they do not include remote proxy traffic that is absent from those transcripts.
+Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. The separate **Costs source** setting selects local transcripts or archived proxy requests.
 
-For standalone backend use, `--source cliproxy`, `--cliproxy-url`, and `--cliproxy-key-file` are available. `CLIPROXY_API_URL` supplies the URL when the CLI flag is omitted, and `CLIPROXY_API_KEY_FILE` supplies the key path when neither the widget nor the CLI sets one. Keys are never passed as command-line arguments or saved in widget settings.
+### CLIProxyAPI cost history
+
+Select **CLIProxyAPI history** under **Costs source**, enter the **CPA Usage Keeper URL** and its separate **Keeper login password**, then Save. The password is stored in a private file; leaving the field blank preserves the saved password. Quota configuration remains independent. The default Costs source is **Local transcripts**.
+
+[CPA Usage Keeper](https://github.com/Willxup/cpa-usage-keeper) must run continuously alongside the proxy. It saves events in SQLite while the desktop is offline. See [collector deployment](docs/keeper-deployment.md) for the pinned version, systemd service, TLS, backups, and validation. The widget reads Keeper's history export; it never consumes CLIProxyAPI's usage queue.
+
+Costs shows the earliest saved request in the scanned history. Outlined chart
+gaps mean **history unavailable**, not zero usage. Collector health and the
+percentage of records priced do not establish complete historical coverage.
+App filters distinguish T3 Code, Codex CLI, Codex Exec, Digital Brain, and
+other/unknown clients. They group the same app across all proxy devices; using
+the same account does not make another computer's local transcripts available.
+
+Enable **Recover earlier local usage** in settings to add recognized Codex
+proxy sessions from this device before the archive boundary. Recovery is off
+by default because old logs identify the proxy provider but not its server;
+they may include another proxy you used. Direct OpenAI sessions are excluded.
+Saved requests and recovered local turns have separate counts. Recovery removes
+overlap and duplicate local copies, respects the app filter, and never fills
+gaps inside the archive or retrieves another device's logs. It reads 30 days of
+archive history even in shorter views to keep the cutoff consistent; disable
+recovery to use a shorter export if the archive exceeds the download limit.
+
+Costs displays 24H, 7D, and 30D recorded activity using the same LiteLLM rates and custom model prices as local Costs. Keeper's own calculated dollar amounts are ignored. Providers and actual model IDs come from the archive; model-attributed Kimi traffic can be priced. Cache reads/writes and reasoning are normalized without double counting. Request counts replace session counts because Keeper's export has no session IDs.
+
+By default, only archived proxy requests are included. Optional local recovery adds earlier recognized proxy sessions with overlap removed. Missing traffic cannot be reconstructed unless usable local logs exist. Collection errors and skipped invalid records appear as incomplete coverage. An unavailable archive preserves the last successful view for that connection; changing source, URL, password file, app filter, or recovery setting clears old totals.
+
+For standalone quota backend use, `--source cliproxy`, `--cliproxy-url`, and `--cliproxy-key-file` are available. `CLIPROXY_API_URL` supplies the URL when the CLI flag is omitted, and `CLIPROXY_API_KEY_FILE` supplies the key path when neither the widget nor the CLI sets one. Keys are never passed as command-line arguments or saved in widget settings.
 
 No access or refresh token is printed, copied into plugin state, or included in display errors. State is XDG-aware: the plugin directory uses mode `0700` and its files use `0600`.
 
@@ -125,7 +152,7 @@ A failure in one provider is isolated; healthy providers remain selectable and r
 
 ### What “estimated cost” means
 
-Costs are the approximate API value of locally recorded tokens, not money charged to a Claude, ChatGPT, or Kimi subscription. Exact-model custom prices take precedence when configured; otherwise Claude-reported transcript costs take precedence over LiteLLM's public input, output, cache-read, and cache-creation rates. The Costs view identifies custom prices, provider-reported costs, and public base-rate estimates.
+Costs are the approximate API value of recorded tokens, not money charged to a Claude, ChatGPT, or Kimi subscription. Exact-model custom prices take precedence when configured; otherwise Claude-reported transcript costs take precedence over LiteLLM's public input, output, cache-read, and cache-creation rates. Archived proxy requests use custom or public prices. The Costs view identifies custom prices, provider-reported costs, and public base-rate estimates.
 
 Public prices refresh automatically after 24 hours and are cached for offline use. **Refresh in Costs** also refreshes prices before that deadline, with a one-minute minimum between successful downloads. Provider-qualified model IDs keep their own rates; conflicting reseller prices cannot overwrite a canonical model. Bracketed variants such as `[1m]` use the base model's current rates and are identified as base-rate estimates. Historical prices, long-context premiums, and priority/flex/batch tiers are not inferred.
 
@@ -168,7 +195,7 @@ In CLIProxyAPI mode, all discovered providers are monitored automatically; the p
 
 The form also includes quota source, CLIProxyAPI URL and a masked Management API key field, refresh interval, and warning/critical thresholds. Key storage is handled automatically. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
 
-Under **Custom model prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits. Kimi remains token-only because its historical model is unknown.
+Under **Custom model prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits. Local Kimi transcripts remain token-only because their historical model is unknown; model-attributed proxy events can be priced.
 
 | Key | Default | Meaning |
 |---|---:|---|
@@ -183,6 +210,10 @@ Under **Custom model prices**, add the exact model ID and its input/output price
 | `warningThreshold` | `25` | Mark urgent at or below this percentage remaining |
 | `criticalThreshold` | `10` | Critical threshold in percentage remaining |
 | `costPriceOverrides` | `"{}"` | JSON string managed by Custom model prices; exact IDs mapped to USD-per-million rates |
+| `costSource` | `direct` | Local transcripts (`direct`) or CLIProxyAPI history (`keeper`); independent of quota source |
+| `costKeeperUrl` | empty | CPA Usage Keeper URL, including a deployment path such as `/keeper` |
+| `costLocalBackfill` | `false` | Recover this device's earlier Codex proxy sessions, with overlap removed and separate attribution |
+| `costKeeperPasswordFile` | empty | Private Keeper login password file, managed by the settings form |
 
 Examples:
 

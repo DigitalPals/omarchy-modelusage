@@ -50,6 +50,7 @@ Ui.Panel {
   readonly property string displayMode: String(setting("barDisplayMode", "Icon"))
   readonly property var percentageProviders: UsageLogic.meaningfulProviders(
     UsageLogic.selectedProviders(providers, setting("barProviders", ["claude", "codex", "kimi"])))
+  property alias accountActivity: activityBackend
   readonly property bool percentageMode: displayMode === "Percentages"
     && !(bar && bar.vertical) && percentageProviders.length > 0
   readonly property bool alarming: anyProviderAlarming()
@@ -240,6 +241,22 @@ Ui.Panel {
     return lines.join("\n")
   }
 
+  function lastAccount(provider) {
+    return UsageLogic.lastUsedAccount(provider, activityBackend.providers, hideAccountEmails)
+  }
+
+  function lastAccountTooltip(account) {
+    var text = "Last used: " + account.label
+    if (account.lastUsedAt > 0)
+      text += " · " + Qt.formatDateTime(new Date(account.lastUsedAt * 1000), "MMM d, HH:mm:ss")
+    if (activityBackend.notice !== "") text += "\n" + activityBackend.notice
+    else if (!account.reading) text += "\nNo unique last-used account is available in recorded requests."
+    if (account.reading && account.reading.status === "disabled") text += "\nThis account is now paused."
+    if (account.reading && account.reading.stale) text += "\nQuota is a last-known reading."
+    if (activityBackend.fetchError !== "" && account.reading) text += "\nShowing last-known account activity."
+    return text
+  }
+
   function iconUrl(provider) {
     if (!provider) return ""
     if (!UsageLogic.contains(["claude", "codex", "kimi"], provider.id)) return ""
@@ -321,6 +338,8 @@ Ui.Panel {
       if (costBackend.fetchError !== "") return costBackend.fetchError
       if (costBackend.lastSuccessAt > 0)
         return "Updated " + Qt.formatTime(new Date(costBackend.lastSuccessAt), "HH:mm:ss")
+      if (costBackend.costSource === "keeper")
+        return costBackend.loading ? "Loading proxy history…" : "Open Costs to load proxy history"
       return costBackend.loading ? "Scanning transcripts…" : "Open Costs to scan local activity"
     }
     if (backend.fetchError !== "") return backend.fetchError
@@ -366,6 +385,13 @@ Ui.Panel {
 
   UsageBackend {
     id: backend
+    settings: root.settings
+    onRefreshed: activityBackend.refresh()
+  }
+
+  UsageActivityBackend {
+    id: activityBackend
+    usageBackend: backend
     settings: root.settings
   }
 
@@ -416,7 +442,8 @@ Ui.Panel {
     bar: root.bar
     text: "󱚣"
     active: root.alarming
-    tooltipText: root.provider ? "Model usage · " + root.provider.name : "Model usage"
+    tooltipText: root.provider ? "Model usage · " + root.provider.name
+      + (root.proxyMode ? "\n" + root.lastAccountTooltip(root.lastAccount(root.provider)) : "") : "Model usage"
     onPressed: function(buttonCode) { root.handleBarPress(buttonCode) }
   }
 
@@ -439,11 +466,14 @@ Ui.Panel {
           id: providerChip
           required property var modelData
 
-          readonly property var remainingValue: UsageLogic.minRemaining(modelData)
+          readonly property var lastAccount: root.lastAccount(modelData)
+          readonly property bool usingPoolQuota: root.proxyMode && !lastAccount.reading
+          readonly property var reading: root.proxyMode && lastAccount.reading ? lastAccount.reading : modelData
+          readonly property var remainingValue: UsageLogic.minRemaining(reading)
           readonly property string remainingText: remainingValue === null
-            ? "" : Math.round(remainingValue) + "%"
+            ? (root.proxyMode ? "—" : "") : Math.round(remainingValue) + "%"
           readonly property string severity: UsageLogic.severity(
-            modelData, root.warningThreshold, root.criticalThreshold)
+            reading, root.warningThreshold, root.criticalThreshold)
           readonly property bool stressed: severity === "warning" || severity === "critical"
           readonly property color contentColor: active && useActiveColor
             ? activeColor : foreground
@@ -458,6 +488,8 @@ Ui.Panel {
           tooltipText: String(modelData.name || modelData.id)
             + (remainingValue === null ? " usage unavailable"
               : " usage · " + Math.round(remainingValue) + "% remaining")
+            + (root.proxyMode ? "\n" + root.lastAccountTooltip(lastAccount) : "")
+            + (usingPoolQuota ? "\nQuota shown: account with the most remaining capacity." : "")
           onPressed: function(buttonCode) {
             root.handleProviderChipPress(String(providerChip.modelData.id), buttonCode)
           }
@@ -504,6 +536,7 @@ Ui.Panel {
             }
 
             Text {
+              objectName: "barAccountRemaining"
               y: Math.round((parent.height - height) / 2)
               text: providerChip.remainingText
               color: providerChip.contentColor
@@ -650,8 +683,8 @@ Ui.Panel {
             visible: root.viewMode === "costs"
             width: parent.width
             title: "Estimated Costs"
-            meta: "API-equivalent value · local transcripts"
-            detail: costBackend.loading ? "SCANNING" : ""
+            meta: costBackend.costSource === "keeper" ? "API-equivalent value · proxy history" : "API-equivalent value · local transcripts"
+            detail: costBackend.loading ? "LOADING" : ""
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -923,11 +956,13 @@ Ui.Panel {
             loading: costBackend.loading
             errorText: costBackend.fetchError
             periodDays: costBackend.periodDays
+            clientFilter: costBackend.clientFilter
             foreground: root.foreground
             urgent: root.urgent
             surface: root.surface
             fontFamily: root.fontFamily
             onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
+            onClientRequested: function(client) { costBackend.selectClient(client) }
           }
 
           Ui.PanelSeparator { visible: !root.configuring; foreground: root.foreground }

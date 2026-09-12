@@ -28,7 +28,11 @@
       "barProviders": ["claude", "codex", "kimi"],
       "warningThreshold": 25,
       "criticalThreshold": 10,
-      "costPriceOverrides": "{}"
+      "costPriceOverrides": "{}",
+      "costSource": "direct",
+      "costKeeperUrl": "",
+      "costKeeperPasswordFile": "",
+      "costLocalBackfill": false
     },
     "schema": [
       {
@@ -37,7 +41,7 @@
         "label": "Quota source",
         "options": ["direct", "cliproxy"],
         "defaultValue": "direct",
-        "description": "Read local CLI sign-ins directly or query accounts managed by CLIProxyAPI. Costs always use local transcripts."
+        "description": "Read local CLI sign-ins directly or query accounts managed by CLIProxyAPI. Costs has its own source setting."
       },
       {
         "key": "cliproxyUrl",
@@ -129,6 +133,38 @@
         "label": "Custom model prices",
         "defaultValue": "{}",
         "description": "Managed by Custom model prices in widget settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
+      },
+      {
+        "key": "costSource",
+        "type": "enum",
+        "label": "Costs source",
+        "options": [
+          "direct",
+          "keeper"
+        ],
+        "defaultValue": "direct",
+        "description": "Local transcripts or archived CLIProxyAPI traffic from CPA Usage Keeper, with optional recovery of earlier local proxy sessions."
+      },
+      {
+        "key": "costKeeperUrl",
+        "type": "string",
+        "label": "CPA Usage Keeper URL",
+        "defaultValue": "",
+        "description": "Keeper server URL, including its deployment path if any. HTTPS certificates are verified."
+      },
+      {
+        "key": "costKeeperPasswordFile",
+        "type": "string",
+        "label": "Keeper password file",
+        "defaultValue": "",
+        "description": "Managed privately when saving the Keeper login password in settings. Advanced users can supply a private password file."
+      },
+      {
+        "key": "costLocalBackfill",
+        "type": "boolean",
+        "label": "Recover earlier local usage",
+        "defaultValue": false,
+        "description": "Add this device's Codex proxy sessions before available archive history, with overlap removed. Historical logs may include another proxy server."
       }
     ]
   }

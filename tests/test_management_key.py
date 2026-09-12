@@ -107,6 +107,28 @@ class ManagementKeyTests(unittest.TestCase):
             self.assertEqual(process.returncode, 1)
             self.assertEqual(list(directory.iterdir()), [])
 
+    def test_both_credentials_commit_or_roll_back_together(self):
+        for decision in ("commit", "abort"):
+            with self.subTest(decision=decision), tempfile.TemporaryDirectory() as config:
+                process = subprocess.Popen(
+                    [sys.executable, "-u", str(HELPER)], stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    env={**os.environ, "XDG_CONFIG_HOME": config})
+                self.addCleanup(self.stop, process)
+                keys = {"cliproxyKeyFile": "proxy-secret", "costKeeperPasswordFile": "keeper-secret"}
+                process.stdin.write(json.dumps({"keys": keys, "previousPaths": {}}) + "\n")
+                process.stdin.flush()
+                response = process.stdout.readline()
+                paths = json.loads(response)["paths"]
+                self.assertEqual(set(paths), set(keys))
+                for name, path in paths.items():
+                    self.assertEqual(Path(path).read_text().strip(), keys[name])
+                    self.assertEqual(Path(path).stat().st_mode & 0o777, 0o600)
+                    self.assertNotIn(keys[name], response)
+                process.communicate(decision + "\n", timeout=3)
+                for path in paths.values():
+                    self.assertEqual(Path(path).exists(), decision == "commit")
+
 
 if __name__ == "__main__":
     unittest.main()

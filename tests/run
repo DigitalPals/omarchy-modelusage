@@ -9,6 +9,8 @@ trap 'rm -rf -- "$test_root"' EXIT
 python3 -m py_compile "$repo_root/scripts/model_usage_common.py"
 python3 -m py_compile "$repo_root/scripts/usage-fetch.py"
 python3 -m py_compile "$repo_root/scripts/cost-fetch.py"
+python3 -m py_compile "$repo_root/scripts/keeper_costs.py"
+python3 -m py_compile "$repo_root/scripts/proxy-activity.py"
 python3 -m py_compile "$repo_root/scripts/management-key.py"
 python3 -m py_compile "$repo_root/scripts/reset-credit.py"
 python3 -m unittest discover -s "$repo_root/tests" -p 'test_*.py' -v
@@ -33,7 +35,7 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
   lint_log="$lint_root/qmllint.log"
   if ! "$qml_lint" -W 0 --missing-property disable --signal-handler-parameters disable \
     -I "$lint_root" \
-    "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" \
+    "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" "$repo_root/UsageActivityBackend.qml" \
     "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" "$repo_root/CostPriceEditor.qml" \
     "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
     "$repo_root/UsageSettings.qml" "$repo_root/ResetBackend.qml" \
@@ -47,6 +49,25 @@ else
 fi
 
 if command -v quickshell >/dev/null 2>&1 && [[ -d "$quattro_root/shell/Ui" ]]; then
+  activity_root="$test_root/activity"
+  mkdir -p "$activity_root"
+  cp "$repo_root/tests/qml/activity-shell.qml" "$activity_root/shell.qml"
+  repo_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root")
+  QT_QPA_PLATFORM=offscreen \
+  MODEL_USAGE_REPO_URL="$repo_url" \
+  MODEL_USAGE_FAKE_ACTIVITY="$repo_root/tests/fake_activity.py" \
+  MODEL_USAGE_ACTIVITY_MARKER="$activity_root/second-request" \
+    timeout 10 quickshell -p "$activity_root" --no-color >"$activity_root/runtime.log" 2>&1 || {
+      cat "$activity_root/runtime.log"
+      exit 1
+    }
+  if ! rg -q 'Activity QML contract: passed' "$activity_root/runtime.log" \
+      || rg -n 'Error:|ReferenceError|TypeError|Binding loop|Unable to assign|failed to load|ACTIVITY TEST FAILED' "$activity_root/runtime.log"; then
+    cat "$activity_root/runtime.log"
+    exit 1
+  fi
+  echo "Activity QML contract: passed (synthetic account switches, outages, and connection changes)"
+
   cost_root="$test_root/cost"
   mkdir -p "$cost_root/config" "$cost_root/cache"
   cp "$repo_root/tests/qml/cost-shell.qml" "$cost_root/shell.qml"
@@ -167,9 +188,9 @@ elif command -v quickshell >/dev/null 2>&1 \
 import pathlib
 import sys
 keys = list(pathlib.Path(sys.argv[1]).glob("*.key"))
-assert len(keys) == 1, "failed GUI save must roll back its staged key"
-assert keys[0].stat().st_mode & 0o777 == 0o600
-assert keys[0].read_text() == "qml-synthetic-management-key\n"
+assert len(keys) == 2, "failed GUI save must roll back both staged credentials"
+assert all(key.stat().st_mode & 0o777 == 0o600 for key in keys)
+assert {key.read_text() for key in keys} == {"qml-synthetic-management-key\n", "qml-synthetic-keeper-password\n"}
 PY
   echo "Quickshell runtime contract: passed"
 else

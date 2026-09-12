@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Estimate API-equivalent model costs from local provider transcripts.
+"""Estimate API-equivalent costs from local transcripts or CPA Usage Keeper.
 
 The scanner reads only usage metadata from the session files already owned by
 Claude Code, Codex, and Kimi Code. Prompts, responses, and tool output are never
 copied into plugin state or emitted to QML.
+The optional Keeper source reads persisted proxy usage, never the consuming queue.
 """
 
 from __future__ import annotations
@@ -15,17 +16,19 @@ import math
 import os
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from model_usage_common import atomic_write_json, clean_message
+import keeper_costs
 
 
 SCHEMA_VERSION = 1
-SCAN_CACHE_VERSION = 2  # Resumable byte position, hashed guard, and Codex state.
+SCAN_CACHE_VERSION = 3  # Sanitized Codex app family and proxy provenance for recovery.
 RATE_CACHE_VERSION = 2  # v1 discarded provider prefixes and could cache conflicting rates.
 PROVIDER_ORDER = ("claude", "codex", "kimi")
 PROVIDER_NAMES = {
@@ -77,6 +80,9 @@ class UsageRecord:
     reasoning: int
     reported_cost_usd: float | None
     dedupe_key: str | None
+    client_id: str = "other"
+    proxy_session: bool = False
+    origin: str = "local"
 
     @property
     def total_tokens(self) -> int:
@@ -137,7 +143,8 @@ def read_bounded_json(path: Path, max_bytes: int) -> Any:
 
 def initial_codex_state() -> dict[str, Any]:
     return dict(model="", session_id="", last_signature=None, saw_session_meta=False,
-                suppressing_fork_copies=False, fork_copy_anchor_ms=0)
+                suppressing_fork_copies=False, fork_copy_anchor_ms=0,
+                client_id="other", proxy_session=False)
 
 
 class TranscriptCursor:
@@ -265,11 +272,16 @@ def serialize_record(record: UsageRecord) -> list[Any]:
         record.reasoning,
         record.reported_cost_usd,
         record.dedupe_key,
+        record.client_id,
+        record.proxy_session,
     ]
 
 
 def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
-    if not isinstance(row, list) or len(row) != 10:
+    if not isinstance(row, list) or len(row) != 12:
+        return None
+    if (not isinstance(row[10], str) or row[10] not in keeper_costs.CLIENT_NAMES
+            or row[10] == "all" or type(row[11]) is not bool):
         return None
     timestamp = finite_number(row[0])
     model = bounded_model(row[1])
@@ -295,6 +307,7 @@ def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
         reasoning=int(numeric[4] or 0),
         reported_cost_usd=reported,
         dedupe_key=dedupe,
+        client_id=row[10], proxy_session=row[11],
     )
 
 
@@ -319,6 +332,9 @@ def decode_position(value: Any, size: int) -> dict[str, Any] | None:
             or (state["last_signature"] is not None and not valid_hash(state["last_signature"]))
             or type(state["saw_session_meta"]) is not bool
             or type(state["suppressing_fork_copies"]) is not bool
+            or not isinstance(state["client_id"], str)
+            or state["client_id"] not in keeper_costs.CLIENT_NAMES or state["client_id"] == "all"
+            or type(state["proxy_session"]) is not bool
             or type(state["fork_copy_anchor_ms"]) is not int
             or not 0 <= state["fork_copy_anchor_ms"] <= 10**16):
         return None
@@ -502,6 +518,9 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
                 if state["saw_session_meta"]:
                     continue
                 state["saw_session_meta"] = True
+                state["client_id"] = keeper_costs.client_id(payload.get("originator"))
+                state["proxy_session"] = payload.get("model_provider") in (
+                    "cli_proxy_api", "cliproxyapi", "cli-proxy-api", "cliproxy")
                 raw_id = payload.get("id") or payload.get("session_id")
                 if isinstance(raw_id, str):
                     state["session_id"] = opaque_id("codex:" + raw_id)
@@ -545,6 +564,7 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
                 reasoning=min(output, nonnegative_int(last.get("reasoning_output_tokens"))),
                 reported_cost_usd=None,
                 dedupe_key=None,
+                client_id=state["client_id"], proxy_session=state["proxy_session"],
             )
             if record.total_tokens > 0 and record.timestamp_ms >= retention_start_ms:
                 if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
@@ -1088,6 +1108,8 @@ def empty_cell() -> dict[str, Any]:
         "cost": 0.0,
         "cacheSavings": 0.0,
         "records": 0,
+        "archiveRecords": 0,
+        "backfillRecords": 0,
         "pricedRecords": 0,
         "providerReportedRecords": 0,
         "customPricedRecords": 0,
@@ -1112,10 +1134,15 @@ def add_record(
     cell["outputTokens"] += record.output
     cell["reasoningTokens"] += record.reasoning
     cell["records"] += 1
+    if record.origin == "archive":
+        cell["archiveRecords"] += 1
+    elif record.origin == "backfill":
+        cell["backfillRecords"] += 1
     if record.session_id:
         cell["sessions"].add(record.session_id)
 
-    custom = (overrides or {}).get(record.model.strip()) if record.provider != "kimi" else None
+    custom = ((overrides or {}).get(record.model.strip())
+              if normalize_model_name(record.model).rsplit("/", 1)[-1] not in UNPRICEABLE_MODELS else None)
     rate = custom if custom is not None else lookup_rate(record.model, rates)
     if record.reported_cost_usd is not None and custom is None:
         cell["cost"] += record.reported_cost_usd
@@ -1190,6 +1217,8 @@ def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
         "reasoningTokens": int(cell["reasoningTokens"]),
         "totalTokens": int(total_tokens),
         "records": records,
+        "archiveRecords": int(cell["archiveRecords"]),
+        "backfillRecords": int(cell["backfillRecords"]),
         "pricedRecords": priced,
         "unpricedRecords": int(cell["unpricedRecords"]),
         "providerReportedRecords": int(cell["providerReportedRecords"]),
@@ -1291,12 +1320,12 @@ def aggregate_usage(
 
     providers: list[dict[str, Any]] = []
     for provider in provider_ids:
-        providers.append({"id": provider, "name": PROVIDER_NAMES[provider], **finish_cell(provider_cells[provider])})
+        providers.append({"id": provider, "name": PROVIDER_NAMES.get(provider, provider.replace("-", " ").title()), **finish_cell(provider_cells[provider])})
 
     models = [
         {
             "provider": provider,
-            "providerName": PROVIDER_NAMES[provider],
+            "providerName": PROVIDER_NAMES.get(provider, provider.replace("-", " ").title()),
             "model": (
                 "Unknown model" if model == "<unattributed>"
                 else "Other models" if model == "<other>"
@@ -1341,6 +1370,58 @@ def parse_provider_ids(value: str) -> list[str]:
     return [provider for provider in PROVIDER_ORDER if provider in requested]
 
 
+def recover_local_history(archive, history, start_ms, end_ms, state_dir):
+    """Recover only pre-archive Codex proxy turns; never fill internal gaps.
+
+    Proxy events timestamp request starts, while local turns timestamp completion.
+    A strict cutoff plus one-to-one token/time matching handles boundary overlap
+    and modest clock skew. Identical local copies use session/time/token identity;
+    separate requests with the same token amounts remain separate.
+    """
+    cutoff = history.get("firstRecordAt")
+    info = {"status": "notNeeded", "recoveredRecords": 0, "overlapRecords": 0,
+            "before": cutoff, "message": ""}
+    if cutoff is None or history.get("skippedRecords"):
+        info.update(status="unavailable", message="Local recovery needs a readable archive boundary.")
+        return [], info
+    if cutoff <= start_ms:
+        return [], info
+    local, coverage = scan_transcripts(["codex"], state_dir, end_ms)
+    info["status"] = "partial" if any(c["status"] != "ok" for c in coverage) else "ok"
+    info["message"] = "Earlier Codex proxy sessions on this device only; other devices and collection gaps remain incomplete."
+    if info["status"] == "partial":
+        info["message"] += " Some local history could not be read."
+
+    def signature(record):
+        return (record.provider, record.model, record.uncached_input, record.cached_input,
+                record.cache_creation, record.output, record.reasoning)
+
+    stamps = {}
+    for record in sorted(archive, key=lambda r: r.timestamp_ms):
+        stamps.setdefault(signature(record), deque()).append(record.timestamp_ms)
+    recovered, seen = [], set()
+    for record in sorted(local, key=lambda r: r.timestamp_ms):
+        if (not record.proxy_session or not record.session_id
+                or not start_ms <= record.timestamp_ms < cutoff):
+            continue
+        key = opaque_id(json.dumps((record.session_id, record.timestamp_ms, signature(record))))
+        if key in seen:
+            continue
+        seen.add(key)
+        matches = stamps.get(signature(record), deque())
+        while matches and matches[0] < record.timestamp_ms - 300_000:
+            matches.popleft()
+        if matches and matches[0] <= record.timestamp_ms + 300_000:
+            matches.popleft()
+            info["overlapRecords"] += 1
+            continue
+        recovered.append(replace(record, origin="backfill", dedupe_key="backfill:" + key))
+    if len(archive) + len(recovered) > MAX_TRANSCRIPT_RECORDS_TOTAL:
+        raise ValueError("Combined history exceeds 50,000 records; turn off local recovery or select a shorter period.")
+    info["recoveredRecords"] = len(recovered)
+    return recovered, info
+
+
 def build_payload(
     provider_ids: list[str],
     days: int,
@@ -1351,13 +1432,56 @@ def build_payload(
     rates_override: tuple[dict[str, tuple[float, float, float, float]], dict[str, Any]] | None = None,
     force_rates: bool = False,
     price_overrides: str = "{}",
+    source: str = "direct",
+    keeper_url: str = "",
+    keeper_password_file: Path | None = None,
+    client_filter: str = "all",
+    local_backfill: bool = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     overrides = parse_price_overrides(price_overrides)
     stamp_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    records, coverage = scan_transcripts(provider_ids, state_dir, stamp_ms)
+    history = None
+    clients = []
+    archive = []
+    if client_filter not in keeper_costs.CLIENT_NAMES:
+        raise ValueError("Choose a supported Costs app filter.")
+    if source == "keeper":
+        zone = local_zone(zone_name)
+        today = datetime.fromtimestamp(stamp_ms / 1000, zone)
+        start = (stamp_ms - 86_400_000 if days == 1 else int(
+            (today.replace(hour=0, minute=0, second=0, microsecond=0)
+             - timedelta(days=days - 1)).timestamp() * 1000))
+        # Recovery always examines the entire supported history window. Using
+        # the first event of a short selection could fill a real collection gap.
+        export_start = min(start, int((today.replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=29)).timestamp() * 1000)) if local_backfill else start
+        rows, history = keeper_costs.collect(keeper_url, keeper_password_file, timeout, export_start, stamp_ms)
+        archive = [UsageRecord(**row) for row in rows]
+        recovered = []
+        backfill = {"status": "disabled", "recoveredRecords": 0, "overlapRecords": 0,
+                    "before": None, "message": ""}
+        if local_backfill:
+            recovered, backfill = recover_local_history(archive, history, start, stamp_ms, state_dir)
+        available = [r for r in archive + recovered if start <= r.timestamp_ms <= stamp_ms]
+        counts = Counter(r.client_id for r in available)
+        clients = [{"id": key, "name": name, "records": len(available) if key == "all" else counts[key]}
+                   for key, name in keeper_costs.CLIENT_NAMES.items()]
+        records = [r for r in available if client_filter == "all" or r.client_id == client_filter]
+        backfill["includedRecords"] = sum(r.origin == "backfill" for r in records)
+        history = {**history, "backfill": backfill, "clientFilter": client_filter,
+                   "clientName": keeper_costs.CLIENT_NAMES[client_filter],
+                   "exportSince": iso_timestamp(export_start / 1000),
+                   "lastRecordAt": max((r.timestamp_ms for r in archive), default=None)}
+        provider_ids = sorted({record.provider for record in records})
+        coverage = [{"id": provider, "name": PROVIDER_NAMES.get(provider, provider.title()),
+                     "status": history["status"], "message": history["message"],
+                     "scannedFiles": 0, "skippedFiles": 0, "sessions": 0}
+                    for provider in provider_ids]
+    else:
+        records, coverage = scan_transcripts(provider_ids, state_dir, stamp_ms)
     needs_rates = any(
-        record.provider != "kimi" and record.model.strip() not in overrides for record in records
+        record.model != "<unattributed>" and record.model.strip() not in overrides for record in records
     )
     if rates_override is not None:
         rates, pricing = rates_override
@@ -1366,7 +1490,7 @@ def build_payload(
     else:
         rates = {}
         pricing = {
-            "status": "unavailable" if any(record.provider == "kimi" for record in records) else "notNeeded",
+            "status": "unavailable" if any(record.model == "<unattributed>" for record in records) else "notNeeded",
             "source": LITELLM_RATES_URL,
             "fetchedAt": None,
             "knownModels": 0,
@@ -1374,16 +1498,28 @@ def build_payload(
         }
     pricing = {**pricing, "basis": "currentBaseRates", "customModels": len(overrides)}
     result = aggregate_usage(records, provider_ids, days, stamp_ms, rates, zone_name, overrides)
+    if history is not None:
+        _, _, bucket_for = period_window(days, stamp_ms, local_zone(zone_name))
+        observed = {bucket_for(r.timestamp_ms) for r in archive}
+        for cell in result["periods"]:
+            # No archived requests is missing evidence, not verified zero use.
+            cell["historyStatus"] = ("mixed" if cell["archiveRecords"] and cell["backfillRecords"] else
+                "localOnly" if cell["backfillRecords"] else "recorded" if cell["start"] in observed else "unavailable")
+        result["totals"]["historyStatus"] = ("recorded" if any(
+            cell["historyStatus"] != "unavailable" for cell in result["periods"]) else "unavailable")
     sessions_by_provider = {row["id"]: row["sessions"] for row in result["providers"]}
     coverage_by_provider = {row["id"]: row for row in coverage}
-    for source in coverage:
-        source["sessions"] = sessions_by_provider.get(source["id"], 0)
+    for entry in coverage:
+        entry["sessions"] = sessions_by_provider.get(entry["id"], 0)
     for provider in result["providers"]:
-        source = coverage_by_provider.get(provider["id"], {})
-        provider["status"] = source.get("status", "missing")
-        provider["message"] = source.get("message", "")
+        entry = coverage_by_provider.get(provider["id"], {})
+        provider["status"] = entry.get("status", "missing")
+        provider["message"] = entry.get("message", "")
     return {
         "schemaVersion": SCHEMA_VERSION,
+        "source": source,
+        "history": history,
+        "clients": clients,
         "generatedAt": iso_timestamp(stamp_ms / 1000),
         "pricing": pricing,
         "coverage": coverage,
@@ -1405,6 +1541,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--time-zone")
     parser.add_argument("--refresh-prices", action="store_true")
     parser.add_argument("--price-overrides", default="{}", help="Exact-model rates as JSON, in USD per million tokens")
+    parser.add_argument("--source", choices=("direct", "keeper"), default="direct")
+    parser.add_argument("--keeper-url", default="")
+    parser.add_argument("--keeper-password-file", type=Path)
+    parser.add_argument("--client", choices=tuple(keeper_costs.CLIENT_NAMES), default="all")
+    parser.add_argument("--local-backfill", action="store_true")
     args = parser.parse_args(argv)
     try:
         payload = build_payload(
@@ -1415,6 +1556,11 @@ def main(argv: list[str] | None = None) -> int:
             zone_name=args.time_zone,
             force_rates=args.refresh_prices,
             price_overrides=args.price_overrides,
+            source=args.source,
+            keeper_url=args.keeper_url,
+            keeper_password_file=args.keeper_password_file,
+            client_filter=args.client,
+            local_backfill=args.local_backfill,
         )
     except Exception as exc:
         payload = {

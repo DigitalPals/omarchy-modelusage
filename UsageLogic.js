@@ -78,6 +78,25 @@ function selectedProviders(providers, ids) {
   return result
 }
 
+function lastUsedAccount(provider, activityProviders, hideEmails) {
+  var activity = listOrEmpty(activityProviders)
+  var last = null
+  for (var i = 0; i < activity.length; i++)
+    if (provider && activity[i].id === provider.id) last = activity[i]
+  if (!last) return { label: "Unknown", reading: null, lastUsedAt: 0 }
+  if (last.status === "ambiguous")
+    return { label: "Multiple accounts", reading: null, lastUsedAt: last.lastUsedAt }
+  var accounts = listOrEmpty(provider && provider.accounts)
+  for (var j = 0; j < accounts.length; j++) {
+    if (last.status === "ok" && accounts[j].accountId === last.accountId)
+      return { label: hideEmails ? "Account " + (j + 1) : String(accounts[j].account || "Account " + (j + 1)),
+        reading: accounts[j], lastUsedAt: last.lastUsedAt }
+  }
+  // Account inventory and activity refresh independently. Never substitute the
+  // pool's best-quota account when a new/deleted account cannot be matched.
+  return { label: "Unknown", reading: null, lastUsedAt: last.lastUsedAt }
+}
+
 function providerMark(providerId) {
   if (providerId === "claude") return "C"
   if (providerId === "codex") return "O"

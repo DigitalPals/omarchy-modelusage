@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 
@@ -13,6 +14,11 @@ parser.add_argument("--timeout")
 parser.add_argument("--state-dir")
 parser.add_argument("--price-overrides", default="{}")
 parser.add_argument("--refresh-prices", action="store_true")
+parser.add_argument("--source", default="direct")
+parser.add_argument("--keeper-url", default="")
+parser.add_argument("--keeper-password-file", default="")
+parser.add_argument("--client", default="all")
+parser.add_argument("--local-backfill", action="store_true")
 args = parser.parse_args()
 
 if args.providers == "kimi":
@@ -20,8 +26,14 @@ if args.providers == "kimi":
     raise SystemExit(0)
 
 payload = json.loads(Path(os.environ["MODEL_USAGE_COST_FIXTURE"]).read_text())
-payload["testRequest"] = {"force": args.refresh_prices, "prices": args.price_overrides}
-if args.providers == "codex":
+payload["source"] = args.source
+payload["testRequest"] = {"force": args.refresh_prices, "prices": args.price_overrides,
+                          "source": args.source, "url": args.keeper_url,
+                          "passwordFile": args.keeper_password_file,
+                          "client": args.client, "backfill": args.local_backfill}
+if args.source == "keeper":
+    time.sleep(0.15)
+if args.providers == "codex" and args.source != "keeper":
     payload["backendError"] = "Synthetic estimated-cost failure"
     payload["providers"] = []
     payload["models"] = []

@@ -20,15 +20,27 @@ def interrupted(_signum, _frame):
 
 def main() -> int:
     directory_fd = None
-    filename = None
+    filenames = []
     committed = False
     signal.signal(signal.SIGTERM, interrupted)
     try:
         input_stream = os.fdopen(sys.stdin.fileno(), "rb", buffering=0, closefd=False)
         request = json.loads(input_stream.readline(65537))
-        key = request.pop("key").strip()
-        if not key or len(key) > 8191 or any(ord(c) < 32 or ord(c) > 126 for c in key):
+        batch = "keys" in request
+        keys = request.pop("keys") if batch else {"key": request.pop("key")}
+        if not isinstance(keys, dict) or not 1 <= len(keys) <= 2:
             raise ValueError
+        allowed = {"cliproxyKeyFile", "costKeeperPasswordFile"} if batch else {"key"}
+        previous_paths = request.get("previousPaths", {}) if batch else {"key": request.get("previousPath", "")}
+        if not isinstance(previous_paths, dict):
+            raise ValueError
+        for name, key in keys.items():
+            if name not in allowed or not isinstance(key, str):
+                raise ValueError
+            key = key.strip()
+            if not key or len(key) > 8191 or any(ord(c) < 32 or ord(c) > 126 for c in key):
+                raise ValueError
+            keys[name] = key
         config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
         directory = config_home / "omarchy" / "model-usage" / "management-keys"
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -36,28 +48,34 @@ def main() -> int:
         info = os.fstat(directory_fd)
         if info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise ValueError
-        filename = "key-" + uuid.uuid4().hex + ".key"
-        fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                     0o600, dir_fd=directory_fd)
-        with os.fdopen(fd, "w", encoding="ascii") as stream:
-            stream.write(key + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        paths = {}
+        for name, key in keys.items():
+            filename = "key-" + uuid.uuid4().hex + ".key"
+            fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=directory_fd)
+            filenames.append(filename)
+            with os.fdopen(fd, "w", encoding="ascii") as stream:
+                stream.write(key + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            paths[name] = str(directory / filename)
         key = ""
-        print(json.dumps({"path": str(directory / filename)}), flush=True)
+        keys.clear()
+        print(json.dumps({"paths": paths} if batch else {"path": paths["key"]}), flush=True)
         # Use unbuffered stdin reads for both messages: TextIO buffering can
         # otherwise hide an already-received commit from select().
         if select.select([input_stream], [], [], 5)[0]:
             committed = input_stream.readline(32).strip() == b"commit"
         if committed:
-            previous = Path(str(request.get("previousPath", ""))).expanduser()
-            if previous.parent == directory and re.fullmatch(r"key-[0-9a-f]{32}\.key", previous.name):
-                try:
-                    info = os.stat(previous.name, dir_fd=directory_fd, follow_symlinks=False)
-                    if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid():
-                        os.unlink(previous.name, dir_fd=directory_fd)
-                except OSError:
-                    pass
+            for name in paths:
+                previous = Path(str(previous_paths.get(name, ""))).expanduser()
+                if previous.parent == directory and re.fullmatch(r"key-[0-9a-f]{32}\.key", previous.name):
+                    try:
+                        info = os.stat(previous.name, dir_fd=directory_fd, follow_symlinks=False)
+                        if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid():
+                            os.unlink(previous.name, dir_fd=directory_fd)
+                    except OSError:
+                        pass
             return 0
         return 1
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
@@ -65,11 +83,12 @@ def main() -> int:
         return 1
     finally:
         if directory_fd is not None:
-            if filename and not committed:
-                try:
-                    os.unlink(filename, dir_fd=directory_fd)
-                except OSError:
-                    pass
+            if not committed:
+                for filename in filenames:
+                    try:
+                        os.unlink(filename, dir_fd=directory_fd)
+                    except OSError:
+                        pass
             os.close(directory_fd)
 
 

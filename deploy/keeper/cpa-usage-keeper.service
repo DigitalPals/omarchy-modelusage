@@ -1,0 +1,32 @@
+[Unit]
+Description=Persistent CLIProxyAPI usage history
+Documentation=https://github.com/Willxup/cpa-usage-keeper
+After=network-online.target cli-proxy-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cpa-usage-keeper
+Group=cpa-usage-keeper
+EnvironmentFile=/etc/cpa-usage-keeper/keeper.env
+WorkingDirectory=/var/lib/cpa-usage-keeper
+ExecStart=/opt/cpa-usage-keeper/current/cpa-usage-keeper
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=cpa-usage-keeper
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

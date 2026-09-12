@@ -58,6 +58,25 @@ assert.equal(outage.providers[0].stale, true);
 const paused = context.preserveProxyReadings(oldProxy, { providers: [{ ...priorAccount, status: "disabled", windows: [] }] });
 assert.equal(paused.providers[0].status, "disabled");
 assert.equal(paused.providers[0].windows.length, 0);
+
+const accountPool = { ...provider("codex", 90), accounts: [
+  { ...provider("codex", 90), accountId: "one", account: "one@example.invalid" },
+  { ...provider("codex", 23), accountId: "two", account: "two@example.invalid" },
+] };
+const recent = [{ id: "codex", status: "ok", accountId: "two", lastUsedAt: 123 }];
+let lastAccount = context.lastUsedAccount(accountPool, recent, true);
+assert.equal(lastAccount.label, "Account 2");
+assert.equal(context.minRemaining(lastAccount.reading), 23, "quota must belong to the last account, not the best account");
+assert.equal(lastAccount.lastUsedAt, 123);
+assert.equal(context.lastUsedAccount(accountPool, recent, false).label, "two@example.invalid");
+assert.equal(context.lastUsedAccount(accountPool, [{ ...recent[0], accountId: "one" }], true).label, "Account 1");
+assert.equal(context.lastUsedAccount(accountPool, [], true).reading, null);
+assert.equal(context.lastUsedAccount(accountPool, [{ ...recent[0], accountId: "removed" }], true).reading, null);
+assert.equal(context.lastUsedAccount(accountPool, [{ ...recent[0], status: "ambiguous" }], true).label, "Multiple accounts");
+assert.equal(context.lastUsedAccount({ ...accountPool, accounts: { 0: accountPool.accounts[1], length: 1 } }, recent, true).label, "Account 1");
+assert.equal(context.minRemaining(context.lastUsedAccount({ ...accountPool, accounts: [
+  { ...accountPool.accounts[1], status: "disabled", windows: [] }
+] }, recent, true).reading), null);
 console.log("UsageLogic.js: all assertions passed");
 
 const codexWindows = [

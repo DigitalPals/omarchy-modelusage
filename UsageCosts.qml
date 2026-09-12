@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as Controls
 import qs.Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
@@ -13,6 +14,7 @@ Item {
   property string errorText: ""
   property int periodDays: 30
   property string metric: "cost"
+  property string clientFilter: "all"
   property color foreground: Color.foreground
   property color urgent: Color.urgent
   property color surface: Color.popups.background
@@ -27,6 +29,7 @@ Item {
   readonly property real chartMaximum: maximumPeriodValue()
 
   signal periodRequested(int days)
+  signal clientRequested(string client)
 
   implicitHeight: content.implicitHeight
 
@@ -97,14 +100,14 @@ Item {
   }
 
   function primaryValue(row) {
-    if (row && (row.status === "missing" || row.status === "failed")) return "—"
+    if (row && (row.status === "missing" || row.status === "failed" || row.historyStatus === "unavailable")) return "—"
     return metric === "tokens" ? formatTokens(row ? row.totalTokens : 0) : formatUsd(row ? row.costUsd : null)
   }
 
   function providerMetaText(row) {
     if (!row) return ""
     if (row.status === "missing" || row.status === "failed")
-      return String(row.message || "Transcript coverage unavailable")
+      return String(row.message || "Usage coverage unavailable")
     return formatTokens(row.totalTokens) + " tokens"
       + (Number(row.records || 0) > 0 && Number(row.unpricedRecords || 0) > 0
         ? " · " + percent(priceCoverage(row)) + " priced" : "")
@@ -113,10 +116,33 @@ Item {
   function summaryDetail() {
     var sessions = Number(totals.sessions || 0)
     var records = Number(totals.records || 0)
-    var parts = [sessions + (sessions === 1 ? " session" : " sessions")]
+    var proxy = payload && payload.source === "keeper"
+    var parts = [proxy ? Number(totals.archiveRecords || 0) + " saved requests"
+      : sessions + (sessions === 1 ? " session" : " sessions")]
+    if (proxy && Number(totals.backfillRecords || 0) > 0)
+      parts.push(totals.backfillRecords + " recovered local turns")
     if (metric === "cost" && records > 0) parts.push(percent(priceCoverage(totals)) + " priced")
-    parts.push("local transcripts")
+    parts.push(proxy ? "CLIProxyAPI history" : "local transcripts")
     return parts.join(" · ")
+  }
+
+  function historyText() {
+    var history = payload && payload.history
+    if (!history) return ""
+    var first = history.firstRecordAt
+    var parts = [first ? "Earliest saved request in scanned history: "
+      + Qt.formatDateTime(new Date(Number(first)), "d MMM yyyy, HH:mm")
+      : "No saved proxy requests in scanned history."]
+    parts.push(String(history.message || ""))
+    if (history.backfill && history.backfill.message) parts.push(String(history.backfill.message))
+    return parts.join("\n")
+  }
+
+  function bucketHistoryText(row) {
+    if (row.historyStatus === "unavailable") return "History unavailable"
+    if (row.historyStatus === "localOnly") return "Recovered local history only"
+    if (row.historyStatus === "mixed") return "Saved requests + recovered local history"
+    return "Saved requests"
   }
 
   Column {
@@ -170,12 +196,43 @@ Item {
       onChanged: function(value) { root.metric = value }
     }
 
+    Column {
+      visible: root.payload && root.payload.source === "keeper" && root.hasResult
+      width: parent.width
+      spacing: Style.spacing.sm
+      Text {
+        text: "Apps across proxy devices"
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+      Flow {
+        width: parent.width
+        spacing: Style.spacing.sm
+        Repeater {
+          model: root.payload ? UsageLogic.listOrEmpty(root.payload.clients) : []
+          delegate: Ui.ButtonGroup {
+            required property var modelData
+            objectName: "costClient-" + modelData.id
+            options: [{ value: modelData.id, label: modelData.name }]
+            value: root.clientFilter
+            foreground: root.foreground
+            background: root.surface
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            focusable: false
+            onChanged: function(value) { root.clientRequested(value) }
+          }
+        }
+      }
+    }
+
     Text {
       visible: root.loading && !root.hasResult
       width: parent.width
       topPadding: Style.spacing.huge
       bottomPadding: Style.spacing.huge
-      text: "Scanning local usage transcripts…"
+      text: root.payload && root.payload.source === "keeper" ? "Loading proxy history…" : "Scanning local usage transcripts…"
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
@@ -215,8 +272,8 @@ Item {
 
       Text {
         width: parent.width
-        text: root.metric === "cost" ? root.formatUsd(root.totals.costUsd)
-          : root.formatTokens(root.totals.totalTokens)
+        objectName: "costSummaryValue"
+        text: root.primaryValue(root.totals)
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.display
@@ -240,6 +297,17 @@ Item {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         font.italic: true
+        wrapMode: Text.WordWrap
+      }
+
+      Text {
+        objectName: "proxyHistoryCoverage"
+        visible: !!(root.payload && root.payload.source === "keeper" && root.payload.history)
+        width: parent.width
+        text: visible ? root.historyText() : ""
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
       }
     }
@@ -293,6 +361,29 @@ Item {
               anchors.bottom: parent.bottom
               height: Style.spacing.hairline
               color: root.alpha(root.foreground, 0.12)
+            }
+
+            Rectangle {
+              objectName: "costHistoryGap-" + bucket.index
+              anchors.fill: parent
+              visible: bucket.modelData.historyStatus === "unavailable"
+              color: root.alpha(root.foreground, 0.035)
+              border.width: Style.spacing.hairline
+              border.color: root.alpha(root.foreground, 0.15)
+              Text {
+                anchors.centerIn: parent
+                text: "—"
+                color: root.dim
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            HoverHandler { id: bucketHover }
+            Controls.ToolTip {
+              visible: bucketHover.hovered
+              text: root.axisLabel(bucket.modelData) + " · " + root.primaryValue(bucket.modelData)
+                + (root.payload && root.payload.source === "keeper"
+                  ? " · " + root.bucketHistoryText(bucket.modelData) : "")
             }
 
             Rectangle {
@@ -358,6 +449,16 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
+      }
+
+      Text {
+        visible: root.payload && root.payload.source === "keeper"
+        width: parent.width
+        text: "Outlined gaps: history unavailable · recovered turns cover this device only"
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
       }
     }
 
@@ -593,7 +694,9 @@ Item {
       width: parent.width
       topPadding: Style.spacing.huge
       bottomPadding: Style.spacing.huge
-      text: "No transcript usage was found in this period."
+      text: root.payload && root.payload.source === "keeper"
+        ? "No saved proxy requests were found in this period."
+        : "No transcript usage was found in this period."
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

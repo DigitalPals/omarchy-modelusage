@@ -236,8 +236,28 @@ ShellRoot {
       assertTrue(proxyWidget.hideAccountEmails, "account emails are hidden by default")
       assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "Account 2", "hidden label contains no account identity")
       assertTrue(proxyWidget.accountTooltip({account: "secret@example.invalid"}).indexOf("secret") < 0, "settings cannot reveal hidden account identity")
+      proxyWidget.settings = Object.assign({}, proxyWidget.settings,
+        {barDisplayMode: "Percentages", barProviders: ["codex"]})
+      proxyWidget.selectProviderId("codex")
+      proxyWidget.accountActivity.providers = [{id: "codex", status: "ok", accountId: "0", lastUsedAt: 123}]
+      var barLabel = namedChild(proxyWidget, "barAccountLabel")
+      var barRemaining = namedChild(proxyWidget, "barAccountRemaining")
+      assertTrue(barLabel === null, "bar contains no account name label")
+      assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "Account 1", "tooltip respects hidden account emails")
+      assertEqual(barRemaining ? barRemaining.text : "", "20%", "bar quota belongs to last-used account")
+      proxyWidget.accountActivity.providers = [{id: "codex", status: "ok", accountId: "1", lastUsedAt: 124}]
+      assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "Account 2", "tooltip follows account switches")
+      assertEqual(barRemaining.text, "55%", "account switch updates quota together with label")
       proxyWidget.settings = Object.assign({}, proxyWidget.settings, {hideAccountEmails: false})
       assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "secret@example.invalid", "privacy setting can reveal account labels")
+      assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "codex-1@example.invalid", "tooltip reveals email only when requested")
+      assertTrue(namedChild(proxyWidget, "barAccountLabel") === null, "emails stay out of the bar when privacy is disabled")
+      proxyWidget.accountActivity.providers = []
+      assertEqual(barRemaining.text, "9%", "missing activity still shows the known pool quota")
+      assertTrue(barRemaining.parent.parent.tooltipText.indexOf("most remaining capacity") >= 0,
+        "fallback tooltip identifies the pool quota rather than claiming a last-used account")
+      proxyWidget.accountActivity.providers = [{id: "codex", status: "ambiguous", lastUsedAt: 125}]
+      assertEqual(barRemaining.text, "9%", "ambiguous activity still shows the known pool quota")
     }
     if (widget) {
       assertEqual(widget.moduleName, "digitalpals.model-usage", "moduleName injection")
@@ -384,6 +404,9 @@ ShellRoot {
     widget.showSettings()
     widget.settingsForm.setValue("usageSource", "cliproxy")
     widget.settingsForm.managementKey = "qml-synthetic-management-key"
+    widget.settingsForm.setValue("costSource", "keeper")
+    widget.settingsForm.setValue("costKeeperUrl", "https://keeper.example/keeper")
+    widget.settingsForm.keeperPassword = "qml-synthetic-keeper-password"
     widget.settingsForm.submit()
     keySavePhase = 0
     waitForKeySave.restart()
@@ -548,10 +571,15 @@ ShellRoot {
       if (root.keySavePhase === 0) {
         root.assertTrue(!root.widget.configuring, "key save completes and returns to usage: " + form.errorText)
         root.assertEqual(form.managementKey, "", "successful save clears the key field")
+        root.assertEqual(form.keeperPassword, "", "successful save clears the Keeper password field")
         root.assertTrue(String(mockShell.savedSettings.cliproxyKeyFile).indexOf("/management-keys/key-") > 0,
           "GUI key save persists a generated private file path")
         root.assertTrue(JSON.stringify(mockShell.savedSettings).indexOf("qml-synthetic-management-key") < 0,
           "management key never reaches widget settings")
+        root.assertTrue(JSON.stringify(mockShell.savedSettings).indexOf("qml-synthetic-keeper-password") < 0,
+          "Keeper password never reaches widget settings")
+        root.assertTrue(String(mockShell.savedSettings.costKeeperPasswordFile).indexOf("/management-keys/key-") > 0,
+          "Keeper password persists only as a private file path")
         root.widget.showSettings()
         root.assertEqual(form.managementKey, "", "saved key is never loaded into the editor")
         var savedPath = root.widget.settings.cliproxyKeyFile
@@ -559,6 +587,7 @@ ShellRoot {
         root.assertEqual(root.widget.settings.cliproxyKeyFile, savedPath, "blank key preserves saved credentials")
         root.widget.showSettings()
         form.managementKey = "replacement-that-must-be-rolled-back"
+        form.keeperPassword = "keeper-replacement-that-must-be-rolled-back"
         mockShell.rejectSave = true
         form.submit()
         root.keySavePhase = 1

@@ -61,6 +61,8 @@ if args.source == "cliproxy":
         for window in account["windows"]:
             if window["id"] == "codex-secondary":
                 window.update(remaining=remaining, used=100-remaining)
+            else:
+                window.update(remaining=99, used=1)
         codex["accounts"].append(account)
 
 else:
