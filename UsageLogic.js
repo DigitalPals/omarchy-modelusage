@@ -69,6 +69,34 @@ function meaningfulProviders(providers) {
   return result
 }
 
+function availableProviders(providers) {
+  function available(reading) {
+    return reading && reading.status !== "disabled" && reading.errorKind !== "no_credentials"
+  }
+  var result = []
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) {
+    var provider = list[i]
+    // Keep connection-level errors visible so the user can fix proxy setup.
+    if (provider && provider.id === "cliproxy") {
+      result.push(provider)
+      continue
+    }
+    var accounts = listOrEmpty(provider && provider.accounts)
+    if (accounts.length > 0) {
+      for (var j = 0; j < accounts.length; j++) {
+        if (available(accounts[j])) {
+          result.push(provider)
+          break
+        }
+      }
+    } else if (available(provider)) {
+      result.push(provider)
+    }
+  }
+  return result
+}
+
 function selectedProviders(providers, ids) {
   var result = []
   var list = listOrEmpty(providers)

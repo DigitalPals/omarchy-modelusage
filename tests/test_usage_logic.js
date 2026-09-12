@@ -44,6 +44,20 @@ assert.equal(context.meaningfulProviders(selected).length, 1);
 assert.equal(context.selectedProviders(providers, []).length, 0);
 assert.equal(providers.length, 3);
 
+const discovered = [
+  { id: "claude", status: "ok", accounts: [{ status: "disabled" }, { status: "ok" }] },
+  { id: "codex", status: "error", accounts: { 0: { status: "error", errorKind: "timeout" }, length: 1 } },
+  { id: "xai", status: "disabled", accounts: [{ status: "disabled" }] },
+  { id: "kimi", status: "error", errorKind: "no_credentials" },
+  { id: "gemini", status: "unsupported", accounts: [{ status: "unsupported" }] },
+];
+assert.equal(JSON.stringify(context.availableProviders(discovered).map(row => row.id)),
+  '["claude","codex","gemini"]', "hide unconnected or paused providers, retain active accounts even when quota checks fail");
+assert.equal(context.availableProviders([{ id: "cliproxy", status: "error", errorKind: "no_credentials" }]).length,
+  1, "proxy setup errors must remain visible");
+assert.equal(context.availableProviders(null).length, 0);
+assert.equal(discovered.length, 5, "filtering does not change backend discovery");
+
 const priorAccount = { ...provider("antigravity", 75), accountId: "a", plan: "Pro", fetchedAt: "then" };
 const oldProxy = { source: "cliproxy", providers: [{ ...priorAccount, accounts: [priorAccount] }] };
 const failedAccount = { ...priorAccount, status: "error", windows: [], message: "Timeout" };

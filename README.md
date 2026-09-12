@@ -208,7 +208,7 @@ In **Costs → gear → Custom model prices**, add the exact model ID and its in
 | `cliproxyUrl` | `http://127.0.0.1:8317` | CLIProxyAPI server or management URL |
 | `cliproxyKeyFile` | empty | Set automatically when saving a key in the GUI; can also point to an existing private key file |
 | `hideAccountEmails` | `true` | Replace account identities with numbered labels and hide them in settings |
-| `barDisplayMode` | `Icon` | `Icon` or compact `Percentages` |
+| `barDisplayMode` | `Percentages` | `Icon` or compact `Percentages` |
 | `barProviders` | all three | Enabled providers allowed to show percentage chips; independent of popup visibility |
 | `warningThreshold` | `25` | Mark urgent at or below this percentage remaining |
 | `criticalThreshold` | `10` | Critical threshold in percentage remaining |
@@ -228,7 +228,7 @@ omarchy bar set digitalpals.model-usage warningThreshold 20 --json
 omarchy bar set digitalpals.model-usage criticalThreshold 5 --json
 ```
 
-`Percentages` renders one compact provider-logo chip per provider with meaningful limits, followed by its binding window's remaining percentage. Clicking a chip opens that provider directly. Left and right bars automatically fall back to the icon presentation so the widget does not become excessively tall.
+New installations use `Percentages`: one compact provider-logo chip per provider with meaningful limits, followed by its binding window's remaining percentage. Clicking a chip opens that provider directly. Left and right bars automatically fall back to the icon presentation so the widget does not become excessively tall.
 
 ## Architecture
 

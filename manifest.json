@@ -30,7 +30,7 @@
       "cliproxyUrl": "http://127.0.0.1:8317",
       "cliproxyKeyFile": "",
       "hideAccountEmails": true,
-      "barDisplayMode": "Icon",
+      "barDisplayMode": "Percentages",
       "barProviders": [
         "claude",
         "codex",
@@ -126,7 +126,7 @@
           "Icon",
           "Percentages"
         ],
-        "defaultValue": "Icon",
+        "defaultValue": "Percentages",
         "description": "Percentages shows compact remaining quota on horizontal bars and falls back to the icon on vertical bars."
       },
       {

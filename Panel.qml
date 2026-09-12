@@ -21,7 +21,8 @@ Ui.Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property bool proxyMode: backend.usageSource === "cliproxy"
-  readonly property var providers: proxyMode ? backend.providers : UsageLogic.selectedProviders(backend.providers, backend.enabledProviderIds)
+  readonly property var providers: UsageLogic.availableProviders(proxyMode
+    ? backend.providers : UsageLogic.selectedProviders(backend.providers, backend.enabledProviderIds))
   property string selectedProviderId: ""
   property bool expandedAccountLimits: false
   property bool providerCursorActive: false
@@ -49,7 +50,7 @@ Ui.Panel {
     setting("criticalThreshold", 10), 0, 100)
   readonly property int warningThreshold: Math.max(criticalThreshold, UsageLogic.clamp(
     setting("warningThreshold", 25), 0, 100))
-  readonly property string displayMode: String(setting("barDisplayMode", "Icon"))
+  readonly property string displayMode: String(setting("barDisplayMode", "Percentages"))
   readonly property var percentageProviders: UsageLogic.meaningfulProviders(
     UsageLogic.selectedProviders(providers, setting("barProviders", ["claude", "codex", "kimi"])))
   property alias accountActivity: activityBackend
@@ -850,8 +851,8 @@ Ui.Panel {
             bottomPadding: Style.spacing.huge
             text: backend.loading
               ? "Loading AI subscription usage…"
-              : root.proxyMode ? "No managed accounts found. Check the accounts configured in CLIProxyAPI."
-              : "No providers are enabled. Choose Claude, Codex, or Kimi in the widget settings."
+              : root.proxyMode ? "No enabled managed accounts found. Check the accounts configured in CLIProxyAPI."
+              : "No connected providers found. Enable a provider in the widget settings and sign in to its CLI."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -1053,13 +1054,43 @@ Ui.Panel {
 
       Item {
         width: parent.width
-        implicitHeight: Math.max(accountPlan.implicitHeight, resetBadge.visible ? resetBadge.implicitHeight : 0)
+        implicitHeight: Math.max(accountLogo.height, accountPlan.implicitHeight,
+          resetBadge.visible ? resetBadge.implicitHeight : 0)
+
+        Item {
+          id: accountLogo
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.font.body * 1.2
+          height: width
+
+          Image {
+            id: accountLogoImage
+            anchors.fill: parent
+            source: root.iconUrl(accountCard.account)
+            sourceSize.width: accountLogo.width * 2
+            sourceSize.height: accountLogo.height * 2
+            fillMode: Image.PreserveAspectFit
+          }
+
+          Text {
+            anchors.centerIn: parent
+            visible: accountLogoImage.status !== Image.Ready
+            text: UsageLogic.providerMark(accountCard.account.id)
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+        }
 
         Text {
           id: accountPlan
-          anchors.left: parent.left
+          anchors.left: accountLogo.right
+          anchors.leftMargin: Style.spacing.md
           anchors.verticalCenter: parent.verticalCenter
-          width: Math.max(0, parent.width - (resetBadge.visible ? resetBadge.width + Style.spacing.md : 0))
+          width: Math.max(0, parent.width - accountLogo.width - Style.spacing.md
+            - (resetBadge.visible ? resetBadge.width + Style.spacing.md : 0))
           text: UsageLogic.accountPlanLabel(accountCard.account)
           textFormat: Text.PlainText
           color: root.foreground

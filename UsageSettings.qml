@@ -75,7 +75,7 @@ Column {
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       hideAccountEmails: value("hideAccountEmails", true) !== false,
-      barDisplayMode: value("barDisplayMode", "Icon"),
+      barDisplayMode: value("barDisplayMode", "Percentages"),
       refreshIntervalSec: String(value("refreshIntervalSec", 900)),
       warningThreshold: String(value("warningThreshold", 25)),
       criticalThreshold: String(value("criticalThreshold", 10))
@@ -390,7 +390,7 @@ Column {
     Ui.ButtonGroup {
       objectName: "barDisplayControl"
       options: [{ value: "Icon", label: "Widget icon" }, { value: "Percentages", label: "Provider percentages" }]
-      value: String(root.draft.barDisplayMode || "Icon")
+      value: String(root.draft.barDisplayMode || "Percentages")
       foreground: root.foreground
       background: root.surface
       fontFamily: root.fontFamily
