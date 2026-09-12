@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import hashlib
 import json
@@ -224,8 +225,12 @@ class ValidationTests(unittest.TestCase):
 
 
 class CombinedTests(unittest.TestCase):
+    def setUp(self):
+        self.contexts = contextlib.ExitStack()
+        self.addCleanup(self.contexts.close)
+
     def build(self, local_status="ok", duplicate=False, state="fresh", missing_first=False):
-        directory = self.enterContext(tempfile.TemporaryDirectory())
+        directory = self.contexts.enter_context(tempfile.TemporaryDirectory())
         root = Path(directory)
         info = root.stat()
         fp = t3.fingerprint(socket.gethostname(), "codex", str(root.resolve()), f"{info.st_dev}:{info.st_ino}")
@@ -235,16 +240,16 @@ class CombinedTests(unittest.TestCase):
         record = costs.UsageRecord(provider="codex", timestamp_ms=STAMP - 1000, model="test-model",
             session_id="local-session", uncached_input=1, cached_input=2, cache_creation=0,
             output=3, reasoning=1, reported_cost_usd=999, dedupe_key="local-record")
-        self.enterContext(mock.patch.object(costs, "scan_transcripts", return_value=([record] if local_status == "ok" else [],
+        self.contexts.enter_context(mock.patch.object(costs, "scan_transcripts", return_value=([record] if local_status == "ok" else [],
             [{"id": "codex", "status": local_status, "message": ""}])))
-        self.enterContext(mock.patch.object(costs, "transcript_root", return_value=root))
+        self.contexts.enter_context(mock.patch.object(costs, "transcript_root", return_value=root))
         if missing_first:
             missing = copy.deepcopy(remote)
             missing["sources"][0]["status"] = "missing"
             missing["buckets"] = []
-            self.enterContext(mock.patch.object(t3, "collect", side_effect=[(missing, "fresh", ""), (remote, state, "offline")]))
+            self.contexts.enter_context(mock.patch.object(t3, "collect", side_effect=[(missing, "fresh", ""), (remote, state, "offline")]))
         else:
-            self.enterContext(mock.patch.object(t3, "collect", return_value=(remote, state, "offline")))
+            self.contexts.enter_context(mock.patch.object(t3, "collect", return_value=(remote, state, "offline")))
         servers = [{"id": "remote", "name": "Remote", "url": "https://example.com"}]
         if missing_first:
             servers.append({"id": "second", "name": "Second", "url": "https://second.example.com"})

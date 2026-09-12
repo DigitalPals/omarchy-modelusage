@@ -6,6 +6,11 @@ All notable changes to this project will be documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Use Python 3.10-compatible context cleanup in the T3 cost tests so the portable
+  CI matrix also runs on the oldest supported Python version.
+
 ## [1.1.0] - 2026-09-12
 
 ### Changed
