@@ -142,16 +142,23 @@ def error_provider(provider_id: str, kind: str, message: str) -> dict[str, Any]:
     return result
 
 
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Authenticated requests must never forward credentials to a redirect.
+        return None
+
+
 def http_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.build_opener(NoRedirects()).open(request, timeout=timeout) as response:
             raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
             if len(raw) > MAX_HTTP_RESPONSE_BYTES:
                 raise ProviderFailure(
                     "malformed", "The provider returned unexpectedly large usage data."
                 )
     except urllib.error.HTTPError as exc:
+        exc.close()
         if exc.code in (401, 403):
             raise ProviderFailure("expired", "The saved sign-in is no longer accepted.") from None
         if exc.code == 429:
@@ -161,11 +168,11 @@ def http_json(url: str, headers: dict[str, str], timeout: float) -> Any:
         reason = getattr(exc, "reason", exc)
         if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
             raise ProviderFailure("timeout", "The usage request timed out.") from None
-        raise ProviderFailure("network", f"Could not reach the usage endpoint: {reason}") from None
+        raise ProviderFailure("network", "Could not reach the usage endpoint. Check the connection and TLS certificate.") from None
 
     try:
         return json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (ValueError, RecursionError):
         raise ProviderFailure("malformed", "The provider returned unreadable usage data.") from None
 
 
@@ -345,7 +352,7 @@ def fetch_claude(timeout: float) -> dict[str, Any]:
         oauth_account = account_data.get("oauthAccount") if isinstance(account_data, dict) else None
         if isinstance(oauth_account, dict):
             account = str(oauth_account.get("emailAddress") or "")
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         pass
 
     result = base_provider(provider_id)
@@ -903,12 +910,6 @@ def normalize_cliproxy_url(address: str) -> str:
         raise ProviderFailure("config", "CLIProxyAPI URL must be an HTTP(S) server or management URL without credentials, query, or fragment.") from None
 
 
-class NoManagementRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # Never forward the management credential to a redirect destination.
-        return None
-
-
 class CliProxyClient:
     def __init__(self, address: str, key: str):
         self.base_url = normalize_cliproxy_url(address)
@@ -922,7 +923,7 @@ class CliProxyClient:
             body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base_url + "/v0/management/" + path, data=body, headers=headers)
         try:
-            opener = urllib.request.build_opener(NoManagementRedirects())
+            opener = urllib.request.build_opener(NoRedirects())
             with opener.open(request, timeout=timeout) as response:
                 raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as exc:
@@ -1293,8 +1294,8 @@ def safe_fetch(provider_id: str, timeout: float) -> dict[str, Any]:
         if not isinstance(result, dict) or result.get("id") != provider_id:
             raise ValueError("invalid normalized result")
         return result
-    except Exception as exc:
-        return error_provider(provider_id, "internal", f"The provider collector failed: {exc}")
+    except Exception:
+        return error_provider(provider_id, "internal", "The provider collector could not read usage data.")
 
 
 def collect_providers(provider_ids: list[str], timeout: float) -> list[dict[str, Any]]:
@@ -1307,8 +1308,8 @@ def collect_providers(provider_ids: list[str], timeout: float) -> list[dict[str,
             provider_id = futures[future]
             try:
                 results[provider_id] = future.result()
-            except Exception as exc:
-                results[provider_id] = error_provider(provider_id, "internal", str(exc))
+            except Exception:
+                results[provider_id] = error_provider(provider_id, "internal", "The provider collector could not read usage data.")
     return [results[provider_id] for provider_id in provider_ids]
 
 

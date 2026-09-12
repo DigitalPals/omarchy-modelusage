@@ -51,6 +51,35 @@ else
 fi
 
 if command -v quickshell >/dev/null 2>&1 && [[ -d "$quattro_root/shell/Ui" ]]; then
+  quota_root="$test_root/quota"
+  mkdir -p "$quota_root"
+  cp "$repo_root/tests/qml/quota-shell.qml" "$quota_root/shell.qml"
+  repo_url=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$repo_root")
+  QT_QPA_PLATFORM=offscreen \
+  MODEL_USAGE_REPO_URL="$repo_url" \
+  MODEL_USAGE_FAKE_BACKEND="$repo_root/tests/fake_quota_refresh.py" \
+  MODEL_USAGE_QUOTA_REQUESTS="$quota_root/requests.jsonl" \
+  PATH="$repo_root/tests/fake-bin:$PATH" \
+    timeout 8 quickshell -p "$quota_root" --no-color >"$quota_root/runtime.log" 2>&1 || {
+      cat "$quota_root/runtime.log"
+      exit 1
+    }
+  if ! rg -q 'Quota QML contract: passed' "$quota_root/runtime.log" \
+      || rg -n 'Error:|ReferenceError|TypeError|Binding loop|Unable to assign|failed to load|QUOTA TEST FAILED' "$quota_root/runtime.log"; then
+    cat "$quota_root/runtime.log"
+    exit 1
+  fi
+  python3 - "$quota_root/requests.jsonl" <<'PY'
+import json
+import pathlib
+import sys
+requests = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+assert len(requests) == 4, "refreshes must coalesce without losing the latest request"
+assert requests[0]["cliproxy_url"] == "https://old.example"
+assert all(row["cliproxy_url"] == "https://new.example" for row in requests[1:])
+PY
+  echo "Quota QML contract: passed (startup refreshes and connection changes)"
+
   activity_root="$test_root/activity"
   mkdir -p "$activity_root"
   cp "$repo_root/tests/qml/activity-shell.qml" "$activity_root/shell.qml"

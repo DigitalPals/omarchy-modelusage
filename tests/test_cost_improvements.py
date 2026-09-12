@@ -31,6 +31,16 @@ def aggregate(records, rates=None, overrides=None):
 
 
 class ModelPricingTests(unittest.TestCase):
+    def test_explicit_custom_prices_can_resolve_ambiguous_model_aliases(self):
+        for model in ("sonnet", "vendor/opus", "haiku"):
+            with self.subTest(model=model):
+                custom = costs.parse_price_overrides(json.dumps({model: {
+                    "inputCostPerMillionTokens": 2, "outputCostPerMillionTokens": 8}}))
+                self.assertIsNone(aggregate([record(model)])["costUsd"])
+                totals = aggregate([record(model)], overrides=custom)
+                self.assertEqual(totals["costUsd"], 14)
+                self.assertEqual(totals["costSource"], "customPriced")
+
     def test_canonical_and_qualified_prices_are_order_independent(self):
         entries = [("example", rate()), ("reseller/example", rate(3e-6, 10e-6, 3e-6))]
         for rows in (entries, list(reversed(entries))):
@@ -171,6 +181,56 @@ class IncrementalScanTests(unittest.TestCase):
     def scan(self, provider="claude", state=None):
         with mock.patch.object(costs, "transcript_root", return_value=self.transcripts):
             return costs.scan_transcripts([provider], state or self.state, NOW)
+
+    def test_codex_equal_response_sizes_with_advancing_totals_are_distinct(self):
+        path = self.transcripts / "codex.jsonl"
+        lines = base.fixture_text("codex-rollout.jsonl").splitlines()
+        event = json.loads(lines[2])
+        last = event["payload"]["info"]["last_token_usage"]
+        event["payload"]["info"]["total_token_usage"] = dict(last)
+        self.write(path, "\n".join(lines[:2] + [json.dumps(event)]) + "\n")
+        self.assertEqual(len(self.scan("codex")[0]), 1)
+        # A notification repeats the last response; the next actual response
+        # can have exactly the same size but advances the cumulative counters.
+        duplicate = json.dumps(event)
+        event["timestamp"] = "2030-01-14T13:03:00Z"
+        event["payload"]["info"]["total_token_usage"] = {k: v * 2 for k, v in last.items()}
+        self.write(path, duplicate + "\n" + json.dumps(event) + "\n", append=True)
+        warm, coverage = self.scan("codex")
+        self.assertEqual(len(warm), 2)
+        self.assertEqual(warm, self.scan("codex", state=self.root / "cold")[0])
+        self.assertEqual(coverage[0]["status"], "ok")
+
+    def test_invalid_numeric_transcript_is_isolated_from_readable_history(self):
+        good = self.transcripts / "good.jsonl"
+        bad = self.transcripts / "bad.jsonl"
+        self.write(good, base.TranscriptParserTests.claude_line(1) + "\n")
+        row = json.loads(base.TranscriptParserTests.claude_line(2))
+        row["message"]["usage"]["input_tokens"] = 10**400
+        self.write(bad, json.dumps(row) + "\n")
+        records, coverage = self.scan()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(coverage[0]["status"], "partial")
+        self.assertEqual(coverage[0]["skippedFiles"], 1)
+
+    def test_deeply_nested_scan_cache_is_rebuilt(self):
+        self.write(self.transcripts / "good.jsonl", base.TranscriptParserTests.claude_line(1) + "\n")
+        self.state.mkdir()
+        costs.state_path("cost-scan-cache.json", self.state).write_text("[" * 2000 + "0" + "]" * 2000)
+        records, coverage = self.scan()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(coverage[0]["status"], "ok")
+
+    def test_overflowing_cached_counter_rebuilds_the_transcript(self):
+        self.write(self.transcripts / "good.jsonl", base.TranscriptParserTests.claude_line(1) + "\n")
+        expected, _ = self.scan()
+        path = costs.state_path("cost-scan-cache.json", self.state)
+        saved = json.loads(path.read_text())
+        next(iter(saved["files"].values()))["r"][0][3] = 10**400
+        path.write_text(json.dumps(saved))
+        records, coverage = self.scan()
+        self.assertEqual(records, expected)
+        self.assertEqual(coverage[0]["status"], "ok")
 
     def test_append_reads_only_tail_and_durable_state_contains_no_transcript_text(self):
         path = self.transcripts / "session.jsonl"

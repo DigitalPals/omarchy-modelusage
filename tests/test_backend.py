@@ -102,6 +102,25 @@ class NormalizationTests(unittest.TestCase):
 
 
 class FailureAndIsolationTests(unittest.TestCase):
+    def test_optional_claude_metadata_cannot_discard_valid_quota(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "synthetic"}}))
+            for metadata in (b" " * (usage.MAX_LOCAL_JSON_BYTES + 1), b"\xff", b"[" * 2000 + b"0" + b"]" * 2000):
+                with self.subTest(size=len(metadata)), mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}), \
+                        mock.patch.object(usage.Path, "home", return_value=root), \
+                        mock.patch.object(usage, "http_json", return_value=fixture("claude-usage.json")):
+                    (root / ".claude.json").write_bytes(metadata)
+                    result = usage.safe_fetch("claude", 1)
+                    self.assertEqual(result["status"], "ok")
+                    self.assertTrue(result["windows"])
+
+    def test_unexpected_collector_errors_do_not_echo_private_input(self):
+        with mock.patch.dict(usage.FETCHERS, {"claude": mock.Mock(side_effect=ValueError("synthetic-private-content"))}):
+            result = usage.safe_fetch("claude", 1)
+        self.assertEqual(result["status"], "error")
+        self.assertNotIn("synthetic-private-content", json.dumps(result))
+
     def test_missing_and_expired_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -140,7 +159,7 @@ class FailureAndIsolationTests(unittest.TestCase):
         for exception, kind in cases:
             try:
                 with self.subTest(kind=kind), mock.patch.object(
-                    usage.urllib.request, "urlopen", side_effect=exception
+                    usage.urllib.request.OpenerDirector, "open", side_effect=exception
                 ):
                     with self.assertRaises(usage.ProviderFailure) as raised:
                         usage.http_json("https://example", {}, 1)
@@ -152,7 +171,7 @@ class FailureAndIsolationTests(unittest.TestCase):
 
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b"not-json"
-        with mock.patch.object(usage.urllib.request, "urlopen", return_value=response):
+        with mock.patch.object(usage.urllib.request.OpenerDirector, "open", return_value=response):
             with self.assertRaises(usage.ProviderFailure) as raised:
                 usage.http_json("https://example", {}, 1)
         self.assertEqual(raised.exception.kind, "malformed")
@@ -161,7 +180,7 @@ class FailureAndIsolationTests(unittest.TestCase):
         response = mock.MagicMock()
         reader = response.__enter__.return_value.read
         reader.return_value = b"x" * (usage.MAX_HTTP_RESPONSE_BYTES + 1)
-        with mock.patch.object(usage.urllib.request, "urlopen", return_value=response):
+        with mock.patch.object(usage.urllib.request.OpenerDirector, "open", return_value=response):
             with self.assertRaises(usage.ProviderFailure) as raised:
                 usage.http_json("https://example", {}, 1)
         self.assertEqual(raised.exception.kind, "malformed")

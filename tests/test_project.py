@@ -89,7 +89,7 @@ class ProjectContractTests(unittest.TestCase):
         cost_backend = (ROOT / "CostBackend.qml").read_text()
         self.assertIn("bar && bar.vertical", panel)
         self.assertIn("running: root.opened", panel)
-        self.assertIn("if (fetchProcess.running)", backend)
+        # Refresh serialization is exercised by tests/qml/quota-shell.qml.
         self.assertIn("pendingRefresh = true", backend)
         self.assertIn("interval: 35000", backend)
         self.assertIn("Math.max(60, Math.min(3600", backend)

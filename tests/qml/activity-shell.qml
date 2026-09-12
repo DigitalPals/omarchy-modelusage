@@ -6,6 +6,8 @@ ShellRoot {
   property var backend: null
   property int phase: 0
   property int ticks: 0
+  property var startupProbe: null
+  property bool startupVerified: false
   QtObject {
     id: usage
     property string usageSource: "cliproxy"
@@ -25,6 +27,18 @@ ShellRoot {
       settings: { costKeeperUrl: "http://synthetic.invalid/old" },
       scriptPath: Quickshell.env("MODEL_USAGE_FAKE_ACTIVITY") })
     check(backend !== null, "create activity backend")
+    startupProbe = component.createObject(host, { usageBackend: usage,
+      settings: { costKeeperUrl: "http://synthetic.invalid/old" },
+      scriptPath: Quickshell.env("MODEL_USAGE_FAKE_ACTIVITY") })
+    startupProbe.providersChanged.connect(function() {
+      if (!startupProbe.providers.length) return
+      root.check(startupProbe.providers[0].accountId === "new", "startup response uses its original connection")
+      root.startupVerified = true
+    })
+    startupProbe.refresh()
+    startupProbe.settings = { costKeeperUrl: "http://synthetic.invalid/new" }
+    startupProbe.refresh()
+    startupProbe.refresh()
   }
   Timer {
     interval: 40
@@ -56,6 +70,7 @@ ShellRoot {
         root.check(b.providers.length === 0, "oversized output cannot supply account activity")
         b.settings = {}
         root.check(!b.trackingEnabled && b.notice.indexOf("Configure") >= 0, "missing Keeper gives setup guidance")
+        root.check(root.startupVerified, "activity startup probe completed")
         console.log("Activity QML contract: passed")
         Qt.quit()
       }

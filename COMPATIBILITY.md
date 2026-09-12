@@ -3,17 +3,24 @@
 - Omarchy branch: `quattro`
 - Omarchy commit: `2c247e390e357ae0fee3f8565b0c816adb705e6a`
 - Development date: 2026-08-23
+- Latest release review validation: 2026-09-12
 - Plugin manifest schema: 1
 - Limit backend schema: 1
 - Estimated-cost backend schema: 1
 
 ## Tested local runtime
 
-- Omarchy package: `4.0.0-1`
+- Omarchy package: `4.0.3-1`
 - Qt Declarative / `qmllint`: `6.11.2`
-- Quickshell: `0.3.0` (`28771c7c74b42e20afca0b1b63980cb46515537c`)
+- Quickshell: `0.3.1-1` (Arch Linux package)
 - Python: `3.14.7` locally; CI covers `3.10` through `3.14`
 - Node.js test runner: `26.7.0` locally; CI uses Node.js 22
+
+The 2026-09-12 release review passed 128 Python tests, JavaScript checks,
+QML lint, quota/activity/cost/reset runtime checks, and the isolated live UI
+contract. A clean package passed `omarchy plugin validate`. After a supported
+desktop shell restart, live Claude/Codex Limits and refreshed Costs were
+visually checked; the new shell log contained no plugin load or QML errors.
 
 ## Provider compatibility
 

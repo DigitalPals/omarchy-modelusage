@@ -264,6 +264,13 @@ def proxy_server(redirect=False):
 
 
 class CliProxyIntegrationTests(unittest.TestCase):
+    def test_direct_provider_redirect_does_not_forward_signin_token(self):
+        with proxy_server(redirect=True) as (address, calls):
+            with self.assertRaises(usage.ProviderFailure) as raised:
+                usage.http_json(address + "/usage", {"Authorization": "Bearer synthetic-signin"}, 1)
+        self.assertEqual(raised.exception.kind, "http")
+        self.assertEqual(len(calls), 1)
+
     def test_real_http_cli_pool_selection_and_separate_private_history(self):
         with tempfile.TemporaryDirectory() as temporary, proxy_server() as (address, calls):
             root = Path(temporary)

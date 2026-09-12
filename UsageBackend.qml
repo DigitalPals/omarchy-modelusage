@@ -15,6 +15,7 @@ Item {
   property double lastSuccessAt: 0
   property double lastAttemptAt: 0
   property bool pendingRefresh: false
+  property bool launchPending: false
 
   readonly property int refreshIntervalSec: Math.max(60, Math.min(3600,
     Math.round(Number(setting("refreshIntervalSec", 900)) || 900)))
@@ -54,7 +55,7 @@ Item {
 
   function requestRefresh(manual) {
     if (manual) refreshTimer.restart()
-    if (fetchProcess.running) {
+    if (fetchProcess.running || launchPending || pendingRefresh) {
       pendingRefresh = true
       return
     }
@@ -62,8 +63,12 @@ Item {
   }
 
   function refresh() { requestRefresh(true) }
+  function refreshForSettings() { requestRefresh(false) }
 
   function startFetch() {
+    if (fetchProcess.running || launchPending) return
+    launchPending = true
+    loading = true
     pendingRefresh = false
     lastAttemptAt = Date.now()
     var command = [
@@ -77,16 +82,16 @@ Item {
       if (cliproxyKeyFile.trim() !== "") command.push("--cliproxy-key-file", cliproxyKeyFile.trim())
     }
     fetchProcess.command = command
+    fetchProcess.connectionId = connectionId
     fetchProcess.running = true
   }
 
   function settle() {
+    launchPending = false
     loading = false
     if (fetchProcess.connectionId !== connectionId) {
-      Qt.callLater(function() { root.startFetch() })
-      return
-    }
-    if (fetchProcess.outputTooLarge) {
+      pendingRefresh = true
+    } else if (fetchProcess.outputTooLarge) {
       fetchError = "Model usage backend returned too much data"
     } else if (fetchProcess.timedOut) {
       fetchError = "Model usage backend timed out"
@@ -112,17 +117,19 @@ Item {
         }
       }
     }
-    if (pendingRefresh) Qt.callLater(function() { root.startFetch() })
+    if (pendingRefresh) Qt.callLater(function() {
+      if (root.pendingRefresh) root.startFetch()
+    })
   }
 
-  onEnabledProviderIdsChanged: requestRefresh(false)
+  // Let bindings consuming this list settle before changing loading state.
+  onEnabledProviderIdsChanged: Qt.callLater(refreshForSettings)
   onConnectionIdChanged: {
     payload = ({ schemaVersion: 1, generatedAt: "", providers: [] })
     lastSuccessAt = 0
+    fetchError = ""
     requestRefresh(false)
   }
-  onCliproxyUrlChanged: { if (usageSource === "cliproxy") requestRefresh(false) }
-  onCliproxyKeyFileChanged: { if (usageSource === "cliproxy") requestRefresh(false) }
 
   Process {
     id: fetchProcess
@@ -159,7 +166,7 @@ Item {
     }
     onRunningChanged: {
       if (running) {
-        connectionId = root.connectionId
+        root.launchPending = false
         body = ""
         exitSeen = false
         lastExit = 0

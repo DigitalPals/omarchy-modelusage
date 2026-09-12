@@ -12,6 +12,7 @@ Item {
   property string fetchError: ""
   property double lastSuccessAt: 0
   property bool pendingRefresh: false
+  property bool launchPending: false
   property string scriptPath: usageBackend.localPath(Qt.resolvedUrl("scripts/proxy-activity.py"))
   readonly property string keeperUrl: String(settings.costKeeperUrl || "")
   readonly property string passwordFile: String(settings.costKeeperPasswordFile || "")
@@ -23,35 +24,40 @@ Item {
 
   function refresh() {
     if (!trackingEnabled) return
-    if (process.running) { pendingRefresh = true; return }
+    if (process.running || launchPending) { pendingRefresh = true; return }
+    launchPending = true
     pendingRefresh = false
     var command = ["python3", scriptPath, "--cliproxy-url", usageBackend.cliproxyUrl,
       "--keeper-url", keeperUrl, "--timeout", "10"]
     if (usageBackend.cliproxyKeyFile !== "") command.push("--cliproxy-key-file", usageBackend.cliproxyKeyFile)
     if (passwordFile !== "") command.push("--keeper-password-file", passwordFile)
     process.command = command
+    process.connectionId = connectionId
     process.running = true
   }
 
   function settle() {
+    launchPending = false
     if (process.connectionId !== connectionId || !trackingEnabled) {
-      if (trackingEnabled) Qt.callLater(refresh)
-      return
-    }
-    var parsed = null
-    if (process.exitSeen && process.lastExit === 0 && !process.failed) {
-      try { parsed = JSON.parse(process.body) } catch (e) { parsed = null }
-    }
-    if (!parsed || parsed.schemaVersion !== 1 || !UsageLogic.isListLike(parsed.providers)) {
-      fetchError = "Account activity refresh failed."
-    } else if (String(parsed.error || "") !== "") {
-      fetchError = String(parsed.error)
+      pendingRefresh = trackingEnabled
     } else {
-      providers = parsed.providers
-      fetchError = ""
-      lastSuccessAt = Date.now()
+      var parsed = null
+      if (process.exitSeen && process.lastExit === 0 && !process.failed) {
+        try { parsed = JSON.parse(process.body) } catch (e) { parsed = null }
+      }
+      if (!parsed || parsed.schemaVersion !== 1 || !UsageLogic.isListLike(parsed.providers)) {
+        fetchError = "Account activity refresh failed."
+      } else if (String(parsed.error || "") !== "") {
+        fetchError = String(parsed.error)
+      } else {
+        providers = parsed.providers
+        fetchError = ""
+        lastSuccessAt = Date.now()
+      }
     }
-    if (pendingRefresh) Qt.callLater(refresh)
+    if (pendingRefresh) Qt.callLater(function() {
+      if (root.pendingRefresh) root.refresh()
+    })
   }
 
   onConnectionIdChanged: {
@@ -84,7 +90,7 @@ Item {
     onExited: function(exitCode) { exitSeen = true; lastExit = exitCode }
     onRunningChanged: {
       if (running) {
-        connectionId = root.connectionId
+        root.launchPending = false
         body = ""
         exitSeen = false
         failed = false

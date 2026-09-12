@@ -29,7 +29,7 @@ import t3_costs
 
 
 SCHEMA_VERSION = 1
-SCAN_CACHE_VERSION = 4  # Local transcript records; obsolete proxy recovery metadata is discarded.
+SCAN_CACHE_VERSION = 5  # Rebuild Codex records deduplicated without cumulative counters.
 RATE_CACHE_VERSION = 2  # v1 discarded provider prefixes and could cache conflicting rates.
 PROVIDER_ORDER = ("claude", "codex", "kimi")
 PROVIDER_NAMES = {
@@ -334,7 +334,7 @@ def decode_position(value: Any, size: int) -> dict[str, Any] | None:
 def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
     try:
         document = read_bounded_json(path, MAX_SCAN_CACHE_BYTES)
-    except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+    except (OSError, ValueError, RecursionError):
         return {}
     if not isinstance(document, dict) or document.get("schemaVersion") != SCAN_CACHE_VERSION:
         return {}
@@ -374,7 +374,10 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
         records: list[UsageRecord] = []
         corrupt = False
         for row in rows:
-            record = deserialize_record(provider, row)
+            try:
+                record = deserialize_record(provider, row)
+            except (ValueError, OverflowError):
+                record = None
             if record is None:
                 corrupt = True
                 break
@@ -471,7 +474,7 @@ def parse_claude_file(path: Path, retention_start_ms: int, cursor: TranscriptCur
             if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
                 raise TranscriptLimitError("too many usage records in one transcript")
             append_record(records, record, cursor)
-    except (OSError, TranscriptLimitError):
+    except (OSError, ValueError, OverflowError, RecursionError):
         return None
     return records
 
@@ -526,7 +529,12 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
             timestamp = parse_timestamp_ms(document.get("timestamp"))
             if not isinstance(last, dict) or timestamp is None or not state["model"]:
                 continue
-            signature = opaque_id(json.dumps(last, separators=(",", ":"), sort_keys=True))
+            # Repeated notifications keep both counters unchanged. Separate
+            # responses may have identical sizes but advance the session total.
+            total = info.get("total_token_usage")
+            signature = opaque_id(json.dumps(
+                [last, total if isinstance(total, dict) else None],
+                separators=(",", ":"), sort_keys=True))
             if signature == state["last_signature"]:
                 continue
             state["last_signature"] = signature
@@ -556,7 +564,7 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
                 if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
                     raise TranscriptLimitError("too many usage records in one transcript")
                 append_record(records, record, cursor)
-    except (OSError, TranscriptLimitError):
+    except (OSError, ValueError, OverflowError, RecursionError):
         return None
     return records
 
@@ -625,7 +633,7 @@ def parse_kimi_file(path: Path, retention_start_ms: int, cursor: TranscriptCurso
                     if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
                         raise TranscriptLimitError("too many usage records in one transcript")
                     append_record(records, record, cursor)
-    except (OSError, TranscriptLimitError):
+    except (OSError, ValueError, OverflowError, RecursionError):
         return None
     return records
 
@@ -955,7 +963,7 @@ def parse_price_overrides(raw: str) -> dict[str, tuple[float, float, float, floa
 def load_rate_cache(path: Path) -> tuple[int, dict[str, tuple[float, float, float, float]]] | None:
     try:
         document = read_bounded_json(path, MAX_RATE_BYTES)
-    except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+    except (OSError, ValueError, RecursionError):
         return None
     if not isinstance(document, dict) or document.get("schemaVersion") != RATE_CACHE_VERSION:
         return None
@@ -1124,8 +1132,9 @@ def add_record(
     if record.session_id:
         cell["sessions"].add(record.session_id)
 
-    custom = ((overrides or {}).get(record.model.strip())
-              if normalize_model_name(record.model).rsplit("/", 1)[-1] not in UNPRICEABLE_MODELS else None)
+    # User-defined exact IDs can resolve aliases that public pricing cannot.
+    # parse_price_overrides already rejects synthetic/unattributed identities.
+    custom = (overrides or {}).get(record.model.strip())
     rate = custom if custom is not None else lookup_rate(record.model, rates)
     if record.reported_cost_usd is not None and custom is None:
         cell["cost"] += record.reported_cost_usd

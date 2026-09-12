@@ -27,6 +27,10 @@ Quickshell process. Its Python helpers read provider-owned credentials for
 quota requests, apply explicitly confirmed banked resets, and scan local usage metadata. They do not need root
 access and should never be run with `sudo`.
 
+Direct provider requests reject HTTP redirects and verify HTTPS certificates.
+Unexpected collector errors use fixed display messages rather than raw exception
+details, which can contain credential or account data.
+
 Private state is stored below
 `${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/`. The directory uses mode
 `0700`; files use mode `0600`. Transcript paths, session identifiers, message

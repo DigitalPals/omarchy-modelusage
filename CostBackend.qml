@@ -70,6 +70,9 @@ Item {
 
   function ensureLoaded() {
     requested = true
+    // Opening Costs notifies both the view and popup. They share one scan;
+    // explicit refreshes and settings changes still queue their own follow-up.
+    if (loading) return
     var payloadDays = payload && payload.period ? Number(payload.period.days) : 0
     if (lastSuccessAt <= 0 || payloadDays !== periodDays
         || Date.now() - lastSuccessAt >= staleAfterMs) requestRefresh()

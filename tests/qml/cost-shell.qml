@@ -5,6 +5,8 @@ ShellRoot {
   id: root
   property var form: null
   property var backend: null
+  property var openingBackend: null
+  property int openingResponses: 0
   property var view: null
   property var overview: null
   property string pickedClient: ""
@@ -64,6 +66,11 @@ ShellRoot {
     }})
     overview.periodRequested.connect(function(days) { root.overview.periodDays = days })
     backend = create("CostBackend.qml", {settings: {costLocalProviders: ["claude"]}})
+    openingBackend = create("CostBackend.qml", {settings: {costLocalProviders: ["claude"]}})
+    openingBackend.refreshed.connect(function() { root.openingResponses++ })
+    openingBackend.ensureLoaded()
+    openingBackend.ensureLoaded()
+    openingBackend.ensureLoaded()
     backend.refreshed.connect(function() {
       root.responses++
       if (root.responses === 1) root.check(!backend.payload.testRequest.force, "automatic scan respects rate TTL")
@@ -153,6 +160,8 @@ ShellRoot {
         root.check(root.form.submit() && root.saved.costPriceOverrides === "{}", "removing prices restores automatic pricing")
         root.phase++
       } else if (root.phase === 2 && root.responses >= 2 && !root.backend.loading) {
+        root.check(root.openingResponses === 1 && !root.openingBackend.loading,
+          "opening Costs through multiple view notifications starts only one scan")
         root.check(root.responses === 2, "overlapping requests collapse to one follow-up scan")
         root.check(root.backend.payload.testRequest.force, "queued explicit refresh forces prices")
         root.check(root.backend.payload.testRequest.prices === root.custom, "custom prices reach the process as exact JSON")

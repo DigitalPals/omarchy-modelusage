@@ -45,6 +45,18 @@ All notable changes to this project will be documented here. The format follows
 
 ### Fixed
 
+- Keep quota and account-activity refreshes serialized during process startup,
+  and discard responses from the previous connection when settings change.
+- Avoid a redundant transcript scan when opening Costs triggers multiple view
+  notifications.
+- Honor explicit custom prices for otherwise ambiguous model IDs such as
+  `sonnet`, `opus`, and `haiku`.
+- Count distinct Codex responses with identical token usage when cumulative
+  counters advance. Rebuild older transcript caches with the corrected logic.
+- Isolate malformed numeric transcript records and damaged scan caches, and
+  keep successful Claude quota readings when optional account metadata is
+  oversized or unreadable.
+
 - Preserve canonical and provider-qualified prices instead of allowing reseller
   entries to overwrite rates. Ambiguous aliases remain unpriced; bracketed model
   variants use clearly identified base-rate estimates.
@@ -54,6 +66,9 @@ All notable changes to this project will be documented here. The format follows
   and forced-price changes into one follow-up scan.
 
 ### Security
+
+- Reject redirects on direct provider requests so sign-in tokens cannot be
+  forwarded, and avoid displaying raw unexpected collector exception details.
 
 - Bound provider HTTP and local JSON inputs, and replaced Codex RPC `readline`
   handling with a deadline-aware incremental reader capped per message.
