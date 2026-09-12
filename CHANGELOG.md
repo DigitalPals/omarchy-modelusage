@@ -6,6 +6,18 @@ All notable changes to this project will be documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-12
+
+### Changed
+
+- Simplified Limits/Costs navigation with tabs and a provider menu, expandable
+  token/model details, and separate quota and cost settings with fixed Save/Cancel
+  controls. Usage cards default to square corners with a theme-corner option.
+- Refreshed the README and screenshots, documented exactly which activity and
+  token categories count, and moved detailed setup/development reference into docs.
+- Expanded the marketplace description and replaced its preview with a composition
+  of the menu bar, three Codex subscriptions, and combined local/T3 Costs.
+
 ### Added
 
 - Accept transcript lines up to 16 MiB so large tool outputs do not discard otherwise readable session usage. File and scan limits remain bounded.
@@ -92,5 +104,6 @@ All notable changes to this project will be documented here. The format follows
   for horizontal and vertical bars.
 - Fixture, contract, QML lint, and live Quickshell runtime tests.
 
-[Unreleased]: https://github.com/DigitalPals/omarchy-modelusage/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/DigitalPals/omarchy-modelusage/releases/tag/v1.0.0
+[Unreleased]: https://github.com/DigitalPals/omarchy-modelusage/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/DigitalPals/omarchy-modelusage/releases/tag/v1.1.0
+[1.0.0]: https://github.com/DigitalPals/omarchy-modelusage/commit/1ac7f411a75fd84bf63d8005fdefbb8867d642f4
