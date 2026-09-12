@@ -5,6 +5,7 @@ import qs.Commons
 
 // Omarchy-native segmented quota meter. Every segment is a single track item;
 // only the boundary fragment is overlaid, so the strip is not rendered twice.
+// Keep quota blocks square regardless of the theme's corner radius.
 Item {
   id: root
 
@@ -36,7 +37,7 @@ Item {
       x: index * root.pitch
       width: root.blockWidth
       height: root.height
-      radius: Math.min(Style.cornerRadius, width / 3)
+      radius: 0
       color: index < root.completeBlocks ? root.fillColor : root.trackColor
     }
   }
@@ -46,7 +47,7 @@ Item {
     x: root.completeBlocks * root.pitch
     width: Math.round(root.blockWidth * root.boundaryFraction)
     height: root.height
-    radius: Math.min(Style.cornerRadius, root.blockWidth / 3)
+    radius: 0
     color: root.fillColor
   }
 }
