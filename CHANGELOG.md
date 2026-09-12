@@ -8,6 +8,9 @@ All notable changes to this project will be documented here. The format follows
 
 ### Added
 
+- Clickable Codex banked resets in CLIProxyAPI mode, with account-specific
+  confirmation, expiry-ordered credit selection, and idempotent retry handling.
+
 - Proxy Limits now shows all connected accounts together with separate quota
   cards, automatic provider discovery, weekly limits by default, and Codex Pro
   20×/5× plan labels.

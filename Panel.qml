@@ -30,6 +30,7 @@ Ui.Panel {
   property string settingsReturnView: "limits"
   readonly property bool configuring: viewMode === "settings"
   property alias settingsForm: configForm
+  property alias resetAction: resetBackend
   property double nowMs: Date.now()
 
   readonly property var viewOptions: [
@@ -351,7 +352,8 @@ Ui.Panel {
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
     Qt.callLater(function() {
-      if (root.configuring) configForm.focusFirst()
+      if (resetBackend.active) resetForm.focusFirst()
+      else if (root.configuring) configForm.focusFirst()
       else keyCatcher.forceActiveFocus()
     })
   } else if (configuring) viewMode = settingsReturnView
@@ -365,6 +367,19 @@ Ui.Panel {
   UsageBackend {
     id: backend
     settings: root.settings
+  }
+
+  ResetBackend {
+    id: resetBackend
+    usageBackend: backend
+    onFinished: backend.refresh()
+    onStateChanged: {
+      if (panelFlick) panelFlick.contentY = 0
+      Qt.callLater(function() {
+        if (resetBackend.active) resetForm.focusFirst()
+        else keyCatcher.forceActiveFocus()
+      })
+    }
   }
 
   CostBackend {
@@ -508,14 +523,14 @@ Ui.Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: root.configuring ? configForm : keyCatcher
+    focusTarget: resetBackend.active ? resetForm : root.configuring ? configForm : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight)
 
     Ui.PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.configuring
+      blocked: root.configuring || resetBackend.active
 
       onMoveRequested: function(dx, dy) {
         if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
@@ -542,15 +557,30 @@ Ui.Panel {
         id: panelFlick
         anchors.fill: parent
         contentWidth: width
-        contentHeight: contentColumn.implicitHeight
+        contentHeight: resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+        ResetConfirmation {
+          id: resetForm
+          width: panelFlick.width
+          visible: resetBackend.active
+          backend: resetBackend
+          foreground: root.foreground
+          background: root.surface
+          fontFamily: root.fontFamily
+          onCloseRequested: {
+            if (resetBackend.state === "sending" || resetBackend.state === "uncertain") root.close()
+            else resetBackend.cancel()
+          }
+        }
+
         Column {
           id: contentColumn
+          visible: !resetBackend.active
           width: panelFlick.width
           spacing: Style.spacing.xxl
 
@@ -982,11 +1012,35 @@ Ui.Panel {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           visible: resetLabel.text !== ""
-          implicitWidth: resetLabel.implicitWidth + Style.spacing.md * 2
+          implicitWidth: resetLabel.implicitWidth + Style.spacing.lg * 2
           implicitHeight: resetLabel.implicitHeight + Style.spacing.sm * 2
           radius: height / 2
-          color: "transparent"
-          border.color: root.alpha(root.foreground, 0.18)
+          color: resetClick.containsMouse && resetClick.enabled || activeFocus ? root.alpha(root.foreground, 0.08) : "transparent"
+          border.color: root.alpha(root.foreground, activeFocus ? 0.6 : 0.18)
+          activeFocusOnTab: resetClick.enabled
+          Accessible.role: Accessible.Button
+          Accessible.name: resetLabel.text + ": apply a reset"
+          Keys.onReturnPressed: resetClick.activate()
+          Keys.onSpacePressed: resetClick.activate()
+
+          MouseArea {
+            id: resetClick
+            objectName: "accountResetAction"
+            anchors.fill: parent
+            enabled: root.proxyMode && accountCard.account.status === "ok"
+              && Number(accountCard.account.credits && accountCard.account.credits.resetCreditsAvailable) > 0
+              && !resetBackend.active && !resetBackend.busy
+            hoverEnabled: true
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            function activate() {
+              if (enabled) resetBackend.begin(accountCard.account,
+                root.accountDisplayName(accountCard.account, accountCard.accountNumber))
+            }
+            onClicked: activate()
+          }
+
+          ToolTip.visible: resetClick.containsMouse
+          ToolTip.text: resetClick.enabled ? "Apply a banked reset to this account" : "No reset available"
 
           Text {
             id: resetLabel

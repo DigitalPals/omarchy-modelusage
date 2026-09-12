@@ -25,7 +25,8 @@ ShellRoot {
   property var costView: null
   property int waitAttempts: 0
   property int lastGoodWaitAttempts: 0
-  property var panelPositions: ["top", "bottom", "left", "right"]
+  readonly property var panelPositions: Quickshell.env("MODEL_USAGE_TEST_ALL_EDGES") === "1"
+    ? ["top", "bottom", "left", "right"] : ["top"]
   property int panelPositionIndex: 0
   property bool settingsPanelChecks: false
 

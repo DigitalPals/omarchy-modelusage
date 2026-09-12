@@ -75,6 +75,14 @@ History records the binding active quota window: the highest `used` percentage a
 
 For Codex, `resetCreditsAvailable` is the nonnegative integer banked manual-reset balance. The proxy adapter maps `rate_limit_reset_credits.available_count` to it, independently of paid credits; `applicable_available_count` is not substituted for the banked total. Account cards show this balance beside the plan, including zero, and hide the badge when unknown. Failed refreshes retain it with the existing stale-reading notice.
 
+### Explicit reset actions
+
+`ResetBackend.qml` invokes `scripts/reset-credit.py` separately from usage polling. `--action prepare` resolves the selected opaque `--account-id` against the current managed Codex accounts and fetches `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` through management `api-call`. Its version-1 JSON response includes `ok`, `availableCount`, optional/unknown `applicableAvailableCount`, a `credits` array (`id`, `title`, `description`, `grantedAt`, nullable `expiresAt`), a target fingerprint, and a UUID `requestId`. Only available, unexpired `codex_rate_limits` credits are offered, sorted by expiry, grant time, then ID; no-expiry credits sort last. The applicable count is preserved without imposing undocumented eligibility semantics.
+
+After confirmation, `--action consume` re-resolves the account and verifies the target fingerprint (opaque account ID, auth index, and ChatGPT account ID). Missing, ambiguous, paused, or replaced targets fail before submitting. The fixed upstream `/consume` endpoint receives `credit_id` and `redeem_request_id`. Both actions use the selected `auth_index`, `$TOKEN$` substitution, and `ChatGPT-Account-Id`; provider credentials never enter QML. Requests share a 12-second deadline, with a 30-second QML process bound, inherited 2 MiB HTTP ceiling, and 256 KiB QML output ceiling.
+
+Successful action responses expose `outcome`: `reset`, `nothing_to_reset`, `no_credit`, or `already_redeemed`. HTTP success alone is insufficient. Failures expose a safe `message` and `uncertain` flag. Ambiguous submissions retain the same account, selected credit, and UUID for retries; they are never automatically resubmitted. Closing the panel preserves this in-memory state while the widget remains loaded. Changing connections invalidates confirmations and suppresses old process results. Confirmation freshness is capped at two minutes, and known expired credits cannot be submitted. Polling never calls the consume endpoint. The client contract is based on OpenAI Codex commit `c4017a87aacc7558002b7cb510025e967c1d765e`; these are internal ChatGPT endpoints.
+
 Unsupported or unavailable fields are `null`; they are not overloaded with sentinel strings. History arrays are pre-bucketed percentages so QML never has to parse or aggregate the bounded on-disk sample set.
 
 ## Resource ceilings

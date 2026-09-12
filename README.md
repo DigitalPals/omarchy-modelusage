@@ -89,6 +89,8 @@ The collector lists managed accounts and asks CLIProxyAPI to make read-only upst
 
 **Limits** shows every connected account for the selected provider as a separate card, with its own account label, plan, remaining quota, and reset time. Codex defaults to the overall weekly limit, with **Codex Pro · 20×** and **Codex Pro · 5×** labels taken from the reported plan tier. A badge beside each Codex plan shows its banked manual resets, including zero; the badge is hidden when the count is unavailable. For example, three connected Codex subscriptions produce three account cards. **Show additional limits** reveals session, model-specific, and other windows. Monthly-only plans show their monthly allowance; accounts without a weekly/monthly allowance show their first reported window. Paused and failed accounts stay visible with their own status. Percentages are never added across accounts.
 
+In CLIProxyAPI mode, click a nonzero **banked resets** badge to review that account's current reset credits. The confirmation shows each reset's effect and expiry, selects the earliest expiry first (non-expiring credits last), and lets you choose another credit before clicking **Apply reset**. Account labels respect **Hide account emails**. The action spends one selected credit only on that account, then refreshes usage. Confirmations expire after two minutes and are dismissed when the configured connection changes. If the outcome is uncertain, **Retry same reset** reuses the original request identifier; closing the popup preserves that retry while the widget remains loaded. The upstream reset endpoints are internal ChatGPT APIs and may change.
+
 Provider buttons wrap to fit the panel. Failed refreshes preserve the last known reading in memory with a stale-data notice; switching servers clears those readings. At most 32 accounts per provider are checked, with four concurrent checks per provider and a shared deadline. The menu-bar percentage continues to describe the account with the most remaining capacity across its binding windows.
 
 **Hide account emails** is enabled by default in widget settings. Account cards use numbered labels (Account 1, Account 2, …), and account identities are omitted from the settings details. Turn it off and Save to show usernames/email addresses. This is a display preference; quota collection continues normally.
@@ -206,7 +208,7 @@ Polling never overlaps: a refresh requested while a collector is running is coll
 
 ## Development and testing
 
-Validate everything available on the current machine:
+Run the routine checks without opening test windows:
 
 ```bash
 OMARCHY_QUATTRO_PATH=/path/to/omarchy-quattro ./tests/run
@@ -223,8 +225,28 @@ The suite performs:
 - JavaScript threshold and compact-percentage tests.
 - `omarchy plugin validate` when available.
 - `qmllint` against the supplied Quattro source tree.
-- a live Quickshell entrypoint contract on Wayland, including dark/light palettes, unusual accents, changed font/spacing scales, partial block fill, and top/bottom/left/right bar states.
-- a runtime-log scan for binding loops, assignment failures, JavaScript exceptions, and component load failures.
+- Reset selection and account targeting, proxy HTTP requests, response outcomes, and idempotent retries. When Quickshell is available, a QML test checks confirmation state, duplicate clicks, cancellation, expiry, and connection changes using a synthetic backend; it opens no desktop popups. With Wayland it also loads the full panel and tests badge activation; otherwise it runs the reset components offscreen.
+
+Live UI checks are opt-in. They launch a separate Quickshell test instance and
+show popups on the current desktop; they do not restart the running shell:
+
+```bash
+MODEL_USAGE_LIVE_TESTS=1 ./tests/run
+```
+
+This checks QML loading, dark/light palettes, unusual accents, changed
+font/spacing scales, partial block fill, and opening/closing the usage and
+settings panels at one fixed edge (top). It also scans the runtime log for
+binding loops, assignment failures, JavaScript exceptions, and component load
+failures. The live checks require Wayland, Quickshell, and the Quattro source
+tree; set `OMARCHY_QUATTRO_PATH` as above if needed.
+
+For changes to popup positioning or bar layout, explicitly enable the full
+four-edge cycle:
+
+```bash
+MODEL_USAGE_LIVE_TESTS=1 MODEL_USAGE_TEST_ALL_EDGES=1 ./tests/run
+```
 
 `qmllint` cannot resolve child properties of Omarchy's dynamic `QtObject` theme tokens, the injected `bar` object, or Quickshell's native `QProcess::ExitStatus` signal type from the supplied import tree. The harness disables those two warning categories, treats every other warning as a failure, and uses the live Quickshell contract as the authoritative compile/runtime check for the dynamic bindings.
 

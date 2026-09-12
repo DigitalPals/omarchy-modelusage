@@ -24,7 +24,7 @@ release is available.
 
 This plugin runs as the signed-in desktop user inside Omarchy's long-lived
 Quickshell process. Its Python helpers read provider-owned credentials for
-read-only quota requests and scan local usage metadata. They do not need root
+quota requests, apply explicitly confirmed banked resets, and scan local usage metadata. They do not need root
 access and should never be run with `sudo`.
 
 Private state is stored below
@@ -39,8 +39,13 @@ where `XDG_CONFIG_HOME` defaults to `~/.config`). This user-provided credential
 is separate from generated state. The key is sent only to the configured
 management server; redirects are rejected and HTTPS certificates are verified.
 Upstream provider tokens stay on CLIProxyAPI, which substitutes `$TOKEN$` for
-read-only quota calls. Management responses and account checks are bounded.
+quota calls and explicitly confirmed Codex banked-reset actions. Management responses and account checks are bounded.
 The backend never downloads auth files or stores their raw metadata. The backend does not request client API keys or the model catalog.
+
+Banked resets use fixed upstream URLs and explicit managed account selection.
+The account identity is checked again before consumption. Each logical reset
+attempt has a UUID reused for retries; automatic polling cannot consume a reset.
+Reset credit IDs and pending retry state are held in memory, not quota history.
 
 Account usernames and emails are hidden by default in the UI via `hideAccountEmails`.
 The setting affects display only; account labels remain in the in-memory backend
