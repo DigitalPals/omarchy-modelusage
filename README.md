@@ -194,15 +194,17 @@ omarchy-shell digitalpals.model-usage configure
 
 ## Settings
 
-Open the popup and click the **gear icon** beside Refresh to configure Model Usage. The Limits gear configures quotas and appearance; the Costs gear configures history sources and model prices. Both remain available when no providers are enabled. **Save** writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
+Open the popup and click the **gear icon** beside Refresh to configure Model Usage. The Limits gear configures quotas and appearance; the Costs gear configures history sources and model prices. Both remain available when no providers are enabled. The fixed footer keeps **Cancel** and **Save changes** visible while scrolling. Saving writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
 
 In local CLI mode, each provider has two controls: **Monitor** enables quota checks and includes it in the popup; **Menu bar** allows its percentage chip in the bar. Choose **Provider percentages** under **Menu bar display** to show those chips. Hiding a provider from the bar keeps it available in the popup. The widget icon remains accessible when all chips are hidden, on vertical bars, or when no selected provider has quota data.
 
-In CLIProxyAPI mode, all discovered providers are monitored automatically; the provider list controls their menu-bar visibility.
+In CLIProxyAPI mode, all discovered providers are monitored automatically; the provider list controls their menu-bar visibility. The Monitor column is hidden in this mode. Choosing **Widget icon** hides the menu-bar provider controls while preserving your selections.
 
-The form also includes quota source, CLIProxyAPI URL and a masked Management API key field, refresh interval, and warning/critical thresholds. Key storage is handled automatically. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
+Quota source and menu-bar display use compact dropdowns. Configured connections, optional last-used account tracking, refresh and alerts, and diagnostics sit in expandable sections. Refresh intervals are entered in minutes (1–60). Saved credentials show a **Change** action; blank replacements retain the existing secret, which is never loaded into the form. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
 
-In **Costs → gear → Custom model prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits.
+Costs settings keeps local history switches visible and collapses **Remote T3 servers**, **Custom prices**, and **Last scan**. Adding a server or price opens and focuses its editor; validation opens the relevant section and focuses the field needing attention.
+
+In **Costs → gear → Custom prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits.
 
 | Key | Default | Meaning |
 |---|---:|---|

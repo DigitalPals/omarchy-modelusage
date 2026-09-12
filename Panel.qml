@@ -565,7 +565,8 @@ Ui.Panel {
     open: root.opened
     focusTarget: resetBackend.active ? resetForm : root.configuring ? root.activeSettingsForm : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight
+      : contentColumn.implicitHeight + (root.configuring ? settingsActions.implicitHeight + Style.spacing.lg : 0))
 
     Ui.PanelKeyCatcher {
       id: keyCatcher
@@ -596,9 +597,45 @@ Ui.Panel {
         else if (text === "s" || text === "S") root.showSettings()
       }
 
+      SettingsActions {
+        id: settingsActions
+        objectName: "settingsActions"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        visible: root.configuring && !resetBackend.active
+        foreground: root.foreground
+        urgent: root.urgent
+        fontFamily: root.fontFamily
+        errorText: root.configuring ? root.activeSettingsForm.errorText : ""
+        saving: root.configuring && root.activeSettingsForm.saving
+        onSaveRequested: root.activeSettingsForm.submit()
+        onCancelRequested: root.leaveSettings()
+      }
+
+      // Expanded sections and new delegates must be laid out before their
+      // coordinates can be used to scroll the focused field into view.
+      Timer {
+        id: settingsRevealTimer
+        property var item: null
+        interval: 0
+        onTriggered: {
+          if (!root.configuring || !root.opened || !item || !item.visible) return
+          for (var ancestor = item.parent; ancestor && ancestor !== panelFlick; ancestor = ancestor.parent)
+            if (ancestor.forceLayout) ancestor.forceLayout()
+          var point = item.mapToItem(panelFlick.contentItem, 0, 0)
+          var bottom = point.y + item.height + Style.spacing.md
+          var target = panelFlick.contentY
+          if (point.y < target) target = point.y
+          else if (bottom > target + panelFlick.height) target = bottom - panelFlick.height
+          panelFlick.contentY = root.clamp(target, 0, Math.max(0, panelFlick.contentHeight - panelFlick.height))
+        }
+      }
+
       Flickable {
         id: panelFlick
         anchors.fill: parent
+        anchors.bottomMargin: settingsActions.visible ? settingsActions.implicitHeight + Style.spacing.lg : 0
         contentWidth: width
         contentHeight: resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight
         clip: true
@@ -728,12 +765,8 @@ Ui.Panel {
             onSaveRequested: function(values) { root.saveSettings(values) }
             onCancelRequested: root.leaveSettings()
             onRevealRequested: function(item) {
-              var point = item.mapToItem(contentColumn, 0, 0)
-              var bottom = point.y + item.height + Style.spacing.md
-              if (point.y < panelFlick.contentY) panelFlick.contentY = point.y
-              else if (bottom > panelFlick.contentY + panelFlick.height)
-                panelFlick.contentY = Math.min(bottom - panelFlick.height,
-                  Math.max(0, panelFlick.contentHeight - panelFlick.height))
+              settingsRevealTimer.item = item
+              settingsRevealTimer.restart()
             }
           }
           CostSettings {
@@ -748,12 +781,8 @@ Ui.Panel {
             onSaveRequested: function(values) { root.saveSettings(values) }
             onCancelRequested: root.leaveSettings()
             onRevealRequested: function(item) {
-              var point = item.mapToItem(contentColumn, 0, 0)
-              var bottom = point.y + item.height + Style.spacing.md
-              if (point.y < panelFlick.contentY) panelFlick.contentY = point.y
-              else if (bottom > panelFlick.contentY + panelFlick.height)
-                panelFlick.contentY = Math.min(bottom - panelFlick.height,
-                  Math.max(0, panelFlick.contentHeight - panelFlick.height))
+              settingsRevealTimer.item = item
+              settingsRevealTimer.restart()
             }
           }
 

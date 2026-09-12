@@ -80,6 +80,8 @@ ShellRoot {
     widget.showSettings()
     assertTrue(widget.configuring, "settings opens from the panel")
     var form = widget.settingsForm
+    assertEqual(form.refreshMinutes, "60", "refresh interval is presented in minutes")
+    assertTrue(!form.alertsExpanded && !form.activityExpanded, "optional settings start collapsed")
     form.toggleProvider("barProviders", "codex")
     form.setValue("hideAccountEmails", true)
     assertTrue(!widget.hideAccountEmails, "draft privacy change waits for Save")
@@ -100,6 +102,7 @@ ShellRoot {
     form.managementKey = "synthetic-secret"
     form.setValue("refreshIntervalSec", "")
     assertTrue(!form.submit(), "empty numeric input cannot be saved")
+    assertTrue(form.alertsExpanded, "invalid interval reveals the collapsed alert settings")
     form.setValue("refreshIntervalSec", "900")
     form.setValue("criticalThreshold", "80")
     assertTrue(!form.submit(), "inverted thresholds cannot be saved")
@@ -581,6 +584,7 @@ ShellRoot {
           "Keeper password persists only as a private file path")
         root.widget.showSettings()
         root.assertEqual(form.managementKey, "", "saved key is never loaded into the editor")
+        root.assertTrue(!form.connectionExpanded, "saved proxy connection starts collapsed")
         var savedPath = root.widget.settings.cliproxyKeyFile
         form.submit()
         root.assertEqual(root.widget.settings.cliproxyKeyFile, savedPath, "blank key preserves saved credentials")
@@ -616,7 +620,33 @@ ShellRoot {
         root.settingsPanelChecks = true
         root.panelPositionIndex = 0
         panelNextTimer.restart()
-      } else root.writeResult()
+      } else {
+        root.widget.showCostSettings()
+        root.widget.costSettingsForm.priceEditor.begin("{}")
+        for (var i = 0; i < 16; i++) root.widget.costSettingsForm.priceEditor.addPrice()
+        settingsScrollCheck.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: settingsScrollCheck
+    interval: 250
+    onTriggered: {
+      var editor = root.widget.costSettingsForm.priceEditor
+      var field = editor.findItem(editor, "costModel-15")
+      var flick = field
+      while (flick && flick.contentY === undefined) flick = flick.parent
+      root.assertTrue(!!flick, "settings editor is in a scrollable view")
+      if (flick) {
+        var point = field.mapToItem(flick, 0, 0)
+        root.assertTrue(flick.contentY > 0, "adding a price scrolls a long form")
+        root.assertTrue(point.y >= 0 && point.y + field.height <= flick.height,
+          "new price field is fully visible above the fixed settings footer")
+      }
+      root.widget.costSettingsForm.cancelRequested()
+      root.widget.close()
+      root.writeResult()
     }
   }
 

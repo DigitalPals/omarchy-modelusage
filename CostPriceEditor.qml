@@ -11,11 +11,14 @@ Column {
   property color urgent: Color.urgent
   property string fontFamily: Style.font.family
   property string loadError: ""
+  property int draftGeneration: 0
+  readonly property int priceCount: prices.count
   signal revealRequested(var item)
   signal edited()
   spacing: Style.spacing.lg
 
   function begin(raw) {
+    draftGeneration++
     prices.clear()
     loadError = ""
     try {
@@ -29,13 +32,41 @@ Column {
   }
 
   function serialize() {
-    if (loadError !== "") throw new Error(loadError)
+    if (loadError !== "") {
+      revealRequested(invalidPricesButton)
+      Qt.callLater(function() { invalidPricesButton.forceActiveFocus() })
+      throw new Error(loadError)
+    }
     var rows = []
     for (var i = 0; i < prices.count; i++) {
       var row = prices.get(i)
       rows.push(Object.assign({}, row, { model: row.modelId }))
     }
-    return UsageLogic.encodeCostPrices(rows)
+    try { return UsageLogic.encodeCostPrices(rows) }
+    catch (error) {
+      focusField(error.rowIndex === undefined ? 0 : error.rowIndex, error.fieldKey || "modelId")
+      throw error
+    }
+  }
+
+  function findItem(item, name) {
+    if (item.objectName === name) return item
+    var children = item.children || []
+    for (var i = 0; i < children.length; i++) {
+      var result = findItem(children[i], name)
+      if (result) return result
+    }
+    return null
+  }
+  function focusField(index, key) {
+    var generation = draftGeneration
+    Qt.callLater(function() {
+      if (generation !== root.draftGeneration) return
+      var field = root.findItem(root, key === "modelId" ? "costModel-" + index : "costRate-" + index + "-" + key)
+      if (!field) return
+      root.revealRequested(field)
+      Qt.callLater(function() { field.forceActiveFocus() })
+    })
   }
 
   function addPrice() {
@@ -43,18 +74,31 @@ Column {
     prices.append({ modelId: "", inputCostPerMillionTokens: "", outputCostPerMillionTokens: "",
       cacheReadCostPerMillionTokens: "", cacheWriteCostPerMillionTokens: "" })
     edited()
+    focusField(prices.count - 1, "modelId")
   }
 
   ListModel { id: prices }
 
-  Label { text: "Custom model prices" }
   Label {
-    text: "USD per million tokens. Copy the exact model ID from Costs, including its provider and any [variant]. Custom prices override public rates for that ID across all sources. Remove a row to restore automatic pricing."
+    text: "Prices are USD per million tokens and override automatic rates."
     opacity: 0.7
     font.pixelSize: Style.font.caption
   }
+  SettingsSection {
+    width: parent.width
+    title: "Learn more"
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    onRevealRequested: function(item) { root.revealRequested(item) }
+    Label {
+      text: "Copy the exact model ID from Costs, including its provider and any [variant]. Overrides apply across all sources. Remove a row to restore automatic pricing. Blank cache prices use the input price; enter 0 for free tokens."
+      font.pixelSize: Style.font.caption
+      opacity: 0.7
+    }
+  }
   Label { visible: root.loadError !== ""; text: root.loadError; color: root.urgent }
   Ui.Button {
+    id: invalidPricesButton
     visible: root.loadError !== ""
     text: "Remove invalid custom prices"
     foreground: root.foreground
@@ -79,7 +123,7 @@ Column {
       spacing: Style.spacing.md
 
       Label { text: "Model ID" }
-      Ui.TextField {
+      SettingsField {
         objectName: "costModel-" + priceRow.index
         width: parent.width
         text: priceRow.modelId
@@ -110,7 +154,7 @@ Column {
             width: (priceRow.width - Style.spacing.lg) / 2
             spacing: Style.spacing.sm
             Label { text: rateField.modelData.label }
-            Ui.TextField {
+            SettingsField {
               objectName: "costRate-" + priceRow.index + "-" + rateField.modelData.key
               width: parent.width
               text: priceRow[rateField.modelData.key]
@@ -131,7 +175,6 @@ Column {
         text: "Remove price"
         foreground: root.foreground
         fontFamily: root.fontFamily
-        bordered: true
         focusable: true
         onClicked: { prices.remove(priceRow.index); root.edited() }
         onActiveFocusChanged: if (activeFocus) root.revealRequested(this)

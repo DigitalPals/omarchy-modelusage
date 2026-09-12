@@ -224,6 +224,13 @@ function preserveProxyReadings(previous, next) {
 
 // Custom cost rates are stored as JSON for the manifest's string setting, but
 // edited as ordinary fields. Model IDs deliberately keep case and prefixes.
+function costPriceError(message, rowIndex, fieldKey) {
+  var error = new Error(message)
+  error.rowIndex = rowIndex
+  error.fieldKey = fieldKey
+  return error
+}
+
 function encodeCostPrices(rows) {
   var fields = ["inputCostPerMillionTokens", "outputCostPerMillionTokens",
     "cacheReadCostPerMillionTokens", "cacheWriteCostPerMillionTokens"]
@@ -233,12 +240,12 @@ function encodeCostPrices(rows) {
     var row = rows[i]
     var model = String(row.model || "").trim()
     if (!model || model.length > 256 || /[\x00-\x1f]/.test(model))
-      throw new Error("Enter a model ID of 1–256 characters for custom price " + (i + 1) + ".")
+      throw costPriceError("Enter a model ID of 1–256 characters for custom price " + (i + 1) + ".", i, "modelId")
     if (Object.prototype.hasOwnProperty.call(result, model))
-      throw new Error("Each custom price must use a different model ID.")
+      throw costPriceError("Each custom price must use a different model ID.", i, "modelId")
     var bare = model.toLowerCase().split("/").pop().split("[")[0]
     if (["<unattributed>", "<synthetic>", "synthetic"].indexOf(bare) >= 0)
-      throw new Error("Custom prices require an attributable model ID.")
+      throw costPriceError("Custom prices require an attributable model ID.", i, "modelId")
     var prices = {}
     for (var j = 0; j < fields.length; j++) {
       var raw = row[fields[j]]
@@ -246,7 +253,7 @@ function encodeCostPrices(rows) {
       if (j >= 2 && value === "") continue
       if (value === "" || !/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)
           || !isFinite(Number(value)) || Number(value) > 1000000000)
-        throw new Error("Enter input/output prices from 0 to 1,000,000,000 USD per million tokens; cache prices may be blank.")
+        throw costPriceError("Enter input/output prices from 0 to 1,000,000,000 USD per million tokens; cache prices may be blank.", i, fields[j])
       prices[fields[j]] = Number(value)
     }
     result[model] = prices

@@ -81,6 +81,8 @@ ShellRoot {
     repeat: true
     onTriggered: {
       if (root.phase === 0) {
+        root.check(!root.form.remoteExpanded && !root.form.pricesExpanded && !root.form.diagnosticsExpanded,
+          "cost settings start with advanced sections collapsed")
         root.check(!root.find(root.overview, "costModelDetails").visible, "model breakdown starts collapsed")
         root.check(!root.find(root.overview, "costTokenDetails").visible, "cost overview starts without token details")
         root.check(root.find(root.overview, "costModel-0") === null, "collapsed models are not instantiated")
@@ -132,6 +134,7 @@ ShellRoot {
         root.form.priceEditor.addPrice()
         root.phase++
       } else if (root.phase === 1) {
+        root.check(root.form.pricesExpanded, "adding a price opens its editor")
         root.check(root.find(root.overview, "costModel-9") !== null, "expanded breakdown includes models beyond the former top eight")
         root.check(root.find(root.overview, "costModelDetails").visible, "expanded models render")
         root.overview.modelsExpanded = false
@@ -177,7 +180,11 @@ ShellRoot {
         root.form.addServer()
         root.phase++
       } else if (root.phase === 7) {
+        root.check(root.form.remoteExpanded && root.find(root.form, "t3Details-0").expanded,
+          "adding a server opens the section and its connection editor")
+        root.form.remoteExpanded = false
         root.check(!root.form.submit(), "new server needs a valid URL")
+        root.check(root.form.remoteExpanded, "invalid server expands the hidden section")
         root.edit("t3Url-0", "https://t3.example")
         root.edit("t3Token-0", "synthetic-t3-token")
         root.saved = null
@@ -189,6 +196,9 @@ ShellRoot {
         root.check(remote.enabled && remote.tokenFile.indexOf("/management-keys/key-") >= 0, "token stored as private file reference")
         root.check(JSON.stringify(root.saved).indexOf("synthetic-t3-token") < 0, "raw token never enters widget settings")
         root.form.begin(root.saved)
+        root.check(!root.form.remoteExpanded, "saved server starts summarized")
+        root.check(root.find(root.form, "t3Credential-0").saved, "saved token has an explicit configured state")
+        root.check(!root.find(root.form, "t3Token-0").visible, "saved token does not show an empty editor")
         root.check(root.form.submit(), "blank token preserves saved credential")
         root.check(JSON.parse(root.saved.costT3Servers)[0].tokenFile === remote.tokenFile, "saved token path round trips")
         console.log("Cost QML contract: passed")

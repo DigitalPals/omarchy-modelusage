@@ -15,9 +15,15 @@ Column {
   property string fontFamily: Style.font.family
   property string accountDetails: ""
   property string errorText: ""
+  property string refreshMinutes: "15"
+  property alias connectionExpanded: connectionSection.expanded
+  property alias activityExpanded: activitySection.expanded
+  property alias alertsExpanded: alertsSection.expanded
+  readonly property bool percentageDisplay: draft.barDisplayMode === "Percentages"
+  onProxyModeChanged: if (proxyMode && !draft.cliproxyKeyFile) connectionSection.expanded = true
   property var draft: ({})
-  property alias managementKey: managementKeyField.text
-  property alias keeperPassword: keeperPasswordField.text
+  property alias managementKey: managementCredential.text
+  property alias keeperPassword: keeperCredential.text
   readonly property bool saving: keyWriter.running
   property var pendingValues: null
   property var pendingKeys: ({})
@@ -45,8 +51,8 @@ Column {
   Keys.onEscapePressed: root.cancelRequested()
 
   function discardKey() {
-    managementKey = ""
-    keeperPassword = ""
+    managementCredential.reset()
+    keeperCredential.reset()
     pendingKeys = ({})
     pendingValues = null
     if (keyWriter.running && !keySaveDecided) keyWriter.running = false
@@ -80,6 +86,11 @@ Column {
       warningThreshold: String(value("warningThreshold", 25)),
       criticalThreshold: String(value("criticalThreshold", 10))
     }
+    refreshMinutes = String(Number(draft.refreshIntervalSec) / 60)
+    connectionSection.expanded = proxyMode && !draft.cliproxyKeyFile
+    activitySection.expanded = false
+    alertsSection.expanded = false
+    diagnosticsSection.expanded = false
     errorText = ""
   }
 
@@ -87,6 +98,7 @@ Column {
     var next = Object.assign({}, draft)
     next[key] = value
     draft = next
+    if (key === "refreshIntervalSec") refreshMinutes = String(value).trim() === "" ? "" : String(Number(value) / 60)
     errorText = ""
   }
 
@@ -102,9 +114,24 @@ Column {
 
   function focusFirst() { sourceControl.forceActiveFocus() }
 
+  function fail(message, section, item) {
+    errorText = message
+    if (section) section.expanded = true
+    Qt.callLater(function() {
+      if (!root.visible || root.errorText !== message) return
+      if (item.focusEditor) item.focusEditor()
+      else { item.forceActiveFocus(); root.revealRequested(item) }
+    })
+    return false
+  }
+
   function submit() {
     if (saving) return false
     var next = Object.assign({}, draft)
+    var minutes = Number(refreshMinutes)
+    if (refreshMinutes.trim() === "" || !isFinite(minutes) || minutes < 1 || minutes > 60)
+      return fail("Enter a refresh interval from 1 to 60 minutes.", alertsSection, refreshField)
+    next.refreshIntervalSec = Math.round(minutes * 60)
     var ranges = [
       ["refreshIntervalSec", "Refresh interval", 60, 3600],
       ["warningThreshold", "Warning threshold", 1, 100],
@@ -116,36 +143,31 @@ Column {
       var value = Number(raw)
       if (raw === "" || !isFinite(value) || Math.floor(value) !== value
           || value < range[2] || value > range[3]) {
-        errorText = range[1] + " must be a whole number from " + range[2] + " to " + range[3] + "."
-        return false
+        return fail(range[1] + " must be a whole number from " + range[2] + " to " + range[3] + ".",
+          alertsSection, range[0] === "warningThreshold" ? warningField : range[0] === "criticalThreshold" ? criticalField : refreshField)
       }
       next[range[0]] = value
     }
     if (next.criticalThreshold > next.warningThreshold) {
-      errorText = "Critical threshold must be at or below the warning threshold."
-      return false
+      return fail("Critical threshold must be at or below the warning threshold.", alertsSection, criticalField)
     }
     next.cliproxyUrl = String(next.cliproxyUrl).trim()
     next.cliproxyKeyFile = String(next.cliproxyKeyFile).trim()
     if (proxyMode && !/^https?:\/\/[^\s/?#@]+(?::[0-9]+)?(?:\/[^\s?#]*)?$/.test(next.cliproxyUrl)) {
-      errorText = "Enter an HTTP or HTTPS server URL without credentials, query, or fragment."
-      return false
+      return fail("Enter an HTTP or HTTPS server URL without credentials, query, or fragment.", connectionSection, proxyUrlField)
     }
     var key = managementKey.trim()
     if (proxyMode && managementKey !== "" && (key === "" || key.length > 8191 || /[^\x20-\x7e]/.test(key))) {
-      errorText = "Enter a nonempty management API key using ASCII characters."
-      return false
+      return fail("Enter a nonempty management API key using ASCII characters.", connectionSection, managementCredential)
     }
     next.costKeeperUrl = String(next.costKeeperUrl).trim()
     var password = keeperPassword.trim()
     if ((proxyMode && (next.costKeeperUrl !== "" || password !== ""))
         && !/^https?:\/\/[^\s/?#@]+(?::[0-9]+)?(?:\/[^\s?#]*)?$/.test(next.costKeeperUrl)) {
-      errorText = "Enter the CPA Usage Keeper HTTP or HTTPS URL."
-      return false
+      return fail("Enter the CPA Usage Keeper HTTP or HTTPS URL.", activitySection, keeperUrlField)
     }
     if (keeperPassword !== "" && (password === "" || password.length > 8191 || /[^\x20-\x7e]/.test(password))) {
-      errorText = "Enter a nonempty Keeper password using ASCII characters."
-      return false
+      return fail("Enter a nonempty Keeper password using ASCII characters.", activitySection, keeperCredential)
     }
     var keys = ({})
     if (proxyMode && key !== "") keys.cliproxyKeyFile = key
@@ -196,134 +218,97 @@ Column {
     onTriggered: keyWriter.running = false
   }
 
-  Ui.PanelHero {
+  SettingsHeader {
     width: parent.width
-    title: "Model Usage"
-    meta: "Settings"
+    title: "Limits settings"
     foreground: root.foreground
     fontFamily: root.fontFamily
-    trailingControl: Component {
-      Ui.PanelActionButton {
-        iconText: "󰅖"
-        tooltipText: "Cancel settings"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        focusable: true
-        onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-        onClicked: root.cancelRequested()
-      }
-    }
-    iconComponent: Component {
-      Text {
-        text: "󰒓"
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.display
-      }
-    }
+    onCloseRequested: root.cancelRequested()
+    onRevealRequested: function(item) { root.revealRequested(item) }
   }
 
-  Column {
+  Row {
     width: parent.width
-    spacing: Style.spacing.md
-    Label { text: "Quota source" }
-    Ui.ButtonGroup {
+    Label {
+      width: parent.width - sourceControl.width
+      text: "Quota source"
+      anchors.verticalCenter: parent.verticalCenter
+    }
+    UsageSelect {
       id: sourceControl
       objectName: "usageSourceControl"
+      width: Math.min(implicitWidth, parent.width * 0.6)
+      label: "Quota source"
       options: [{ value: "direct", label: "Local CLIs" }, { value: "cliproxy", label: "CLIProxyAPI" }]
       value: String(root.draft.usageSource || "direct")
       foreground: root.foreground
-      background: root.surface
+      surface: root.surface
       fontFamily: root.fontFamily
-      fontSize: Style.font.bodySmall
+      alignPopupRight: true
       onChanged: function(value) { root.setValue("usageSource", value) }
+      onMenuClosed: if (root.visible) sourceControl.forceActiveFocus()
       onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
     }
-    Hint { text: "Quota limits and estimated costs have separate data sources." }
   }
 
-  Column {
+  Section {
+    id: connectionSection
+    objectName: "quotaConnectionSection"
     visible: root.proxyMode
-    width: parent.width
-    spacing: Style.spacing.md
+    title: "Connection details"
+    summary: root.draft.cliproxyKeyFile ? "Configured" : "Setup"
     Label { text: "CLIProxyAPI server URL" }
     Field {
+      id: proxyUrlField
       objectName: "cliproxyUrlField"
       settingKey: "cliproxyUrl"
       placeholderText: "http://127.0.0.1:8317"
       Accessible.name: "CLIProxyAPI server URL"
     }
-    Label { text: "Management API key" }
-    Ui.TextField {
-      id: managementKeyField
-      objectName: "managementKeyField"
+    SettingsCredential {
+      id: managementCredential
       width: parent.width
-      password: true
-      maximumLength: 8191
-      placeholderText: "Enter key, or leave blank to keep saved key"
+      label: "Management API key"
+      editorObjectName: "managementKeyField"
+      saved: !!root.draft.cliproxyKeyFile
       foreground: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      selectByMouse: true
-      Accessible.name: "CLIProxyAPI management API key"
-      onTextEdited: root.errorText = ""
-      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+      fontFamily: root.fontFamily
+      onEdited: root.errorText = ""
+      onRevealRequested: function(item) { root.revealRequested(item) }
     }
-    Hint {
-      text: "Use the key you sign in to the management panel with. Saved privately on this device. Leave blank to keep your existing key."
+    Hint { text: "Save to discover the proxy’s providers and accounts." }
+    Section {
+      title: "Learn more"
+      Hint { text: "Use the key for the CLIProxyAPI management panel. It is saved privately on this device. Quota limits and estimated costs use separate data sources." }
     }
-    Hint { text: "Save to discover all proxy providers and accounts automatically. Limits shows each account’s quotas." }
   }
 
   Column {
     width: parent.width
     spacing: Style.spacing.md
-    visible: root.proxyMode
-    Label { text: "Last-used account activity (optional)" }
-    Column {
-      width: parent.width
-      spacing: Style.spacing.md
-      Label { text: "CPA Usage Keeper URL" }
-      Field {
-        objectName: "costKeeperUrlField"
-        settingKey: "costKeeperUrl"
-        placeholderText: "https://proxy.example.com/keeper"
-        Accessible.name: "CPA Usage Keeper URL"
-      }
-      Label { text: "Keeper login password" }
-      Ui.TextField {
-        id: keeperPasswordField
-        objectName: "keeperPasswordField"
-        width: parent.width
-        password: true
-        maximumLength: 8191
-        placeholderText: "Leave blank to keep saved password"
-        foreground: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        selectByMouse: true
-        Accessible.name: "Keeper login password"
-        onTextEdited: root.errorText = ""
-        onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-      }
-      Hint {
-        visible: root.draft.usageSource === "cliproxy"
-        text: "Use the Keeper connected to this proxy to show the last-used account in the percentage menubar. Account activity updates every 15 seconds, independently of Costs."
-      }
-
-    }
-  }
-
-  Column {
-    width: parent.width
-    spacing: Style.spacing.sm
+    Label { text: "Display"; font.bold: true }
     Row {
       width: parent.width
-      Label {
-        width: parent.width - hideEmailSwitch.width
-        anchors.verticalCenter: parent.verticalCenter
-        text: "Hide account emails"
+      Label { width: parent.width - barDisplay.width; text: "Menu bar"; anchors.verticalCenter: parent.verticalCenter }
+      UsageSelect {
+        id: barDisplay
+        objectName: "barDisplayControl"
+        width: Math.min(implicitWidth, parent.width * 0.7)
+        label: "Menu bar display"
+        options: [{ value: "Icon", label: "Widget icon" }, { value: "Percentages", label: "Provider percentages" }]
+        value: String(root.draft.barDisplayMode || "Percentages")
+        foreground: root.foreground
+        surface: root.surface
+        fontFamily: root.fontFamily
+        alignPopupRight: true
+        onChanged: function(value) { root.setValue("barDisplayMode", value) }
+        onMenuClosed: if (root.visible) barDisplay.forceActiveFocus()
+        onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
       }
+    }
+    Row {
+      width: parent.width
+      Label { width: parent.width - hideEmailSwitch.width; text: "Hide account emails"; anchors.verticalCenter: parent.verticalCenter }
       ProviderToggle {
         id: hideEmailSwitch
         objectName: "hideAccountEmailsToggle"
@@ -333,18 +318,19 @@ Column {
         onToggled: root.setValue("hideAccountEmails", !checked)
       }
     }
-    Hint { text: "Use Account 1, Account 2, … instead of usernames or email addresses. Also hides the account identity in settings." }
+    Hint { text: "Use Account 1, Account 2, … instead of account identities." }
   }
 
   Column {
     id: providerSection
+    visible: !root.proxyMode || root.percentageDisplay
     width: parent.width
     spacing: Style.spacing.sm
     Row {
       width: parent.width
-      Label { width: parent.width - monitorHeading.width - barHeading.width; text: "Providers" }
-      Label { id: monitorHeading; width: Style.space(82); text: "Monitor"; horizontalAlignment: Text.AlignHCenter }
-      Label { id: barHeading; width: Style.space(100); text: "Menu bar"; horizontalAlignment: Text.AlignHCenter }
+      Label { width: parent.width - monitorHeading.width - barHeading.width; text: root.proxyMode ? "Show in menu bar" : "Providers"; font.bold: true }
+      Label { id: monitorHeading; visible: !root.proxyMode; width: visible ? Style.space(82) : 0; text: "Monitor"; horizontalAlignment: Text.AlignHCenter }
+      Label { id: barHeading; visible: !root.proxyMode && root.percentageDisplay; width: visible ? Style.space(100) : 0; text: "Menu bar"; horizontalAlignment: Text.AlignHCenter }
     }
     Repeater {
       model: root.providerOptions
@@ -359,7 +345,8 @@ Column {
         }
         ProviderToggle {
           id: monitorSwitch
-          width: Style.space(82)
+          visible: !root.proxyMode
+          width: visible ? Style.space(82) : 0
           objectName: "monitor-" + providerRow.modelData.id
           Accessible.name: "Monitor " + providerRow.modelData.name
           enabled: !root.proxyMode
@@ -368,9 +355,10 @@ Column {
         }
         ProviderToggle {
           id: barSwitch
-          width: Style.space(100)
+          visible: root.percentageDisplay
+          width: visible ? (root.proxyMode ? Style.space(82) : Style.space(100)) : 0
           objectName: "bar-" + providerRow.modelData.id
-          Accessible.name: "Show " + providerRow.modelData.name + " in menu bar"
+          Accessible.name: "Show " + providerRow.modelData.id + " in menu bar"
           enabled: monitorSwitch.checked
           checked: monitorSwitch.checked && UsageLogic.contains(root.draft.barProviders, providerRow.modelData.id)
           opacity: enabled ? 1 : 0.4
@@ -378,104 +366,90 @@ Column {
         }
       }
     }
-    Hint { text: root.proxyMode
-      ? "All proxy providers are monitored automatically. Menu bar selects which providers show a percentage chip when quota data is available."
-      : "Monitor keeps a provider in the popup. Menu bar selects its percentage chip below; hidden providers remain available in the popup." }
+    Hint { text: root.proxyMode ? "All proxy providers are monitored automatically." : "Monitoring keeps a provider available in Limits." }
   }
 
-  Column {
-    width: parent.width
-    spacing: Style.spacing.md
-    Label { text: "Menu bar display" }
-    Ui.ButtonGroup {
-      objectName: "barDisplayControl"
-      options: [{ value: "Icon", label: "Widget icon" }, { value: "Percentages", label: "Provider percentages" }]
-      value: String(root.draft.barDisplayMode || "Percentages")
-      foreground: root.foreground
-      background: root.surface
-      fontFamily: root.fontFamily
-      fontSize: Style.font.bodySmall
-      onChanged: function(value) { root.setValue("barDisplayMode", value) }
-      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-    }
-    Hint { text: "The widget icon is used on vertical bars or when no selected provider has quota data." }
-  }
-
-  Column {
-    width: parent.width
-    spacing: Style.spacing.md
-    Label { text: "Refresh interval (seconds)" }
+  Section {
+    id: activitySection
+    objectName: "accountActivitySection"
+    visible: root.proxyMode
+    title: "Last-used account"
+    summary: root.draft.costKeeperUrl ? "Configured" : "Optional"
+    Label { text: "CPA Usage Keeper URL" }
     Field {
-      settingKey: "refreshIntervalSec"
-      Accessible.name: "Refresh interval in seconds"
-      validator: IntValidator { bottom: 60; top: 3600 }
-      inputMethodHints: Qt.ImhDigitsOnly
+      id: keeperUrlField
+      objectName: "costKeeperUrlField"
+      settingKey: "costKeeperUrl"
+      placeholderText: "https://proxy.example.com/keeper"
+      Accessible.name: "CPA Usage Keeper URL"
+    }
+    SettingsCredential {
+      id: keeperCredential
+      width: parent.width
+      label: "Keeper login password"
+      editorObjectName: "keeperPasswordField"
+      saved: !!root.draft.costKeeperPasswordFile
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onEdited: root.errorText = ""
+      onRevealRequested: function(item) { root.revealRequested(item) }
+    }
+    Hint { text: "Show the last-used account in the percentage menu bar." }
+    Section {
+      title: "Learn more"
+      Hint { text: "Use the Keeper connected to this proxy. Account activity updates every 15 seconds, independently of Costs. Leave the URL blank to disable this integration." }
+    }
+  }
+
+  Section {
+    id: alertsSection
+    objectName: "refreshAlertsSection"
+    title: "Refresh and alerts"
+    summary: "Every " + (root.refreshMinutes || "—") + " min"
+    Label { text: "Refresh interval (minutes)" }
+    SettingsField {
+      id: refreshField
+      objectName: "refreshMinutesField"
+      width: parent.width
+      text: root.refreshMinutes
+      foreground: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      inputMethodHints: Qt.ImhFormattedNumbersOnly
+      Accessible.name: "Refresh interval in minutes"
+      onTextEdited: { root.refreshMinutes = text; root.errorText = "" }
+      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
     }
     Row {
       width: parent.width
       spacing: Style.spacing.lg
       Column {
         width: (parent.width - parent.spacing) / 2
-        spacing: Style.spacing.md
-        Label { text: "Warning (% remaining)" }
-        Field {
-          settingKey: "warningThreshold"
-          Accessible.name: "Warning percentage remaining"
-          validator: IntValidator { bottom: 1; top: 100 }
-          inputMethodHints: Qt.ImhDigitsOnly
-        }
+        spacing: Style.spacing.sm
+        Label { text: "Warn below (% remaining)" }
+        Field { id: warningField; objectName: "warningThresholdField"; settingKey: "warningThreshold"; Accessible.name: "Warning percentage remaining"; inputMethodHints: Qt.ImhDigitsOnly }
       }
       Column {
         width: (parent.width - parent.spacing) / 2
-        spacing: Style.spacing.md
+        spacing: Style.spacing.sm
         Label { text: "Critical (% remaining)" }
-        Field {
-          settingKey: "criticalThreshold"
-          Accessible.name: "Critical percentage remaining"
-          validator: IntValidator { bottom: 0; top: 100 }
-          inputMethodHints: Qt.ImhDigitsOnly
-        }
+        Field { id: criticalField; objectName: "criticalThresholdField"; settingKey: "criticalThreshold"; Accessible.name: "Critical percentage remaining"; inputMethodHints: Qt.ImhDigitsOnly }
       }
     }
   }
 
-
-  Hint {
-    visible: root.accountDetails !== ""
-    text: root.draft.hideAccountEmails !== false ? root.accountDetails.replace(/^Account:.*(?:\n|$)/m, "") : root.accountDetails
+  Section {
+    id: diagnosticsSection
+    title: "Diagnostics"
+    Hint { text: root.draft.hideAccountEmails !== false ? root.accountDetails.replace(/^Account:.*(?:\n|$)/m, "") : root.accountDetails }
+    Hint { text: "The widget uses an icon on vertical bars or when selected providers have no quota data." }
   }
 
-  Label {
-    id: errorLabel
-    visible: root.errorText !== ""
-    text: root.errorText
-    color: root.urgent
-    onVisibleChanged: if (visible) Qt.callLater(function() { root.revealRequested(errorLabel) })
-  }
-
-  Row {
-    spacing: Style.spacing.md
-    Ui.Button {
-      objectName: "saveSettingsButton"
-      text: root.saving ? "Saving…" : "Save"
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-      bordered: true
-      selected: true
-      focusable: true
-      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-      onClicked: root.submit()
-    }
-    Ui.Button {
-      objectName: "cancelSettingsButton"
-      text: "Cancel"
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-      bordered: true
-      focusable: true
-      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-      onClicked: root.cancelRequested()
-    }
+  component Section: SettingsSection {
+    width: parent.width
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    onRevealRequested: function(item) { root.revealRequested(item) }
   }
 
   component Label: Text {
@@ -492,7 +466,7 @@ Column {
     font.pixelSize: Style.font.caption
   }
 
-  component Field: Ui.TextField {
+  component Field: SettingsField {
     required property string settingKey
     width: parent.width
     text: String(root.draft[settingKey] === undefined ? "" : root.draft[settingKey])

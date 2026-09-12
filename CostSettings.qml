@@ -15,8 +15,12 @@ Column {
   property var sources: []
   property string errorText: ""
   property string loadError: ""
+  property int draftGeneration: 0
   property var localProviders: ["claude", "codex"]
   property alias priceEditor: prices
+  property alias remoteExpanded: serverSection.expanded
+  property alias pricesExpanded: priceSection.expanded
+  property alias diagnosticsExpanded: scanSection.expanded
   property var pendingValues: null
   property var pendingKeys: ({})
   property var previousPaths: ({})
@@ -53,10 +57,14 @@ Column {
     if (saved) discardKey()
   }
   function begin(settings) {
+    draftGeneration++
     discardKey()
     servers.clear()
     errorText = ""
     loadError = ""
+    serverSection.expanded = false
+    priceSection.expanded = false
+    scanSection.expanded = false
     localProviders = settings.costLocalProviders === undefined ? ["claude", "codex"] : settings.costLocalProviders
     prices.begin(String(settings.costPriceOverrides || "{}"))
     try {
@@ -69,6 +77,8 @@ Column {
           tokenFile: String(row.tokenFile || ""), token: "", included: row.enabled !== false})
       }
     } catch (e) { loadError = "Saved T3 settings are invalid. Remove them to configure servers again." }
+    if (loadError) serverSection.expanded = true
+    if (prices.loadError) priceSection.expanded = true
   }
   function focusFirst() { localCodex.forceActiveFocus() }
   function toggleLocal(id) {
@@ -82,14 +92,41 @@ Column {
     if (servers.count >= 4) return
     servers.append({serverId: "t3-" + Date.now() + "-" + Math.floor(Math.random() * 1000000),
       name: "T3 Code", url: "", tokenFile: "", token: "", included: true})
+    focusServer(servers.count - 1, "t3Url-")
   }
   function setServer(index, key, value) { servers.setProperty(index, key, value); errorText = "" }
+  function findItem(item, name) {
+    if (item.objectName === name) return item
+    var children = item.children || []
+    for (var i = 0; i < children.length; i++) {
+      var result = findItem(children[i], name)
+      if (result) return result
+    }
+    return null
+  }
+  function focusServer(index, prefix) {
+    var generation = draftGeneration
+    serverSection.expanded = true
+    Qt.callLater(function() {
+      if (!root.visible || generation !== root.draftGeneration) return
+      var row = serverRepeater.itemAt(index)
+      if (!row) return
+      row.editorSection.expanded = true
+      Qt.callLater(function() {
+        if (!root.visible || generation !== root.draftGeneration) return
+        var field = root.findItem(row, prefix + index)
+        if (!field) return
+        if (field.focusEditor) field.focusEditor()
+        else { field.forceActiveFocus(); root.revealRequested(field) }
+      })
+    })
+  }
   function submit() {
     if (saving) return false
-    if (loadError !== "") { errorText = loadError; return false }
+    if (loadError !== "") { errorText = loadError; serverSection.expanded = true; return false }
     var values = {costLocalProviders: localProviders}
     try { values.costPriceOverrides = prices.serialize() }
-    catch (e) { errorText = String(e.message || e); return false }
+    catch (e) { priceSection.expanded = true; errorText = String(e.message || e); return false }
     var rows = [], keys = ({}), previous = ({}), ids = ({})
     for (var i = 0; i < servers.count; i++) {
       var row = servers.get(i), url = row.url.trim(), name = row.name.trim(), token = row.token.trim()
@@ -98,11 +135,14 @@ Column {
           || !/^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/.test(url)
           || /(?:^|\/)\.{1,2}(?:\/|$)/.test(url)) {
         errorText = "Give each T3 server a name and an HTTP(S) URL without credentials, query, or fragment."
+        focusServer(i, name === "" || name.length > 80 || /[\x00-\x1f]/.test(name) ? "t3Name-" : "t3Url-")
         return false
       }
       ids[row.serverId] = true
       if (row.token !== "" && (token === "" || /[^\x21-\x7e]/.test(token))) {
-        errorText = "Enter the connection token without spaces."; return false
+        errorText = "Enter the connection token without spaces."
+        focusServer(i, "t3Credential-")
+        return false
       }
       rows.push({id: row.serverId, name: name, url: url, tokenFile: row.tokenFile, enabled: row.included})
       if (token !== "") {
@@ -153,26 +193,18 @@ Column {
   }
   Timer { interval: 7000; running: keyWriter.running; onTriggered: keyWriter.running = false }
 
-  Ui.PanelHero {
+  SettingsHeader {
     width: parent.width
-    title: "Costs"
-    meta: "Sources and prices"
+    title: "Costs settings"
     foreground: root.foreground
     fontFamily: root.fontFamily
-    trailingControl: Component {
-      Ui.PanelActionButton {
-        iconText: "󰅖"
-        tooltipText: "Cancel cost settings"
-        foreground: root.foreground
-        focusable: true
-        onClicked: root.cancelRequested()
-      }
-    }
+    onCloseRequested: root.cancelRequested()
+    onRevealRequested: function(item) { root.revealRequested(item) }
   }
   Column {
     width: parent.width
     spacing: Style.spacing.md
-    Label { text: "Local session history" }
+    Label { text: "Local history"; font.bold: true }
     Row {
       width: parent.width
       Label { width: parent.width - localCodex.width; text: "Codex CLI"; anchors.verticalCenter: parent.verticalCenter }
@@ -180,20 +212,29 @@ Column {
     }
     Row {
       width: parent.width
-      Label { width: parent.width - localClaude.width; text: "Claude Code CLI"; anchors.verticalCenter: parent.verticalCenter }
+      Label { width: parent.width - localClaude.width; text: "Claude Code"; anchors.verticalCenter: parent.verticalCenter }
       Toggle { id: localClaude; objectName: "costLocalClaude"; checked: UsageLogic.contains(root.localProviders, "claude"); onToggled: root.toggleLocal("claude"); Accessible.name: "Include local Claude Code" }
     }
-    Hint { text: "Read session history on this computer. Enabled sources are combined automatically." }
+    Hint { text: "Include sessions recorded on this computer." }
   }
-  Column {
+
+  Section {
     id: serverSection
-    width: parent.width
-    spacing: Style.spacing.lg
-    Label { text: "Remote T3 Code" }
-    Hint { text: "Connect a T3 server to include Codex and Claude sessions it can read on that computer, including sessions started outside T3. Matching transcript folders are counted once." }
+    objectName: "remoteServersSection"
+    title: "Remote T3 servers"
+    summary: servers.count ? servers.count + (servers.count === 1 ? " server" : " servers") : "Not configured"
+    Hint { text: "Include history from other computers running T3 Code." }
     Label { visible: root.loadError !== ""; text: root.loadError; color: root.urgent }
-    Ui.Button { visible: root.loadError !== ""; text: "Remove invalid server settings"; onClicked: { servers.clear(); root.loadError = "" } }
+    Ui.Button {
+      visible: root.loadError !== ""
+      text: "Remove invalid server settings"
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      focusable: true
+      onClicked: { servers.clear(); root.loadError = "" }
+    }
     Repeater {
+      id: serverRepeater
       model: servers
       Column {
         id: serverRow
@@ -201,58 +242,116 @@ Column {
         required property string name
         required property string url
         required property string token
+        required property string tokenFile
         required property bool included
+        property alias editorSection: serverDetails
         width: serverSection.width
-        spacing: Style.spacing.md
+        spacing: Style.spacing.sm
         Row {
           width: parent.width
-          Label { width: parent.width - remoteToggle.width; text: "Server " + (serverRow.index + 1); anchors.verticalCenter: parent.verticalCenter }
+          Label { width: parent.width - remoteToggle.width; text: serverRow.name || "New server"; anchors.verticalCenter: parent.verticalCenter }
           Toggle { id: remoteToggle; checked: serverRow.included; onToggled: root.setServer(serverRow.index, "included", !checked); Accessible.name: "Include T3 server " + (serverRow.index + 1) }
         }
-        Field { objectName: "t3Name-" + serverRow.index; text: serverRow.name; placeholderText: "Server name"; maximumLength: 80; onTextEdited: root.setServer(serverRow.index, "name", text); Accessible.name: "T3 server name" }
-        Field { objectName: "t3Url-" + serverRow.index; text: serverRow.url; placeholderText: "https://t3.example.com"; maximumLength: 4096; onTextEdited: root.setServer(serverRow.index, "url", text); Accessible.name: "T3 server URL" }
-        Field { objectName: "t3Token-" + serverRow.index; text: serverRow.token; password: true; maximumLength: 8191; placeholderText: "Connection token · blank keeps saved token"; onTextEdited: root.setServer(serverRow.index, "token", text); Accessible.name: "T3 connection token" }
-        Ui.Button { text: "Remove server"; foreground: root.foreground; fontFamily: root.fontFamily; focusable: true; onClicked: servers.remove(serverRow.index); onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
+        Section {
+          id: serverDetails
+          objectName: "t3Details-" + serverRow.index
+          title: "Connection details"
+          summary: serverRow.url ? "Configured" : "Setup"
+          Label { text: "Server name" }
+          Field { objectName: "t3Name-" + serverRow.index; text: serverRow.name; placeholderText: "Server name"; maximumLength: 80; onTextEdited: root.setServer(serverRow.index, "name", text); Accessible.name: "T3 server name" }
+          Label { text: "Server URL" }
+          Field { objectName: "t3Url-" + serverRow.index; text: serverRow.url; placeholderText: "https://t3.example.com"; maximumLength: 4096; onTextEdited: root.setServer(serverRow.index, "url", text); Accessible.name: "T3 server URL" }
+          SettingsCredential {
+            objectName: "t3Credential-" + serverRow.index
+            editorObjectName: "t3Token-" + serverRow.index
+            width: parent.width
+            label: "Connection token"
+            text: serverRow.token
+            saved: serverRow.tokenFile !== ""
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onEdited: function(value) { root.setServer(serverRow.index, "token", value) }
+            onRevealRequested: function(item) { root.revealRequested(item) }
+          }
+          Ui.Button {
+            text: "Remove server"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            focusable: true
+            onClicked: servers.remove(serverRow.index)
+            onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+          }
+        }
         Ui.PanelSeparator { foreground: root.foreground }
       }
     }
-    Ui.Button { objectName: "addT3Server"; text: "Add T3 server"; enabled: servers.count < 4 && root.loadError === ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; focusable: true; onClicked: root.addServer(); onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
-    Hint { text: "Use the server’s base URL and connection token. Tokens are saved privately on this device. If a server is offline, its last usable history stays visible with a timestamp." }
+    Ui.Button {
+      objectName: "addT3Server"
+      text: "Add T3 server"
+      enabled: servers.count < 4 && root.loadError === ""
+      bordered: true
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      focusable: true
+      onClicked: root.addServer()
+      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+    }
+    Section {
+      title: "Learn more"
+      Hint { text: "Use the server’s base URL and connection token. Credentials are saved privately on this device. T3 can include sessions started outside T3; matching transcript folders are counted once. Offline servers retain their last usable history with a timestamp." }
+    }
   }
-  Column {
-      visible: root.sources.length > 0
+
+  Section {
+    id: priceSection
+    objectName: "customPricesSection"
+    title: "Custom prices"
+    summary: prices.priceCount ? prices.priceCount + (prices.priceCount === 1 ? " override" : " overrides") : "Automatic pricing"
+    CostPriceEditor {
+      id: prices
       width: parent.width
-      spacing: Style.spacing.sm
-      Label { text: "Last scan" }
-      Repeater {
-        model: root.sources
-        Text {
-          required property var modelData
-          objectName: "costSource-" + modelData.id
-          width: root.width
-          text: root.sourceDetail(modelData)
-          textFormat: Text.PlainText
-          wrapMode: Text.WordWrap
-          color: modelData.status === "unavailable" || modelData.status === "failed" ? root.urgent : Qt.darker(root.foreground, 1.55)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          HoverHandler { id: sourceHover }
-          Controls.ToolTip.visible: sourceHover.hovered
-          Controls.ToolTip.text: String(modelData.message || "")
-        }
+      foreground: root.foreground
+      urgent: root.urgent
+      fontFamily: root.fontFamily
+      onRevealRequested: function(item) { priceSection.expanded = true; root.revealRequested(item) }
+      onEdited: root.errorText = ""
+    }
+  }
+
+  Section {
+    id: scanSection
+    objectName: "lastScanSection"
+    title: "Last scan"
+    summary: root.sources.length ? root.sources.length + (root.sources.length === 1 ? " source" : " sources") : "No scan yet"
+    Repeater {
+      model: root.sources
+      Text {
+        required property var modelData
+        objectName: "costSource-" + modelData.id
+        width: root.width
+        text: root.sourceDetail(modelData)
+        textFormat: Text.PlainText
+        wrapMode: Text.WordWrap
+        color: modelData.status === "unavailable" || modelData.status === "failed" ? root.urgent : Qt.darker(root.foreground, 1.55)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        HoverHandler { id: sourceHover }
+        Controls.ToolTip.visible: sourceHover.hovered
+        Controls.ToolTip.text: String(modelData.message || "")
       }
     }
+    Hint { visible: root.sources.length === 0; text: "Open Costs to scan session history." }
+  }
 
-  CostPriceEditor { id: prices; width: parent.width; foreground: root.foreground; urgent: root.urgent; fontFamily: root.fontFamily; onRevealRequested: function(item) { root.revealRequested(item) }; onEdited: root.errorText = "" }
-  Label { id: errorLabel; visible: root.errorText !== ""; text: root.errorText; color: root.urgent; onVisibleChanged: if (visible) Qt.callLater(function() { root.revealRequested(errorLabel) }) }
-  Row {
-    spacing: Style.spacing.md
-    Ui.Button { objectName: "saveCostSettings"; text: root.saving ? "Saving…" : "Save"; bordered: true; selected: true; foreground: root.foreground; fontFamily: root.fontFamily; focusable: true; onClicked: root.submit(); onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
-    Ui.Button { text: "Cancel"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; focusable: true; onClicked: root.cancelRequested(); onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
+  component Section: SettingsSection {
+    width: parent.width
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    onRevealRequested: function(item) { root.revealRequested(item) }
   }
   component Label: Text { width: parent.width; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; textFormat: Text.PlainText; wrapMode: Text.WordWrap }
   component Hint: Label { opacity: 0.7; font.pixelSize: Style.font.caption }
-  component Field: Ui.TextField { width: parent.width; foreground: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; selectByMouse: true; onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
+  component Field: SettingsField { width: parent.width; foreground: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; selectByMouse: true; onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
   component Toggle: Ui.ToggleSwitch {
     width: Style.space(82)
     foreground: root.foreground
