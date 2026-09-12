@@ -8,17 +8,17 @@ All notable changes to this project will be documented here. The format follows
 
 ### Added
 
-- App filters for proxy cost history, observed history dates, and visible gaps
-  instead of complete-looking zero-usage periods. Optional recovery adds earlier
-  local Codex proxy turns with overlap removal and separate source counts.
+- Accept transcript lines up to 16 MiB so large tool outputs do not discard otherwise readable session usage. File and scan limits remain bounded.
+
+- Dedicated Costs settings for local Codex/Claude history and up to four remote
+  T3 Code servers, included automatically with private connection tokens.
+- Combined source pricing, folder deduplication, visible source status, and
+  private offline T3 snapshots. Removed proxy cost history and app filters;
+  Keeper remains available for last-used quota account tracking.
 - Last-used CLIProxyAPI account quotas in the percentage menubar, with account
   details in tooltips and independent 15-second Keeper polling. Missing activity
   falls back to the known pool quota.
 
-- CLIProxyAPI cost history through CPA Usage Keeper, with continuous server
-  collection, separate Costs source settings, private password storage, and
-  24H/7D/30D estimates using existing public/custom model rates. Proxy providers
-  are discovered from archived events; source changes cannot retain old totals.
 - Custom model prices in settings with exact-ID matching, optional cache rates,
   explicit zero prices, Save/Cancel, and visible cost provenance.
 - Manual Costs refresh can update the public price table before its daily TTL,

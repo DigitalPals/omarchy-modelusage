@@ -49,7 +49,7 @@ Column {
 
   Label { text: "Custom model prices" }
   Label {
-    text: "USD per million tokens. Copy the exact model ID from Costs, including its provider and any [variant]. Custom prices override public and provider-reported costs for that ID. Remove a row to restore automatic pricing."
+    text: "USD per million tokens. Copy the exact model ID from Costs, including its provider and any [variant]. Custom prices override public rates for that ID across all sources. Remove a row to restore automatic pricing."
     opacity: 0.7
     font.pixelSize: Style.font.caption
   }
@@ -139,8 +139,8 @@ Column {
     }
   }
   Label {
-    text: prices.count === 0 ? "Automatic prices are in use. Kimi remains token-only without a known historical model."
-      : "Blank cache prices use the input price. Enter 0 explicitly for free tokens. Kimi remains token-only."
+    text: prices.count === 0 ? "Automatic prices are in use. Unknown models remain unpriced."
+      : "Blank cache prices use the input price. Enter 0 explicitly for free tokens."
     opacity: 0.7
     font.pixelSize: Style.font.caption
   }

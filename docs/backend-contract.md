@@ -97,7 +97,7 @@ CLIProxyAPI management responses have the same 2 MiB ceiling. The management key
 
 `UsageActivityBackend.qml` runs `scripts/proxy-activity.py` every 15 seconds in
 CLIProxyAPI mode when a Keeper URL is configured. It reuses `costKeeperUrl` and
-`costKeeperPasswordFile` regardless of `costSource`. The process reads proxy
+`costKeeperPasswordFile` independently of Costs source configuration. The process reads proxy
 `auth-files`, logs in to Keeper, reads `status` and `usage/identities`, and logs
 out. No quota calls, request contents, consuming queues, or history exports are
 used. Keeper must collect from the selected proxy.

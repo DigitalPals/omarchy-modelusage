@@ -1,8 +1,8 @@
-# Persistent CLIProxyAPI cost history
+# Optional CLIProxyAPI account activity
 
 The widget supports CPA Usage Keeper **v1.15.4**, tested with CLIProxyAPI
 **7.2.158**. Keeper runs on the proxy host and stores events in SQLite; the
-desktop reads its authenticated JSON export. No proxy binary changes are needed.
+desktop reads its authenticated last-request summary. No proxy binary changes are needed.
 Keeper is an external dependency, not vendored into this plugin.
 
 ## Install on the proxy host
@@ -49,7 +49,7 @@ Use root or `sudo -n` for the host installation commands as appropriate.
 Keeper subscribes to CPA's usage stream and backfills the remaining queue on
 startup. Multiple collectors must use subscription mode; mixing subscriptions
 and destructive queue polling can lose data. The widget only calls Keeper's
-history API. Do not add a second desktop poller for `/usage-queue`.
+account-activity API. Do not add a second desktop poller for `/usage-queue`.
 
 Long-lived subscriptions should bypass connection admission gates that wait
 for clients to disconnect before updating the proxy. On John's installation,
@@ -60,12 +60,11 @@ disconnect the subscription; Keeper reconnects automatically.
 
 The database is `/var/lib/cpa-usage-keeper/data/app.db`. Scheduled SQLite
 backups are enabled; Keeper's defaults retain seven days of backups. Its own
-retention policy governs archived events; the widget queries at most 30 days. Use Keeper's
+retention policy governs archived events; the widget queries the latest request by identity. Use Keeper's
 SQLite backup mechanism or stop Keeper before a filesystem copy; do not copy
 only a live main database file while its WAL is active. Back up Keeper's
 configuration and state privately. Keeper's database also contains its own
-credential and management metadata; the desktop imports only sanitized token
-accounting fields.
+credential and management metadata; the desktop imports only matched account identifiers and timestamps.
 
 An enabled collector cannot reconstruct already-expired history. On initial
 deployment, 30 pending requests were recovered from the one-hour proxy queue;
@@ -74,31 +73,10 @@ verified to retain the existing 64 events and resume collection.
 
 ## Configure and verify the widget
 
-In widget settings, select **CLIProxyAPI history** under **Costs source**,
-enter the Keeper URL and login password, and Save. Existing quota settings
-continue to operate separately. Refresh Costs and check the source label,
-request count, pricing coverage, model breakdown, and history notice.
-
-The history notice shows the earliest saved request in the export, not a
-guaranteed collection start. Gaps without archived observations are drawn as
-unavailable. App filters apply across all devices using the proxy. T3 Code's
-own Costs page scans transcripts on its connected environments, including
-non-T3 sessions, so compare matching app and time scopes.
-
-Optional **Recover earlier local usage** uses this desktop's recognized Codex
-proxy sessions strictly before the archive boundary. It leaves the server
-database unchanged, removes overlaps and duplicate local copies, and labels
-recovered turns separately. Old sessions do not identify their proxy server;
-leave this off if local history includes another server you wish to exclude.
-It cannot recover other computers' transcripts or fill gaps inside the archive.
-
-For a terminal check, put the Keeper password in an owned `0600` file:
-
-```bash
-python3 scripts/cost-fetch.py --source keeper \
-  --keeper-url https://proxy.example.com/keeper \
-  --keeper-password-file /path/to/private/password --days 30
-```
+In **Limits → gear**, configure CLIProxyAPI and the optional Keeper URL and
+login password for that same proxy. Save, choose percentage menubar mode, and
+hover a provider to inspect its last-used account and request timestamp. This
+integration is independent of Costs; Costs uses local/remote transcript sources.
 
 Check `systemctl is-active cpa-usage-keeper` and its journal. A healthy
 subscription reports `subscribe_receiving`/`subscribing`; the archive's
@@ -108,7 +86,7 @@ restart. Check the configured timezone matches the intended deployment.
 
 ## Rollback and maintenance
 
-Select **Local transcripts** to restore the original Costs source. To stop
+Clear the optional Keeper URL to stop account-activity polling. To stop
 collecting, disable the Keeper service with
 `systemctl disable --now cpa-usage-keeper`; retain its database for history.
 Remove only the added `/keeper` reverse-proxy route, preserving the proxy's
@@ -117,6 +95,5 @@ are stored under `/etc/cpa-usage-keeper/`; restore only this deployment's
 changes if those shared configurations have subsequently changed.
 
 Upgrade Keeper independently of the proxy, with a database backup and the
-contract tests first. The integration depends on its canonical token export,
-cookie login/logout, status, and date-filter APIs. Unknown models remain
-unpriced until a public price or exact custom override is available.
+contract tests first. The integration depends on its last-request summary,
+cookie login/logout, and collector status APIs.

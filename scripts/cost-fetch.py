@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Estimate API-equivalent costs from local transcripts or CPA Usage Keeper.
+"""Estimate API-equivalent costs from local and remote T3 transcripts.
 
 The scanner reads only usage metadata from the session files already owned by
 Claude Code, Codex, and Kimi Code. Prompts, responses, and tool output are never
 copied into plugin state or emitted to QML.
-The optional Keeper source reads persisted proxy usage, never the consuming queue.
+Remote T3 sources return usage summaries; raw transcripts stay on their host.
 """
 
 from __future__ import annotations
@@ -17,18 +17,19 @@ import os
 import time
 import urllib.request
 from dataclasses import dataclass, replace
-from collections import Counter, deque
+from concurrent.futures import ThreadPoolExecutor
+import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from model_usage_common import atomic_write_json, clean_message
-import keeper_costs
+import t3_costs
 
 
 SCHEMA_VERSION = 1
-SCAN_CACHE_VERSION = 3  # Sanitized Codex app family and proxy provenance for recovery.
+SCAN_CACHE_VERSION = 4  # Local transcript records; obsolete proxy recovery metadata is discarded.
 RATE_CACHE_VERSION = 2  # v1 discarded provider prefixes and could cache conflicting rates.
 PROVIDER_ORDER = ("claude", "codex", "kimi")
 PROVIDER_NAMES = {
@@ -49,7 +50,7 @@ CACHE_RETENTION_DAYS = 32
 MTIME_SLACK_SECONDS = 36 * 60 * 60
 MAX_RATE_BYTES = 32 * 1024 * 1024
 FORK_COPY_MAX_GAP_MS = 1000
-MAX_TRANSCRIPT_LINE_BYTES = 1024 * 1024
+MAX_TRANSCRIPT_LINE_BYTES = 16 * 1024 * 1024
 MAX_TRANSCRIPT_FILE_BYTES = 128 * 1024 * 1024
 MAX_TRANSCRIPT_SCAN_BYTES = 512 * 1024 * 1024
 MAX_TRANSCRIPT_RECORDS_PER_FILE = 20_000
@@ -80,8 +81,7 @@ class UsageRecord:
     reasoning: int
     reported_cost_usd: float | None
     dedupe_key: str | None
-    client_id: str = "other"
-    proxy_session: bool = False
+    record_count: int = 1
     origin: str = "local"
 
     @property
@@ -143,8 +143,7 @@ def read_bounded_json(path: Path, max_bytes: int) -> Any:
 
 def initial_codex_state() -> dict[str, Any]:
     return dict(model="", session_id="", last_signature=None, saw_session_meta=False,
-                suppressing_fork_copies=False, fork_copy_anchor_ms=0,
-                client_id="other", proxy_session=False)
+                suppressing_fork_copies=False, fork_copy_anchor_ms=0)
 
 
 class TranscriptCursor:
@@ -272,16 +271,11 @@ def serialize_record(record: UsageRecord) -> list[Any]:
         record.reasoning,
         record.reported_cost_usd,
         record.dedupe_key,
-        record.client_id,
-        record.proxy_session,
     ]
 
 
 def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
-    if not isinstance(row, list) or len(row) != 12:
-        return None
-    if (not isinstance(row[10], str) or row[10] not in keeper_costs.CLIENT_NAMES
-            or row[10] == "all" or type(row[11]) is not bool):
+    if not isinstance(row, list) or len(row) != 10:
         return None
     timestamp = finite_number(row[0])
     model = bounded_model(row[1])
@@ -307,7 +301,6 @@ def deserialize_record(provider: str, row: Any) -> UsageRecord | None:
         reasoning=int(numeric[4] or 0),
         reported_cost_usd=reported,
         dedupe_key=dedupe,
-        client_id=row[10], proxy_session=row[11],
     )
 
 
@@ -332,9 +325,6 @@ def decode_position(value: Any, size: int) -> dict[str, Any] | None:
             or (state["last_signature"] is not None and not valid_hash(state["last_signature"]))
             or type(state["saw_session_meta"]) is not bool
             or type(state["suppressing_fork_copies"]) is not bool
-            or not isinstance(state["client_id"], str)
-            or state["client_id"] not in keeper_costs.CLIENT_NAMES or state["client_id"] == "all"
-            or type(state["proxy_session"]) is not bool
             or type(state["fork_copy_anchor_ms"]) is not int
             or not 0 <= state["fork_copy_anchor_ms"] <= 10**16):
         return None
@@ -518,9 +508,6 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
                 if state["saw_session_meta"]:
                     continue
                 state["saw_session_meta"] = True
-                state["client_id"] = keeper_costs.client_id(payload.get("originator"))
-                state["proxy_session"] = payload.get("model_provider") in (
-                    "cli_proxy_api", "cliproxyapi", "cli-proxy-api", "cliproxy")
                 raw_id = payload.get("id") or payload.get("session_id")
                 if isinstance(raw_id, str):
                     state["session_id"] = opaque_id("codex:" + raw_id)
@@ -564,7 +551,6 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
                 reasoning=min(output, nonnegative_int(last.get("reasoning_output_tokens"))),
                 reported_cost_usd=None,
                 dedupe_key=None,
-                client_id=state["client_id"], proxy_session=state["proxy_session"],
             )
             if record.total_tokens > 0 and record.timestamp_ms >= retention_start_ms:
                 if len(records) >= MAX_TRANSCRIPT_RECORDS_PER_FILE:
@@ -1108,8 +1094,7 @@ def empty_cell() -> dict[str, Any]:
         "cost": 0.0,
         "cacheSavings": 0.0,
         "records": 0,
-        "archiveRecords": 0,
-        "backfillRecords": 0,
+        "remoteRecords": 0,
         "pricedRecords": 0,
         "providerReportedRecords": 0,
         "customPricedRecords": 0,
@@ -1133,11 +1118,9 @@ def add_record(
     cell["cacheCreationTokens"] += record.cache_creation
     cell["outputTokens"] += record.output
     cell["reasoningTokens"] += record.reasoning
-    cell["records"] += 1
-    if record.origin == "archive":
-        cell["archiveRecords"] += 1
-    elif record.origin == "backfill":
-        cell["backfillRecords"] += 1
+    cell["records"] += record.record_count
+    if record.origin == "remote":
+        cell["remoteRecords"] += record.record_count
     if record.session_id:
         cell["sessions"].add(record.session_id)
 
@@ -1146,8 +1129,8 @@ def add_record(
     rate = custom if custom is not None else lookup_rate(record.model, rates)
     if record.reported_cost_usd is not None and custom is None:
         cell["cost"] += record.reported_cost_usd
-        cell["pricedRecords"] += 1
-        cell["providerReportedRecords"] += 1
+        cell["pricedRecords"] += record.record_count
+        cell["providerReportedRecords"] += record.record_count
     elif rate is not None:
         input_rate, output_rate, cache_read_rate, cache_create_rate = rate
         cell["cost"] += (
@@ -1156,21 +1139,21 @@ def add_record(
             + record.cache_creation * cache_create_rate
             + record.output * output_rate
         )
-        cell["pricedRecords"] += 1
-        cell["rateMatchedRecords"] += 1
+        cell["pricedRecords"] += record.record_count
+        cell["rateMatchedRecords"] += record.record_count
         if custom is not None:
-            cell["customPricedRecords"] += 1
+            cell["customPricedRecords"] += record.record_count
         else:
-            cell["basePricedRecords"] += 1
+            cell["basePricedRecords"] += record.record_count
             if "[" in record.model:
-                cell["variantPricedRecords"] += 1
+                cell["variantPricedRecords"] += record.record_count
     else:
-        cell["unpricedRecords"] += 1
+        cell["unpricedRecords"] += record.record_count
 
     if rate is not None:
         input_rate, _, cache_read_rate, _ = rate
         cell["cacheSavings"] += record.cached_input * max(0, input_rate - cache_read_rate)
-        cell["rateAvailableRecords"] += 1
+        cell["rateAvailableRecords"] += record.record_count
 
 
 def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
@@ -1217,8 +1200,7 @@ def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
         "reasoningTokens": int(cell["reasoningTokens"]),
         "totalTokens": int(total_tokens),
         "records": records,
-        "archiveRecords": int(cell["archiveRecords"]),
-        "backfillRecords": int(cell["backfillRecords"]),
+        "remoteRecords": int(cell["remoteRecords"]),
         "pricedRecords": priced,
         "unpricedRecords": int(cell["unpricedRecords"]),
         "providerReportedRecords": int(cell["providerReportedRecords"]),
@@ -1367,165 +1349,150 @@ def aggregate_usage(
 
 def parse_provider_ids(value: str) -> list[str]:
     requested = {item.strip().lower() for item in value.split(",") if item.strip()}
-    return [provider for provider in PROVIDER_ORDER if provider in requested]
-
-
-def recover_local_history(archive, history, start_ms, end_ms, state_dir):
-    """Recover only pre-archive Codex proxy turns; never fill internal gaps.
-
-    Proxy events timestamp request starts, while local turns timestamp completion.
-    A strict cutoff plus one-to-one token/time matching handles boundary overlap
-    and modest clock skew. Identical local copies use session/time/token identity;
-    separate requests with the same token amounts remain separate.
-    """
-    cutoff = history.get("firstRecordAt")
-    info = {"status": "notNeeded", "recoveredRecords": 0, "overlapRecords": 0,
-            "before": cutoff, "message": ""}
-    if cutoff is None or history.get("skippedRecords"):
-        info.update(status="unavailable", message="Local recovery needs a readable archive boundary.")
-        return [], info
-    if cutoff <= start_ms:
-        return [], info
-    local, coverage = scan_transcripts(["codex"], state_dir, end_ms)
-    info["status"] = "partial" if any(c["status"] != "ok" for c in coverage) else "ok"
-    info["message"] = "Earlier Codex proxy sessions on this device only; other devices and collection gaps remain incomplete."
-    if info["status"] == "partial":
-        info["message"] += " Some local history could not be read."
-
-    def signature(record):
-        return (record.provider, record.model, record.uncached_input, record.cached_input,
-                record.cache_creation, record.output, record.reasoning)
-
-    stamps = {}
-    for record in sorted(archive, key=lambda r: r.timestamp_ms):
-        stamps.setdefault(signature(record), deque()).append(record.timestamp_ms)
-    recovered, seen = [], set()
-    for record in sorted(local, key=lambda r: r.timestamp_ms):
-        if (not record.proxy_session or not record.session_id
-                or not start_ms <= record.timestamp_ms < cutoff):
-            continue
-        key = opaque_id(json.dumps((record.session_id, record.timestamp_ms, signature(record))))
-        if key in seen:
-            continue
-        seen.add(key)
-        matches = stamps.get(signature(record), deque())
-        while matches and matches[0] < record.timestamp_ms - 300_000:
-            matches.popleft()
-        if matches and matches[0] <= record.timestamp_ms + 300_000:
-            matches.popleft()
-            info["overlapRecords"] += 1
-            continue
-        recovered.append(replace(record, origin="backfill", dedupe_key="backfill:" + key))
-    if len(archive) + len(recovered) > MAX_TRANSCRIPT_RECORDS_TOTAL:
-        raise ValueError("Combined history exceeds 50,000 records; turn off local recovery or select a shorter period.")
-    info["recoveredRecords"] = len(recovered)
-    return recovered, info
+    return [provider for provider in ("claude", "codex") if provider in requested]
 
 
 def build_payload(
-    provider_ids: list[str],
-    days: int,
-    timeout: float,
-    state_dir: Path | None,
-    now_ms: int | None = None,
-    zone_name: str | None = None,
-    rates_override: tuple[dict[str, tuple[float, float, float, float]], dict[str, Any]] | None = None,
-    force_rates: bool = False,
-    price_overrides: str = "{}",
-    source: str = "direct",
-    keeper_url: str = "",
-    keeper_password_file: Path | None = None,
-    client_filter: str = "all",
-    local_backfill: bool = False,
+    provider_ids: list[str], days: int, timeout: float, state_dir: Path | None,
+    now_ms: int | None = None, zone_name: str | None = None,
+    rates_override=None, force_rates: bool = False, price_overrides: str = "{}",
+    t3_servers: str = "[]",
 ) -> dict[str, Any]:
     started = time.monotonic()
     overrides = parse_price_overrides(price_overrides)
-    stamp_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    history = None
-    clients = []
-    archive = []
-    if client_filter not in keeper_costs.CLIENT_NAMES:
-        raise ValueError("Choose a supported Costs app filter.")
-    if source == "keeper":
-        zone = local_zone(zone_name)
-        today = datetime.fromtimestamp(stamp_ms / 1000, zone)
-        start = (stamp_ms - 86_400_000 if days == 1 else int(
-            (today.replace(hour=0, minute=0, second=0, microsecond=0)
-             - timedelta(days=days - 1)).timestamp() * 1000))
-        # Recovery always examines the entire supported history window. Using
-        # the first event of a short selection could fill a real collection gap.
-        export_start = min(start, int((today.replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=29)).timestamp() * 1000)) if local_backfill else start
-        rows, history = keeper_costs.collect(keeper_url, keeper_password_file, timeout, export_start, stamp_ms)
-        archive = [UsageRecord(**row) for row in rows]
-        recovered = []
-        backfill = {"status": "disabled", "recoveredRecords": 0, "overlapRecords": 0,
-                    "before": None, "message": ""}
-        if local_backfill:
-            recovered, backfill = recover_local_history(archive, history, start, stamp_ms, state_dir)
-        available = [r for r in archive + recovered if start <= r.timestamp_ms <= stamp_ms]
-        counts = Counter(r.client_id for r in available)
-        clients = [{"id": key, "name": name, "records": len(available) if key == "all" else counts[key]}
-                   for key, name in keeper_costs.CLIENT_NAMES.items()]
-        records = [r for r in available if client_filter == "all" or r.client_id == client_filter]
-        backfill["includedRecords"] = sum(r.origin == "backfill" for r in records)
-        history = {**history, "backfill": backfill, "clientFilter": client_filter,
-                   "clientName": keeper_costs.CLIENT_NAMES[client_filter],
-                   "exportSince": iso_timestamp(export_start / 1000),
-                   "lastRecordAt": max((r.timestamp_ms for r in archive), default=None)}
-        provider_ids = sorted({record.provider for record in records})
-        coverage = [{"id": provider, "name": PROVIDER_NAMES.get(provider, provider.title()),
-                     "status": history["status"], "message": history["message"],
-                     "scannedFiles": 0, "skippedFiles": 0, "sessions": 0}
-                    for provider in provider_ids]
-    else:
-        records, coverage = scan_transcripts(provider_ids, state_dir, stamp_ms)
-    needs_rates = any(
-        record.model != "<unattributed>" and record.model.strip() not in overrides for record in records
-    )
+    provider_ids = [p for p in provider_ids if p in ("claude", "codex")]
+    servers = [s for s in t3_costs.parse_servers(t3_servers) if s["enabled"]]
+    stamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    zone = local_zone(zone_name)
+    period, _, bucket_for = period_window(days, stamp, zone)
+    end = datetime.fromtimestamp(stamp / 1000, zone)
+    start = stamp - 86400000 if days == 1 else int(datetime.fromisoformat(period["since"]).replace(tzinfo=zone).timestamp() * 1000)
+    query = {"sinceDay": datetime.fromtimestamp(start / 1000, zone).date().isoformat(),
+             "untilDay": end.date().isoformat(), "timeZone": getattr(zone, "key", "UTC"),
+             "resolution": "hour" if days == 1 else "day"}
+    if days == 1:
+        query.update(sinceTime=iso_timestamp(start / 1000), untilTime=iso_timestamp(stamp / 1000))
+    candidates, sources = [], []
+    # I/O for all servers overlaps with the local scan; one deadline per server.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [(server, pool.submit(t3_costs.collect, server, query, days,
+                     state_path("t3", state_dir), timeout)) for server in servers]
+        local, coverage = scan_transcripts(provider_ids, state_dir, stamp)
+        for item in coverage:
+            provider = item["id"]
+            root = transcript_root(provider)
+            try:
+                info = root.stat()
+                volume = f"{info.st_dev}:{info.st_ino}"
+            except OSError:
+                volume = ""
+            records = [replace(r, reported_cost_usd=None) for r in local
+                       if r.provider == provider and start <= r.timestamp_ms <= stamp]
+            fp = t3_costs.fingerprint(socket.gethostname(), provider, str(root.resolve()), volume)
+            candidates.append({"id": "local-" + provider, "name": "Local " + ("Claude" if provider == "claude" else provider.title()),
+                "kind": "local", "provider": provider, "fingerprint": fp, "status": item["status"],
+                "updatedAt": stamp, "message": item["message"], "records": records,
+                "scannedFiles": item.get("scannedFiles", 0), "skippedFiles": item.get("skippedFiles", 0),
+                "sessions": len({r.session_id for r in records if r.session_id})})
+        for server, future in futures:
+            try:
+                summary, state, error = future.result()
+            except (ValueError, OSError):
+                summary, state, error = None, "unavailable", "Check this server’s connection and credential in Costs settings."
+            if summary is None:
+                sources.append({"id": server["id"], "name": server["name"], "kind": "t3",
+                    "status": "unavailable", "included": False, "updatedAt": None, "message": error})
+                continue
+            if not summary["sources"]:
+                sources.append({"id": server["id"], "name": server["name"], "kind": "t3",
+                    "status": "unavailable", "included": False, "updatedAt": summary["readAt"],
+                    "message": "This server reported no supported Codex or Claude transcript sources."})
+            for remote in summary["sources"]:
+                provider = remote["provider"]
+                records = []
+                for row in summary["buckets"]:
+                    if row["provider"] != provider:
+                        continue
+                    timestamp = (parse_timestamp_ms(row["hourStart"]) if days == 1 else
+                        int(datetime.fromisoformat(row["day"]).replace(tzinfo=zone).timestamp() * 1000))
+                    # Stale boundary buckets cannot be split from aggregated tokens.
+                    # Retain whole in-window buckets only, with explicit stale status.
+                    if timestamp is None or not start <= timestamp <= stamp or not row["records"]:
+                        continue
+                    totals = row["totals"]
+                    records.append(UsageRecord(provider=provider, timestamp_ms=timestamp,
+                        model=row["model"], session_id="", uncached_input=totals["uncachedInputTokens"],
+                        cached_input=totals["cachedInputTokens"], cache_creation=totals["cacheCreationTokens"],
+                        output=totals["outputTokens"], reasoning=totals["reasoningTokens"], reported_cost_usd=None,
+                        dedupe_key=t3_costs.digest([remote["fingerprint"], row["day"], row["hourStart"], row["model"]]),
+                        record_count=row["records"], origin="remote"))
+                status = remote["status"]
+                if state == "stale" and status not in ("missing", "failed"):
+                    status = "stale"
+                candidates.append({"id": server["id"] + "-" + provider,
+                    "name": server["name"] + " · " + ("Claude" if provider == "claude" else "Codex"),
+                    "kind": "t3", "provider": provider, "fingerprint": remote["fingerprint"],
+                    "status": status, "updatedAt": summary["readAt"],
+                    "message": ("Saved snapshot; new activity and boundary hours may be missing. " + error
+                                if state == "stale" else "Includes all readable sessions on this T3 host, including non-T3 sessions."),
+                    "records": records, "sessions": remote["sessions"] if state != "stale" else None})
+
+    # Prefer a complete fresh source, then partial fresh, then a stale snapshot.
+    # A missing/failed source must never suppress a readable duplicate.
+    rank = {"ok": 0, "partial": 1, "stale": 2, "missing": 3, "failed": 3}
+    candidates.sort(key=lambda c: (rank.get(c["status"], 3), c["kind"] != "local", c["id"]))
+    seen, records, sessions = set(), [], {}
+    for candidate in candidates:
+        available = candidate["status"] in ("ok", "partial", "stale")
+        included = available and candidate["fingerprint"] not in seen
+        public = {k: v for k, v in candidate.items() if k not in ("records", "sessions", "fingerprint")}
+        public["included"] = included
+        if included:
+            seen.add(candidate["fingerprint"])
+            records.extend(candidate["records"])
+            provider = candidate["provider"]
+            current = sessions.get(provider, 0)
+            sessions[provider] = (None if current is None or candidate["sessions"] is None else current + candidate["sessions"])
+        elif available:
+            public.update(status="duplicate", message="This transcript folder is already included by another source.")
+        sources.append(public)
+    if len(records) > MAX_TRANSCRIPT_RECORDS_TOTAL:
+        raise ValueError("Combined transcript history exceeds the record limit. Select a shorter period.")
+    provider_ids = sorted({c["provider"] for c in candidates})
     if rates_override is not None:
         rates, pricing = rates_override
-    elif needs_rates or force_rates:
-        rates, pricing = load_rates(state_dir, timeout, stamp_ms // 1000, force=force_rates)
+    elif force_rates or any(r.model not in overrides for r in records):
+        rates, pricing = load_rates(state_dir, timeout, stamp // 1000, force=force_rates)
     else:
-        rates = {}
-        pricing = {
-            "status": "unavailable" if any(record.model == "<unattributed>" for record in records) else "notNeeded",
-            "source": LITELLM_RATES_URL,
-            "fetchedAt": None,
-            "knownModels": 0,
-            "message": "No model-price lookup was needed for this result.",
-        }
-    pricing = {**pricing, "basis": "currentBaseRates", "customModels": len(overrides)}
-    result = aggregate_usage(records, provider_ids, days, stamp_ms, rates, zone_name, overrides)
-    if history is not None:
-        _, _, bucket_for = period_window(days, stamp_ms, local_zone(zone_name))
-        observed = {bucket_for(r.timestamp_ms) for r in archive}
-        for cell in result["periods"]:
-            # No archived requests is missing evidence, not verified zero use.
-            cell["historyStatus"] = ("mixed" if cell["archiveRecords"] and cell["backfillRecords"] else
-                "localOnly" if cell["backfillRecords"] else "recorded" if cell["start"] in observed else "unavailable")
-        result["totals"]["historyStatus"] = ("recorded" if any(
-            cell["historyStatus"] != "unavailable" for cell in result["periods"]) else "unavailable")
-    sessions_by_provider = {row["id"]: row["sessions"] for row in result["providers"]}
-    coverage_by_provider = {row["id"]: row for row in coverage}
-    for entry in coverage:
-        entry["sessions"] = sessions_by_provider.get(entry["id"], 0)
+        rates, pricing = {}, {"status": "notNeeded", "source": LITELLM_RATES_URL,
+                             "fetchedAt": None, "knownModels": 0, "message": "Public prices are not needed for this selection."}
+    result = aggregate_usage(records, provider_ids, days, stamp, rates, zone_name, overrides)
+    coverage = []
     for provider in result["providers"]:
-        entry = coverage_by_provider.get(provider["id"], {})
-        provider["status"] = entry.get("status", "missing")
-        provider["message"] = entry.get("message", "")
-    return {
-        "schemaVersion": SCHEMA_VERSION,
-        "source": source,
-        "history": history,
-        "clients": clients,
-        "generatedAt": iso_timestamp(stamp_ms / 1000),
-        "pricing": pricing,
-        "coverage": coverage,
-        "scanDurationMs": max(0, int((time.monotonic() - started) * 1000)),
-        **result,
-    }
+        relevant = [s for s in sources if s.get("provider") == provider["id"] and s["status"] != "duplicate"]
+        status = "ok" if relevant and all(s["status"] == "ok" for s in relevant) else "partial"
+        if relevant and not any(s["included"] for s in relevant):
+            status = "missing"
+        provider.update(status=status, message="No readable history for this source." if status == "missing" else "",
+                        sessions=sessions.get(provider["id"], 0))
+        coverage.append({"id": provider["id"], "name": provider["name"], "status": status,
+                         "message": provider["message"],
+                         "scannedFiles": sum(s.get("scannedFiles", 0) for s in relevant),
+                         "skippedFiles": sum(s.get("skippedFiles", 0) for s in relevant), "sessions": provider["sessions"]})
+    result["totals"]["sessions"] = None if any(s is None for s in sessions.values()) else sum(sessions.values())
+    for cell in result["models"] + result["periods"]:
+        if cell["remoteRecords"]:
+            cell["sessions"] = None  # Bucket sessions cannot be summed across models/days.
+    included_sources = [s for s in sources if s["included"]]
+    complete = bool(included_sources) and all(s["status"] in ("ok", "duplicate", "missing") for s in sources)
+    observed = {bucket_for(r.timestamp_ms) for r in records}
+    for cell in result["periods"]:
+        cell["historyStatus"] = "recorded" if complete or cell["start"] in observed else "unavailable"
+    result["totals"]["historyStatus"] = "recorded" if included_sources else "unavailable"
+    return {"schemaVersion": SCHEMA_VERSION, "source": "transcripts", "sources": sources,
+        "generatedAt": iso_timestamp(stamp / 1000), "coverage": coverage,
+        "pricing": {**pricing, "basis": "currentBaseRates", "customModels": len(overrides)},
+        "scanDurationMs": int((time.monotonic() - started) * 1000), **result}
 
 
 def clean_error(value: Any) -> str:
@@ -1534,18 +1501,14 @@ def clean_error(value: Any) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--providers", default=",".join(PROVIDER_ORDER))
+    parser.add_argument("--providers", default="claude,codex")
     parser.add_argument("--days", type=int, choices=(1, 7, 30), default=30)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--time-zone")
     parser.add_argument("--refresh-prices", action="store_true")
     parser.add_argument("--price-overrides", default="{}", help="Exact-model rates as JSON, in USD per million tokens")
-    parser.add_argument("--source", choices=("direct", "keeper"), default="direct")
-    parser.add_argument("--keeper-url", default="")
-    parser.add_argument("--keeper-password-file", type=Path)
-    parser.add_argument("--client", choices=tuple(keeper_costs.CLIENT_NAMES), default="all")
-    parser.add_argument("--local-backfill", action="store_true")
+    parser.add_argument("--t3-servers", default="[]")
     args = parser.parse_args(argv)
     try:
         payload = build_payload(
@@ -1556,11 +1519,7 @@ def main(argv: list[str] | None = None) -> int:
             zone_name=args.time_zone,
             force_rates=args.refresh_prices,
             price_overrides=args.price_overrides,
-            source=args.source,
-            keeper_url=args.keeper_url,
-            keeper_password_file=args.keeper_password_file,
-            client_filter=args.client,
-            local_backfill=args.local_backfill,
+            t3_servers=args.t3_servers,
         )
     except Exception as exc:
         payload = {

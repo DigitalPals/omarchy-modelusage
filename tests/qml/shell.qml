@@ -178,20 +178,20 @@ ShellRoot {
       malformedBackend.refresh()
     }
     richCostBackend = loadComponent(costBackendUrl, {
-      settings: { enabledProviders: ["claude", "codex", "kimi"] },
+      settings: { costLocalProviders: ["claude", "codex", "kimi"] },
       periodDays: 30
     }, "CostBackend.qml rich contract")
     if (richCostBackend) richCostBackend.refresh()
     malformedCostBackend = loadComponent(costBackendUrl, {
-      settings: { enabledProviders: ["kimi"] },
+      settings: { costLocalProviders: [] },
       periodDays: 30
     }, "CostBackend.qml malformed boundary")
     if (malformedCostBackend) {
-      malformedCostBackend.settings = { enabledProviders: ["kimi"] }
+      malformedCostBackend.settings = { costLocalProviders: [] }
       malformedCostBackend.refresh()
     }
     backendErrorCostBackend = loadComponent(costBackendUrl, {
-      settings: { enabledProviders: ["claude", "codex", "kimi"] },
+      settings: { costLocalProviders: ["claude", "codex", "kimi"] },
       periodDays: 30
     }, "CostBackend.qml last-known-good boundary")
     if (backendErrorCostBackend) backendErrorCostBackend.refresh()
@@ -339,10 +339,8 @@ ShellRoot {
     }
 
     if (richCostBackend) {
-      assertEqual(richCostBackend.providers.length, 3, "cost backend exposes every selected provider")
+      assertEqual(richCostBackend.providers.length, 2, "cost backend exposes every selected provider")
       assertEqual(richCostBackend.payload.totals.costUsd, 12.34, "cost backend preserves estimated cost")
-      assertEqual(richCostBackend.payload.providers[2].costUsd, null,
-        "unpriced Kimi activity remains unknown rather than zero")
       assertTrue(richCostBackend.payload.periods.length > 0, "cost chart periods are available")
       costView = loadComponent(costViewUrl, {
         width: 420,
@@ -361,7 +359,7 @@ ShellRoot {
     }
 
     if (backendErrorCostBackend) {
-      assertEqual(backendErrorCostBackend.providers.length, 3,
+      assertEqual(backendErrorCostBackend.providers.length, 2,
         "last-known-good backend starts with a rich payload")
     }
 
@@ -382,7 +380,7 @@ ShellRoot {
       startPanelChecks()
       return
     }
-    backendErrorCostBackend.settings = { enabledProviders: ["codex"] }
+    backendErrorCostBackend.settings = { costLocalProviders: ["claude", "codex"], costPriceOverrides: "synthetic-failure" }
     lastGoodWaitAttempts = 0
     waitForLastGood.running = true
   }
@@ -404,7 +402,6 @@ ShellRoot {
     widget.showSettings()
     widget.settingsForm.setValue("usageSource", "cliproxy")
     widget.settingsForm.managementKey = "qml-synthetic-management-key"
-    widget.settingsForm.setValue("costSource", "keeper")
     widget.settingsForm.setValue("costKeeperUrl", "https://keeper.example/keeper")
     widget.settingsForm.keeperPassword = "qml-synthetic-keeper-password"
     widget.settingsForm.submit()
@@ -514,9 +511,9 @@ ShellRoot {
       root.waitAttempts++
       var richReady = root.widget && root.widget.providers.length === 3
       var malformedReady = root.malformedBackend && root.malformedBackend.fetchError !== ""
-      var costReady = root.richCostBackend && root.richCostBackend.providers.length === 3
+      var costReady = root.richCostBackend && root.richCostBackend.providers.length === 2
       var malformedCostReady = root.malformedCostBackend && root.malformedCostBackend.fetchError !== ""
-      var lastGoodReady = root.backendErrorCostBackend && root.backendErrorCostBackend.providers.length === 3
+      var lastGoodReady = root.backendErrorCostBackend && root.backendErrorCostBackend.providers.length === 2
       var proxyReady = root.proxyBackend && root.proxyBackend.providers.length === 4
         && root.proxyWidget && root.proxyWidget.providers.length === 4
       if ((richReady && malformedReady && costReady && malformedCostReady && lastGoodReady && proxyReady)
@@ -551,7 +548,7 @@ ShellRoot {
           && root.backendErrorCostBackend.fetchError === "Synthetic estimated-cost failure")
           || root.lastGoodWaitAttempts >= 120) {
         stop()
-        root.assertEqual(root.backendErrorCostBackend.providers.length, 3,
+        root.assertEqual(root.backendErrorCostBackend.providers.length, 2,
           "backendError preserves the last-known-good cost payload")
         root.startKeySaveCheck()
       }

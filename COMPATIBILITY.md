@@ -17,15 +17,18 @@
 
 ## Provider compatibility
 
-- CPA Usage Keeper `v1.15.4` with CLIProxyAPI `7.2.158`: authenticated history
-  exports, canonical tokens, source isolation, and custom prices tested with
-  HTTP fixtures and live Codex traffic. The deployed systemd collector recovers
-  pending queue events, persists SQLite history across service restarts, and
-  reconnects its TLS usage subscription. Other proxy providers are covered by
-  normalized fixtures; local transcript collection remains available separately.
+- T3 Code usage contracts 4/5 at `b1e223e2b0d87124883b1410ab52dd6a1338e40d`:
+  native WebSocket RPC, token exchange, offline caching, common pricing and
+  folder deduplication tested with synthetic HTTP/WebSocket servers. On
+  2026-09-12, authenticated live contract-v5 collection was verified for
+  24H/7D/30D in Europe/Amsterdam: every imported token category and response
+  count reconciled with the server summary plus local usage. The desktop
+  Costs view showed both remote Codex and Claude sources included.
+- CPA Usage Keeper `v1.15.4`: optional quota account activity only. Costs no
+  longer imports its request history.
 - Claude Code CLI available during validation: `2.1.239`
 - OpenAI Codex CLI available during validation: `0.149.0`
-- Kimi Code normalization and transcript support validated against fixtures from
+- Kimi Code quota normalization validated against fixtures from
   the pinned `MoonshotAI/kimi-cli` revisions below; a live Kimi sign-in was not
   available on the validation machine.
 - CLIProxyAPI management contract checked against commit
@@ -45,5 +48,5 @@ Reference implementations inspected during development:
 - router-for-me/CLIProxyAPI management API: `5b2785617d1e7de84a9f4dee599d275a4ccd8999`
 - MoonshotAI/kimi-cli quota APIs: `d723cc47ee43e5ca3c3c4ec2473f205d44acede2`
 - MoonshotAI/kimi-cli wire usage: `cbc15c076d17f70fec9f89c90c0502e68657f505`
-- pingdotgg/t3code: `afa83098064e7dca524a1e42dea3de03a883a0b6`
+- pingdotgg/t3code: `b1e223e2b0d87124883b1410ab52dd6a1338e40d`
 - BerriAI/LiteLLM public model-price schema, fetched at runtime

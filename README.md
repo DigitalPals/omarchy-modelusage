@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/DigitalPals/omarchy-modelusage/actions/workflows/ci.yml/badge.svg)](https://github.com/DigitalPals/omarchy-modelusage/actions/workflows/ci.yml)
 
-Native Omarchy Quattro quota and activity monitoring for Claude Code, OpenAI Codex, and Kimi Code, with direct CLI and CLIProxyAPI quota sources. A compact bar widget opens a keyboard-friendly panel with provider limits, reset times, credits, persistent quota history, and on-demand API-equivalent cost estimates from local CLI transcripts or archived CLIProxyAPI traffic.
+Native Omarchy Quattro quota and activity monitoring for Claude Code, OpenAI Codex, and Kimi Code, with direct CLI and CLIProxyAPI quota sources. A compact bar widget opens a keyboard-friendly panel with provider limits, reset times, credits, persistent quota history, and on-demand API-equivalent cost estimates from local Codex/Claude transcripts and remote T3 Code servers.
 
 <p align="center">
   <img src="docs/model-usage-panel.png" alt="Model Usage panel showing Claude Code quota windows, extra usage, and history" width="560">
@@ -95,38 +95,41 @@ Provider buttons wrap to fit the panel. Failed refreshes preserve the last known
 
 **Hide account emails** is enabled by default in widget settings. Account cards and menubar tooltips use numbered labels (Account 1, Account 2, …), and account identities are omitted from the settings details. Turn it off and Save to show usernames/email addresses. This is a display preference; quota collection continues normally.
 
-Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. The separate **Costs source** setting selects local transcripts or archived proxy requests.
+Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. Costs sources are configured separately using the gear on Costs.
 
-### CLIProxyAPI cost history
+### Local and remote cost history
 
-Select **CLIProxyAPI history** under **Costs source**, enter the **CPA Usage Keeper URL** and its separate **Keeper login password**, then Save. The password is stored in a private file; leaving the field blank preserves the saved password. Quota configuration remains independent. The default Costs source is **Local transcripts**.
+Open **Costs → gear** to configure sources and prices. Local **Codex CLI** and
+**Claude Code CLI** history are enabled by default, independently of the quota
+providers. Enable or disable either source in Costs settings.
 
-[CPA Usage Keeper](https://github.com/Willxup/cpa-usage-keeper) must run continuously alongside the proxy. It saves events in SQLite while the desktop is offline. See [collector deployment](docs/keeper-deployment.md) for the pinned version, systemd service, TLS, backups, and validation. The widget reads Keeper's history export; it never consumes CLIProxyAPI's usage queue.
+Choose **Add T3 server**, enter a name, its HTTP(S) base URL, and its connection
+token, then **Save**. Up to four enabled servers are included automatically in
+24H, 7D, and 30D totals. Use a compatible [T3 Code](https://github.com/pingdotgg/t3code)
+server with usage contract version 4 or 5. Tokens are stored in private files;
+blank token fields preserve saved credentials. T3 may exchange a connection
+token for an access token; rejected or expired credentials produce a reconnect
+notice. Use a fresh connection token when prompted by the source status.
 
-Costs shows the earliest saved request in the scanned history. Outlined chart
-gaps mean **history unavailable**, not zero usage. Collector health and the
-percentage of records priced do not establish complete historical coverage.
-App filters distinguish T3 Code, Codex CLI, Codex Exec, Digital Brain, and
-other/unknown clients. They group the same app across all proxy devices; using
-the same account does not make another computer's local transcripts available.
+T3 scans Codex and Claude transcripts readable on its server, **including
+sessions started outside T3**. Another computer contributes only when its
+history is available through a configured server. Identical transcript folders
+reported by local and remote sources, or multiple T3 servers, are counted once.
+Copies on different machines cannot reliably be identified as the same history.
 
-Enable **Recover earlier local usage** in settings to add recognized Codex
-proxy sessions from this device before the archive boundary. Recovery is off
-by default because old logs identify the proxy provider but not its server;
-they may include another proxy you used. Direct OpenAI sessions are excluded.
-Saved requests and recovered local turns have separate counts. Recovery removes
-overlap and duplicate local copies, respects the app filter, and never fills
-gaps inside the archive or retrieves another device's logs. It reads 30 days of
-archive history even in shorter views to keep the cutoff consistent; disable
-recovery to use a shorter export if the archive exceeds the download limit.
+The **Last scan** section in Costs settings shows included, partial, missing, duplicate, or unavailable history.
+When a T3 server is offline, its last usable snapshot for that period and timezone
+is retained with a timestamp. Stale snapshots can miss new activity and boundary
+hours; empty unknown chart periods are marked as unavailable. Session counts are
+omitted when stale summaries cannot provide an accurate count. No app or provider
+filter is needed: all enabled cost sources contribute together.
 
-Costs displays 24H, 7D, and 30D recorded activity using the same LiteLLM rates and custom model prices as local Costs. Keeper's own calculated dollar amounts are ignored. Providers and actual model IDs come from the archive; model-attributed Kimi traffic can be priced. Cache reads/writes and reasoning are normalized without double counting. Request counts replace session counts because Keeper's export has no session IDs.
-
-By default, only archived proxy requests are included. Optional local recovery adds earlier recognized proxy sessions with overlap removed. Missing traffic cannot be reconstructed unless usable local logs exist. Collection errors and skipped invalid records appear as incomplete coverage. An unavailable archive preserves the last successful view for that connection; changing source, URL, password file, app filter, or recovery setting clears old totals.
+Costs does not read CLIProxyAPI or Keeper. Keeper remains optional for the quota
+menubar’s last-used account feature; see [deployment](docs/keeper-deployment.md).
 
 For standalone quota backend use, `--source cliproxy`, `--cliproxy-url`, and `--cliproxy-key-file` are available. `CLIPROXY_API_URL` supplies the URL when the CLI flag is omitted, and `CLIPROXY_API_KEY_FILE` supplies the key path when neither the widget nor the CLI sets one. Keys are never passed as command-line arguments or saved in widget settings.
 
-No access or refresh token is printed, copied into plugin state, or included in display errors. State is XDG-aware: the plugin directory uses mode `0700` and its files use `0600`.
+No credential is printed or included in display errors. T3 access tokens are cached in separate private authentication files; usage snapshots contain only accounting metadata and hashed folder identities. State is XDG-aware: the plugin directory uses mode `0700` and its files use `0600`.
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/history.json
@@ -152,11 +155,11 @@ A failure in one provider is isolated; healthy providers remain selectable and r
 
 ### What “estimated cost” means
 
-Costs are the approximate API value of recorded tokens, not money charged to a Claude, ChatGPT, or Kimi subscription. Exact-model custom prices take precedence when configured; otherwise Claude-reported transcript costs take precedence over LiteLLM's public input, output, cache-read, and cache-creation rates. Archived proxy requests use custom or public prices. The Costs view identifies custom prices, provider-reported costs, and public base-rate estimates.
+Costs are the approximate API value of recorded tokens, not subscription charges. Every local and remote source uses the same pricing: exact-model custom rates when configured, otherwise public LiteLLM rates. Upstream T3 totals and transcript-reported dollar amounts do not override this common calculation. Unknown prices remain unpriced; measured tokens are retained.
 
 Public prices refresh automatically after 24 hours and are cached for offline use. **Refresh in Costs** also refreshes prices before that deadline, with a one-minute minimum between successful downloads. Provider-qualified model IDs keep their own rates; conflicting reseller prices cannot overwrite a canonical model. Bracketed variants such as `[1m]` use the base model's current rates and are identified as base-rate estimates. Historical prices, long-context premiums, and priority/flex/batch tiers are not inferred.
 
-Claude and Codex transcripts contain enough historical model information for estimation. Kimi's `wire.jsonl` contains reliable token counters but not reliable historical model attribution, so Kimi is shown as token-only and unpriced instead of being guessed. Transcript scanning starts only when the Costs tab is opened with missing/stale data or explicitly refreshed.
+Costs supports Codex and Claude history. Kimi remains available for quotas. Transcript scanning starts only when Costs is opened with missing/stale data or explicitly refreshed.
 
 ## Interactions
 
@@ -187,7 +190,7 @@ omarchy-shell digitalpals.model-usage configure
 
 ## Settings
 
-Open the popup and click the **gear icon** beside Refresh to configure Model Usage. The gear is available in Limits and Costs, including when no providers are enabled. **Save** writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
+Open the popup and click the **gear icon** beside Refresh to configure Model Usage. The Limits gear configures quotas and appearance; the Costs gear configures history sources and model prices. Both remain available when no providers are enabled. **Save** writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
 
 In local CLI mode, each provider has two controls: **Monitor** enables quota checks and includes it in the popup; **Menu bar** allows its percentage chip in the bar. Choose **Provider percentages** under **Menu bar display** to show those chips. Hiding a provider from the bar keeps it available in the popup. The widget icon remains accessible when all chips are hidden, on vertical bars, or when no selected provider has quota data.
 
@@ -195,7 +198,7 @@ In CLIProxyAPI mode, all discovered providers are monitored automatically; the p
 
 The form also includes quota source, CLIProxyAPI URL and a masked Management API key field, refresh interval, and warning/critical thresholds. Key storage is handled automatically. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
 
-Under **Custom model prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits. Local Kimi transcripts remain token-only because their historical model is unknown; model-attributed proxy events can be priced.
+In **Costs → gear → Custom model prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits.
 
 | Key | Default | Meaning |
 |---|---:|---|
@@ -210,10 +213,10 @@ Under **Custom model prices**, add the exact model ID and its input/output price
 | `warningThreshold` | `25` | Mark urgent at or below this percentage remaining |
 | `criticalThreshold` | `10` | Critical threshold in percentage remaining |
 | `costPriceOverrides` | `"{}"` | JSON string managed by Custom model prices; exact IDs mapped to USD-per-million rates |
-| `costSource` | `direct` | Local transcripts (`direct`) or CLIProxyAPI history (`keeper`); independent of quota source |
-| `costKeeperUrl` | empty | CPA Usage Keeper URL, including a deployment path such as `/keeper` |
-| `costLocalBackfill` | `false` | Recover this device's earlier Codex proxy sessions, with overlap removed and separate attribution |
-| `costKeeperPasswordFile` | empty | Private Keeper login password file, managed by the settings form |
+| `costLocalProviders` | `["claude", "codex"]` | Local cost sources, independent of quota providers |
+| `costKeeperUrl` | empty | Optional Keeper URL for last-used quota account activity |
+| `costT3Servers` | `"[]"` | T3 server configurations managed in Costs settings; credentials are private file references |
+| `costKeeperPasswordFile` | empty | Private Keeper password for quota account activity (legacy setting name) |
 
 Examples:
 
@@ -235,6 +238,8 @@ omarchy bar set digitalpals.model-usage criticalThreshold 5 --json
 - `CostBackend.qml` owns an independent, on-demand transcript scan, keeps the last known-good result across malformed responses, and never changes quota polling.
 - `scripts/cost-fetch.py` streams CLI JSONL, applies provider-specific deduplication, resumes growing files from a guarded byte position, caches sanitized usage records, prices attributable models, and emits [the estimated-cost contract](docs/cost-contract.md).
 - `CostPriceEditor.qml` provides validated custom-price fields inside settings, with exact model matching and Save/Cancel behavior.
+- `CostSettings.qml` edits local sources, remote T3 servers and private tokens, and common model prices.
+- `scripts/t3_costs.py` reads bounded T3 usage RPC responses and keeps private offline snapshots.
 - `UsageCosts.qml` renders the metric/period controls, time chart, token mix, pricing coverage percentages, and provider/model breakdowns without parsing raw history in QML.
 - `BlockMeter.qml` renders one track item per fixed block plus only the partial boundary fragment—there is no duplicate full-width fill layer.
 - `UsageHistory.qml` receives small pre-bucketed arrays; large history files are never parsed in QML.
@@ -309,7 +314,7 @@ Maintainers should follow the [release checklist](docs/releasing.md) before tagg
 
 **The first Costs scan is slower.** A cold scan streams recent transcript files. Later scans reuse unchanged files and read only the appended bytes of growing sessions. Replaced, shortened, or detected rewritten files restart from the beginning. The first scan after this upgrade rebuilds old scan and price caches; stale flattened prices are never reused.
 
-**Kimi has no dollar estimate.** Current Kimi Code wire records expose token usage without reliable historical model identity. The plugin reports those tokens but will not invent a price.
+**T3 is unavailable.** Hover the source status for details. Check its base URL, connection token, and usage contract version. A saved snapshot is labeled with its last update time; no snapshot means unavailable history, not zero usage.
 
 **The backend cannot start.** Python 3.10 or newer must be available as `python3`. The backend uses only the Python standard library.
 

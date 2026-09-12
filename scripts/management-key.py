@@ -28,14 +28,14 @@ def main() -> int:
         request = json.loads(input_stream.readline(65537))
         batch = "keys" in request
         keys = request.pop("keys") if batch else {"key": request.pop("key")}
-        if not isinstance(keys, dict) or not 1 <= len(keys) <= 2:
+        if not isinstance(keys, dict) or not 1 <= len(keys) <= 4:
             raise ValueError
         allowed = {"cliproxyKeyFile", "costKeeperPasswordFile"} if batch else {"key"}
         previous_paths = request.get("previousPaths", {}) if batch else {"key": request.get("previousPath", "")}
         if not isinstance(previous_paths, dict):
             raise ValueError
         for name, key in keys.items():
-            if name not in allowed or not isinstance(key, str):
+            if (name not in allowed and not (batch and re.fullmatch(r"t3Token_[a-zA-Z0-9-]{1,64}", name))) or not isinstance(key, str):
                 raise ValueError
             key = key.strip()
             if not key or len(key) > 8191 or any(ord(c) < 32 or ord(c) > 126 for c in key):

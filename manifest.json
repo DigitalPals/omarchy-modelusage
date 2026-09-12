@@ -6,7 +6,9 @@
   "author": "DigitalPals",
   "license": "MIT",
   "description": "Claude Code, OpenAI Codex, and Kimi Code limits, token activity, and estimated API costs in a native Omarchy panel.",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "activation": "on-demand",
   "entryPoints": {
     "barWidget": "Panel.qml"
@@ -19,27 +21,41 @@
     "allowMultiple": false,
     "defaults": {
       "refreshIntervalSec": 900,
-      "enabledProviders": ["claude", "codex", "kimi"],
+      "enabledProviders": [
+        "claude",
+        "codex",
+        "kimi"
+      ],
       "usageSource": "direct",
       "cliproxyUrl": "http://127.0.0.1:8317",
       "cliproxyKeyFile": "",
       "hideAccountEmails": true,
       "barDisplayMode": "Icon",
-      "barProviders": ["claude", "codex", "kimi"],
+      "barProviders": [
+        "claude",
+        "codex",
+        "kimi"
+      ],
       "warningThreshold": 25,
       "criticalThreshold": 10,
       "costPriceOverrides": "{}",
-      "costSource": "direct",
       "costKeeperUrl": "",
       "costKeeperPasswordFile": "",
-      "costLocalBackfill": false
+      "costLocalProviders": [
+        "claude",
+        "codex"
+      ],
+      "costT3Servers": "[]"
     },
     "schema": [
       {
         "key": "usageSource",
         "type": "enum",
         "label": "Quota source",
-        "options": ["direct", "cliproxy"],
+        "options": [
+          "direct",
+          "cliproxy"
+        ],
         "defaultValue": "direct",
         "description": "Read local CLI sign-ins directly or query accounts managed by CLIProxyAPI. Costs has its own source setting."
       },
@@ -82,18 +98,34 @@
         "noSelectionText": "No providers",
         "placeholderText": "Search providers...",
         "emptyText": "No providers found",
-        "defaultValue": ["claude", "codex", "kimi"],
+        "defaultValue": [
+          "claude",
+          "codex",
+          "kimi"
+        ],
         "options": [
-          { "value": "claude", "label": "Claude Code" },
-          { "value": "codex", "label": "OpenAI Codex" },
-          { "value": "kimi", "label": "Kimi Code" }
+          {
+            "value": "claude",
+            "label": "Claude Code"
+          },
+          {
+            "value": "codex",
+            "label": "OpenAI Codex"
+          },
+          {
+            "value": "kimi",
+            "label": "Kimi Code"
+          }
         ]
       },
       {
         "key": "barDisplayMode",
         "type": "enum",
         "label": "Bar display",
-        "options": ["Icon", "Percentages"],
+        "options": [
+          "Icon",
+          "Percentages"
+        ],
         "defaultValue": "Icon",
         "description": "Percentages shows compact remaining quota on horizontal bars and falls back to the icon on vertical bars."
       },
@@ -102,11 +134,24 @@
         "type": "multiselect",
         "label": "Menu bar providers",
         "description": "Enabled providers allowed to show percentage chips in the menu bar. Hidden providers remain in the popup.",
-        "defaultValue": ["claude", "codex", "kimi"],
+        "defaultValue": [
+          "claude",
+          "codex",
+          "kimi"
+        ],
         "options": [
-          { "value": "claude", "label": "Claude Code" },
-          { "value": "codex", "label": "OpenAI Codex" },
-          { "value": "kimi", "label": "Kimi Code" }
+          {
+            "value": "claude",
+            "label": "Claude Code"
+          },
+          {
+            "value": "codex",
+            "label": "OpenAI Codex"
+          },
+          {
+            "value": "kimi",
+            "label": "Kimi Code"
+          }
         ]
       },
       {
@@ -132,25 +177,14 @@
         "type": "string",
         "label": "Custom model prices",
         "defaultValue": "{}",
-        "description": "Managed by Custom model prices in widget settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
-      },
-      {
-        "key": "costSource",
-        "type": "enum",
-        "label": "Costs source",
-        "options": [
-          "direct",
-          "keeper"
-        ],
-        "defaultValue": "direct",
-        "description": "Local transcripts or archived CLIProxyAPI traffic from CPA Usage Keeper, with optional recovery of earlier local proxy sessions."
+        "description": "Managed by Custom model prices in Costs settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
       },
       {
         "key": "costKeeperUrl",
         "type": "string",
         "label": "CPA Usage Keeper URL",
         "defaultValue": "",
-        "description": "Keeper server URL, including its deployment path if any. HTTPS certificates are verified."
+        "description": "Optional Keeper URL for last-used quota account activity. Not used for Costs."
       },
       {
         "key": "costKeeperPasswordFile",
@@ -160,11 +194,30 @@
         "description": "Managed privately when saving the Keeper login password in settings. Advanced users can supply a private password file."
       },
       {
-        "key": "costLocalBackfill",
-        "type": "boolean",
-        "label": "Recover earlier local usage",
-        "defaultValue": false,
-        "description": "Add this device's Codex proxy sessions before available archive history, with overlap removed. Historical logs may include another proxy server."
+        "key": "costLocalProviders",
+        "type": "multiselect",
+        "label": "Local cost sources",
+        "defaultValue": [
+          "claude",
+          "codex"
+        ],
+        "options": [
+          {
+            "value": "claude",
+            "label": "Claude Code"
+          },
+          {
+            "value": "codex",
+            "label": "Codex"
+          }
+        ]
+      },
+      {
+        "key": "costT3Servers",
+        "type": "string",
+        "label": "T3 Code cost servers",
+        "defaultValue": "[]",
+        "description": "Managed by Costs settings. Remote servers with private token file references."
       }
     ]
   }

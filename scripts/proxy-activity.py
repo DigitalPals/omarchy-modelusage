@@ -15,7 +15,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import keeper_costs as keeper
+import keeper_client as keeper
 
 SPEC = importlib.util.spec_from_file_location("activity_usage", Path(__file__).with_name("usage-fetch.py"))
 assert SPEC and SPEC.loader

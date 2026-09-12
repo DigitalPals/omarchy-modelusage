@@ -28,7 +28,9 @@ Ui.Panel {
   property string historyMode: "h24"
   property string viewMode: "limits"
   property string settingsReturnView: "limits"
-  readonly property bool configuring: viewMode === "settings"
+  readonly property bool configuring: viewMode === "settings" || viewMode === "cost-settings"
+  readonly property var activeSettingsForm: viewMode === "cost-settings" ? costConfigForm : configForm
+  property alias costSettingsForm: costConfigForm
   property alias settingsForm: configForm
   property alias resetAction: resetBackend
   property double nowMs: Date.now()
@@ -144,8 +146,16 @@ Ui.Panel {
     Qt.callLater(function() { configForm.focusFirst() })
   }
 
+  function showCostSettings() {
+    settingsReturnView = "costs"
+    costConfigForm.begin(settings)
+    viewMode = "cost-settings"
+    open()
+    Qt.callLater(function() { costConfigForm.focusFirst() })
+  }
+
   function leaveSettings() {
-    configForm.discardKey()
+    activeSettingsForm.discardKey()
     viewMode = settingsReturnView
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -159,13 +169,13 @@ Ui.Panel {
     if (changed) {
       if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function"
           || !bar.shell.updateEntryInline(moduleName, entry)) {
-        configForm.errorText = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
-        configForm.finishSave(false)
+        activeSettingsForm.errorText = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
+        activeSettingsForm.finishSave(false)
         return false
       }
       settings = entry
     }
-    configForm.finishSave(true)
+    activeSettingsForm.finishSave(true)
     leaveSettings()
     return true
   }
@@ -338,9 +348,7 @@ Ui.Panel {
       if (costBackend.fetchError !== "") return costBackend.fetchError
       if (costBackend.lastSuccessAt > 0)
         return "Updated " + Qt.formatTime(new Date(costBackend.lastSuccessAt), "HH:mm:ss")
-      if (costBackend.costSource === "keeper")
-        return costBackend.loading ? "Loading proxy history…" : "Open Costs to load proxy history"
-      return costBackend.loading ? "Scanning transcripts…" : "Open Costs to scan local activity"
+      return costBackend.loading ? "Loading session history…" : "Open Costs to load session history"
     }
     if (backend.fetchError !== "") return backend.fetchError
     if (backend.lastSuccessAt > 0) return "Updated " + Qt.formatTime(new Date(backend.lastSuccessAt), "HH:mm:ss")
@@ -372,13 +380,14 @@ Ui.Panel {
     if (panelFlick) panelFlick.contentY = 0
     Qt.callLater(function() {
       if (resetBackend.active) resetForm.focusFirst()
-      else if (root.configuring) configForm.focusFirst()
+      else if (root.configuring) activeSettingsForm.focusFirst()
       else keyCatcher.forceActiveFocus()
     })
   } else if (configuring) viewMode = settingsReturnView
 
   onViewModeChanged: {
     if (viewMode !== "settings") configForm.discardKey()
+    if (viewMode !== "cost-settings") costConfigForm.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
   }
@@ -432,6 +441,7 @@ Ui.Panel {
     function next(): string { root.nextProvider(); return "ok" }
     function limits(): string { root.showLimits(); return "ok" }
     function costs(): string { root.showCosts(); return "ok" }
+    function configureCosts(): string { root.showCostSettings(); return "ok" }
     function configure(): string { root.showSettings(); return "ok" }
   }
 
@@ -556,7 +566,7 @@ Ui.Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: resetBackend.active ? resetForm : root.configuring ? configForm : keyCatcher
+    focusTarget: resetBackend.active ? resetForm : root.configuring ? root.activeSettingsForm : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight)
 
@@ -683,7 +693,7 @@ Ui.Panel {
             visible: root.viewMode === "costs"
             width: parent.width
             title: "Estimated Costs"
-            meta: costBackend.costSource === "keeper" ? "API-equivalent value · proxy history" : "API-equivalent value · local transcripts"
+            meta: "API-equivalent value · session history"
             detail: costBackend.loading ? "LOADING" : ""
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -693,11 +703,12 @@ Ui.Panel {
                 spacing: Style.spacing.xs
                 Ui.PanelActionButton {
                   iconText: "󰒓"
-                  tooltipText: "Model Usage settings"
+                  objectName: "costSettingsButton"
+                  tooltipText: "Cost sources and prices"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   bordered: true
-                  onClicked: root.showSettings()
+                  onClicked: root.showCostSettings()
                 }
                 Ui.PanelActionButton {
                   iconText: "󰑐"
@@ -739,7 +750,7 @@ Ui.Panel {
 
           UsageSettings {
             id: configForm
-            visible: root.configuring
+            visible: root.viewMode === "settings"
             width: parent.width
             foreground: root.foreground
             urgent: root.urgent
@@ -747,6 +758,26 @@ Ui.Panel {
             fontFamily: root.fontFamily
             accountDetails: root.accountTooltip(root.provider)
             proxyProviders: root.proxyMode ? backend.providers : []
+            onSaveRequested: function(values) { root.saveSettings(values) }
+            onCancelRequested: root.leaveSettings()
+            onRevealRequested: function(item) {
+              var point = item.mapToItem(contentColumn, 0, 0)
+              var bottom = point.y + item.height + Style.spacing.md
+              if (point.y < panelFlick.contentY) panelFlick.contentY = point.y
+              else if (bottom > panelFlick.contentY + panelFlick.height)
+                panelFlick.contentY = Math.min(bottom - panelFlick.height,
+                  Math.max(0, panelFlick.contentHeight - panelFlick.height))
+            }
+          }
+          CostSettings {
+            id: costConfigForm
+            sources: costBackend.payload ? UsageLogic.listOrEmpty(costBackend.payload.sources) : []
+            visible: root.viewMode === "cost-settings"
+            width: parent.width
+            foreground: root.foreground
+            urgent: root.urgent
+            surface: root.surface
+            fontFamily: root.fontFamily
             onSaveRequested: function(values) { root.saveSettings(values) }
             onCancelRequested: root.leaveSettings()
             onRevealRequested: function(item) {
@@ -956,13 +987,11 @@ Ui.Panel {
             loading: costBackend.loading
             errorText: costBackend.fetchError
             periodDays: costBackend.periodDays
-            clientFilter: costBackend.clientFilter
             foreground: root.foreground
             urgent: root.urgent
             surface: root.surface
             fontFamily: root.fontFamily
             onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
-            onClientRequested: function(client) { costBackend.selectClient(client) }
           }
 
           Ui.PanelSeparator { visible: !root.configuring; foreground: root.foreground }

@@ -14,26 +14,20 @@ parser.add_argument("--timeout")
 parser.add_argument("--state-dir")
 parser.add_argument("--price-overrides", default="{}")
 parser.add_argument("--refresh-prices", action="store_true")
-parser.add_argument("--source", default="direct")
-parser.add_argument("--keeper-url", default="")
-parser.add_argument("--keeper-password-file", default="")
-parser.add_argument("--client", default="all")
-parser.add_argument("--local-backfill", action="store_true")
+parser.add_argument("--t3-servers", default="[]")
 args = parser.parse_args()
 
-if args.providers == "kimi":
+if args.providers == "" and args.t3_servers == "[]":
     print('["malformed cost response"]')
     raise SystemExit(0)
 
 payload = json.loads(Path(os.environ["MODEL_USAGE_COST_FIXTURE"]).read_text())
-payload["source"] = args.source
+payload["source"] = "transcripts"
 payload["testRequest"] = {"force": args.refresh_prices, "prices": args.price_overrides,
-                          "source": args.source, "url": args.keeper_url,
-                          "passwordFile": args.keeper_password_file,
-                          "client": args.client, "backfill": args.local_backfill}
-if args.source == "keeper":
+                          "servers": args.t3_servers, "providers": args.providers}
+if args.t3_servers != "[]":
     time.sleep(0.15)
-if args.providers == "codex" and args.source != "keeper":
+if (args.providers == "codex" and args.t3_servers == "[]") or args.price_overrides == "synthetic-failure":
     payload["backendError"] = "Synthetic estimated-cost failure"
     payload["providers"] = []
     payload["models"] = []

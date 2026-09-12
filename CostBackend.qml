@@ -31,21 +31,15 @@ Item {
   property bool requested: false
 
   readonly property var enabledProviderIds: normalizedProviderIds(setting(
-    "enabledProviders", ["claude", "codex", "kimi"]))
+    "costLocalProviders", ["claude", "codex"]))
   readonly property string scriptPath: localPath(Qt.resolvedUrl("scripts/cost-fetch.py"))
   readonly property int staleAfterMs: Math.max(60, Math.min(3600,
     Math.round(Number(setting("refreshIntervalSec", 900)) || 900))) * 1000
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
   readonly property string priceOverrides: String(setting("costPriceOverrides", "{}"))
-  readonly property string costSource: String(setting("costSource", "direct")) === "keeper" ? "keeper" : "direct"
-  readonly property string keeperUrl: String(setting("costKeeperUrl", ""))
-  readonly property string keeperPasswordFile: String(setting("costKeeperPasswordFile", ""))
-  readonly property bool localBackfill: setting("costLocalBackfill", false) === true
-  property string clientFilter: "all"
-  readonly property string connectionId: JSON.stringify([costSource,
-    costSource === "keeper" ? keeperUrl : "", costSource === "keeper" ? keeperPasswordFile : "",
-    costSource === "keeper" ? clientFilter : "all", costSource === "keeper" && localBackfill])
+  readonly property string t3Servers: String(setting("costT3Servers", "[]"))
+  readonly property string connectionId: JSON.stringify([enabledProviderIds, t3Servers])
 
   signal refreshed()
 
@@ -55,7 +49,7 @@ Item {
   }
 
   function normalizedProviderIds(value) {
-    var allowed = ["claude", "codex", "kimi"]
+    var allowed = ["claude", "codex"]
     var requestedProviders = UsageLogic.isListLike(value) ? value : allowed
     var result = []
     for (var i = 0; i < allowed.length; i++)
@@ -94,13 +88,6 @@ Item {
     requestRefresh(true)
   }
 
-  function selectClient(value) {
-    var allowed = ["all", "t3", "codex-cli", "codex-exec", "digital-brain", "other"]
-    if (allowed.indexOf(value) < 0 || clientFilter === value) return
-    requested = true
-    clientFilter = value
-  }
-
   function requestRefresh(forcePrices) {
     pendingPriceRefresh = pendingPriceRefresh || forcePrices === true
     if (fetchProcess.running || launchPending || pendingRefresh) {
@@ -121,15 +108,9 @@ Item {
       "--providers", enabledProviderIds.join(","),
       "--days", String(periodDays),
       "--timeout", "10",
-      "--source", costSource,
+      "--t3-servers", t3Servers,
       "--price-overrides", priceOverrides
     ]
-    if (costSource === "keeper") {
-      command.push("--keeper-url", keeperUrl)
-      if (keeperPasswordFile !== "") command.push("--keeper-password-file", keeperPasswordFile)
-      command.push("--client", clientFilter)
-      if (localBackfill) command.push("--local-backfill")
-    }
     if (pendingPriceRefresh) command.push("--refresh-prices")
     pendingPriceRefresh = false
     fetchProcess.command = command
@@ -141,7 +122,7 @@ Item {
     launchPending = false
     loading = false
     if (fetchProcess.connectionId !== connectionId) {
-      // A response from an old archive must never repopulate the new source.
+      // A response from an old source must never repopulate the new source.
       pendingRefresh = requested
     } else if (fetchProcess.outputTooLarge) {
       fetchError = "Estimated-cost backend returned too much data"
@@ -176,10 +157,9 @@ Item {
     })
   }
 
-  onEnabledProviderIdsChanged: if (requested) requestRefresh()
   onPriceOverridesChanged: if (requested) requestRefresh()
   onConnectionIdChanged: {
-    payload = ({ schemaVersion: 1, generatedAt: "", source: costSource,
+    payload = ({ schemaVersion: 1, generatedAt: "", source: "transcripts",
       pricing: {}, coverage: [], totals: {}, providers: [], models: [], periods: [] })
     lastSuccessAt = 0
     fetchError = ""

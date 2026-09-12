@@ -103,6 +103,19 @@ class TranscriptParserTests(unittest.TestCase):
         self.assertEqual(records[0].total_tokens, 1040)
         self.assertIsNone(records[0].reported_cost_usd)
 
+    def test_large_codex_tool_output_does_not_discard_session_usage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rollout.jsonl"
+            lines = fixture_text("codex-rollout.jsonl").splitlines()
+            large = json.dumps({"type": "response_item", "payload": {
+                "type": "custom_tool_call_output", "output": "x" * (3 * 1024 * 1024)}})
+            path.write_text("\n".join(lines[:3] + [large] + lines[3:]) + "\n")
+            expected = costs.parse_codex_file(FIXTURES / "codex-rollout.jsonl", 0)
+            cursor = costs.TranscriptCursor(path.stat(), [costs.MAX_TRANSCRIPT_SCAN_BYTES])
+            self.assertEqual(costs.parse_codex_file(path, 0, cursor), expected)
+            self.assertEqual(costs.parse_codex_file(path, 0), expected)
+            self.assertEqual(cursor.position["offset"], path.stat().st_size)
+
     def test_oversized_transcript_line_is_rejected_atomically(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "oversized.jsonl"
@@ -416,9 +429,9 @@ class CacheAndContractTests(unittest.TestCase):
                 )
 
             self.assertEqual(payload["schemaVersion"], 1)
-            self.assertEqual(payload["totals"]["records"], 5)
-            self.assertEqual([row["status"] for row in payload["coverage"]], ["ok", "ok", "partial"])
-            self.assertEqual([row["status"] for row in payload["providers"]], ["ok", "ok", "partial"])
+            self.assertEqual(payload["totals"]["records"], 4)
+            self.assertEqual([row["status"] for row in payload["coverage"]], ["ok", "ok"])
+            self.assertEqual([row["status"] for row in payload["providers"]], ["ok", "ok"])
             cache_path = state_dir / "cost-scan-cache.json"
             self.assertTrue(cache_path.is_file())
             self.assertEqual(state_dir.stat().st_mode & 0o777, 0o700)

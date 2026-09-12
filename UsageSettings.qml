@@ -18,7 +18,6 @@ Column {
   property var draft: ({})
   property alias managementKey: managementKeyField.text
   property alias keeperPassword: keeperPasswordField.text
-  property alias priceEditor: priceEditor
   readonly property bool saving: keyWriter.running
   property var pendingValues: null
   property var pendingKeys: ({})
@@ -71,10 +70,8 @@ Column {
       usageSource: value("usageSource", "direct") === "cliproxy" ? "cliproxy" : "direct",
       cliproxyUrl: String(value("cliproxyUrl", "http://127.0.0.1:8317")),
       cliproxyKeyFile: String(value("cliproxyKeyFile", "")),
-      costSource: value("costSource", "direct") === "keeper" ? "keeper" : "direct",
       costKeeperUrl: String(value("costKeeperUrl", "")),
       costKeeperPasswordFile: String(value("costKeeperPasswordFile", "")),
-      costLocalBackfill: value("costLocalBackfill", false) === true,
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       hideAccountEmails: value("hideAccountEmails", true) !== false,
@@ -83,7 +80,6 @@ Column {
       warningThreshold: String(value("warningThreshold", 25)),
       criticalThreshold: String(value("criticalThreshold", 10))
     }
-    priceEditor.begin(String(value("costPriceOverrides", "{}")))
     errorText = ""
   }
 
@@ -109,8 +105,6 @@ Column {
   function submit() {
     if (saving) return false
     var next = Object.assign({}, draft)
-    try { next.costPriceOverrides = priceEditor.serialize() }
-    catch (error) { errorText = String(error.message || error); return false }
     var ranges = [
       ["refreshIntervalSec", "Refresh interval", 60, 3600],
       ["warningThreshold", "Warning threshold", 1, 100],
@@ -144,7 +138,7 @@ Column {
     }
     next.costKeeperUrl = String(next.costKeeperUrl).trim()
     var password = keeperPassword.trim()
-    if ((next.costSource === "keeper" || (proxyMode && (next.costKeeperUrl !== "" || password !== "")))
+    if ((proxyMode && (next.costKeeperUrl !== "" || password !== ""))
         && !/^https?:\/\/[^\s/?#@]+(?::[0-9]+)?(?:\/[^\s?#]*)?$/.test(next.costKeeperUrl)) {
       errorText = "Enter the CPA Usage Keeper HTTP or HTTPS URL."
       return false
@@ -155,7 +149,7 @@ Column {
     }
     var keys = ({})
     if (proxyMode && key !== "") keys.cliproxyKeyFile = key
-    if ((next.costSource === "keeper" || proxyMode) && password !== "") keys.costKeeperPasswordFile = password
+    if (proxyMode && password !== "") keys.costKeeperPasswordFile = password
     errorText = ""
     if (Object.keys(keys).length > 0) {
       pendingValues = next
@@ -284,21 +278,9 @@ Column {
   Column {
     width: parent.width
     spacing: Style.spacing.md
-    Label { text: "Costs source" }
-    Ui.ButtonGroup {
-      objectName: "costSourceControl"
-      options: [{ value: "direct", label: "Local transcripts" }, { value: "keeper", label: "CLIProxyAPI history" }]
-      value: String(root.draft.costSource || "direct")
-      foreground: root.foreground
-      background: root.surface
-      fontFamily: root.fontFamily
-      fontSize: Style.font.bodySmall
-      onChanged: function(value) { root.setValue("costSource", value) }
-      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-    }
-    Hint { text: "Proxy history includes all apps and devices using that proxy. Filter by app in Costs." }
+    visible: root.proxyMode
+    Label { text: "Last-used account activity (optional)" }
     Column {
-      visible: root.draft.costSource === "keeper" || root.draft.usageSource === "cliproxy"
       width: parent.width
       spacing: Style.spacing.md
       Label { text: "CPA Usage Keeper URL" }
@@ -324,28 +306,11 @@ Column {
         onTextEdited: root.errorText = ""
         onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
       }
-      Hint { text: "Keeper records proxy traffic continuously. History begins when collection starts; API estimates use your model prices below." }
       Hint {
         visible: root.draft.usageSource === "cliproxy"
-        text: "Use the Keeper connected to this proxy to show the last-used account in the percentage menubar. Account activity updates every 15 seconds, even with local transcript costs."
+        text: "Use the Keeper connected to this proxy to show the last-used account in the percentage menubar. Account activity updates every 15 seconds, independently of Costs."
       }
-      Row {
-        width: parent.width
-        Label {
-          width: parent.width - backfillSwitch.width
-          anchors.verticalCenter: parent.verticalCenter
-          text: "Recover earlier local usage"
-        }
-        ProviderToggle {
-          id: backfillSwitch
-          objectName: "costLocalBackfillToggle"
-          width: Style.space(82)
-          checked: root.draft.costLocalBackfill === true
-          Accessible.name: "Recover earlier local usage"
-          onToggled: root.setValue("costLocalBackfill", !checked)
-        }
-      }
-      Hint { text: "Adds this device’s earlier Codex proxy sessions, with overlap removed. Old logs do not identify the proxy server and may include another proxy. Other devices and gaps remain incomplete." }
+
     }
   }
 
@@ -474,15 +439,6 @@ Column {
     }
   }
 
-  CostPriceEditor {
-    id: priceEditor
-    width: parent.width
-    foreground: root.foreground
-    urgent: root.urgent
-    fontFamily: root.fontFamily
-    onRevealRequested: function(item) { root.revealRequested(item) }
-    onEdited: root.errorText = ""
-  }
 
   Hint {
     visible: root.accountDetails !== ""

@@ -9,7 +9,8 @@ trap 'rm -rf -- "$test_root"' EXIT
 python3 -m py_compile "$repo_root/scripts/model_usage_common.py"
 python3 -m py_compile "$repo_root/scripts/usage-fetch.py"
 python3 -m py_compile "$repo_root/scripts/cost-fetch.py"
-python3 -m py_compile "$repo_root/scripts/keeper_costs.py"
+python3 -m py_compile "$repo_root/scripts/t3_costs.py"
+python3 -m py_compile "$repo_root/scripts/keeper_client.py"
 python3 -m py_compile "$repo_root/scripts/proxy-activity.py"
 python3 -m py_compile "$repo_root/scripts/management-key.py"
 python3 -m py_compile "$repo_root/scripts/reset-credit.py"
@@ -36,7 +37,7 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
   if ! "$qml_lint" -W 0 --missing-property disable --signal-handler-parameters disable \
     -I "$lint_root" \
     "$repo_root/Panel.qml" "$repo_root/UsageBackend.qml" "$repo_root/UsageActivityBackend.qml" \
-    "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" "$repo_root/CostPriceEditor.qml" \
+    "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" "$repo_root/CostPriceEditor.qml" "$repo_root/CostSettings.qml" \
     "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
     "$repo_root/UsageSettings.qml" "$repo_root/ResetBackend.qml" \
     "$repo_root/ResetConfirmation.qml" >"$lint_log" 2>&1; then
