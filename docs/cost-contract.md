@@ -166,3 +166,10 @@ Resource use is bounded at every untrusted input boundary: 16 MiB per transcript
 `CostBackend.qml` streams backend stdout into a 4 MiB capped buffer and drains stderr without retaining it. Crossing the output ceiling terminates the process and preserves the last known-good cost document.
 
 The state directory uses mode `0700` and cache files use `0600`. Corrupt or foreign cache versions cause a cold rebuild, never a broken view. Rate refresh failures fall back to the last cached LiteLLM table; with no usable table, token totals remain available and model-priced costs stay `null`.
+
+State writes use no-follow, component-by-component directory traversal with
+owner/mode checks and dirfd-relative exclusive temporary creation, replacement,
+and cleanup. Directory symlinks and parent traversal are rejected; no pathname
+is chmodded. See [the private-state boundary](../SECURITY.md#data-and-trust-boundary)
+for the permitted ancestor modes and descriptor-based tightening of owned state
+directories.

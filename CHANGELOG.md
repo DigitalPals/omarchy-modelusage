@@ -6,6 +6,21 @@ All notable changes to this project will be documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-13
+
+### Security
+
+- Traverse every state/config directory component with no-follow descriptors,
+  validate ownership and permissions, and create missing directories relative to
+  the validated parent. Reject symlinks, foreign owners, parent traversal, and
+  directories writable by other users or groups.
+- Create, flush, replace, and clean up JSON state through a pinned directory
+  descriptor. Existing owned read-only-to-others state directories are tightened
+  through `fchmod`, never a pathname. Link targets are never opened or chmodded.
+- Apply the same directory traversal to management-key staging. Add regression
+  coverage for ancestor/leaf symlinks, directory-swap races, hostile permissions
+  and ownership, temporary-file collisions, failed writes, and concurrent writers.
+
 ### Fixed
 
 - Use Python 3.10-compatible context cleanup in the T3 cost tests so the portable
@@ -109,6 +124,7 @@ All notable changes to this project will be documented here. The format follows
   for horizontal and vertical bars.
 - Fixture, contract, QML lint, and live Quickshell runtime tests.
 
-[Unreleased]: https://github.com/DigitalPals/omarchy-modelusage/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/DigitalPals/omarchy-modelusage/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/DigitalPals/omarchy-modelusage/releases/tag/v1.1.1
 [1.1.0]: https://github.com/DigitalPals/omarchy-modelusage/releases/tag/v1.1.0
 [1.0.0]: https://github.com/DigitalPals/omarchy-modelusage/commit/1ac7f411a75fd84bf63d8005fdefbb8867d642f4

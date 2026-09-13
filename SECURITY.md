@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 1.0.x | Yes |
-| Earlier versions | No |
+| 1.1.1 and later on the 1.1.x line | Yes |
+| 1.1.0, 1.0.x, and earlier | No; update for hardened private-state writes |
 
 ## Reporting a vulnerability
 
@@ -35,7 +35,28 @@ Private state is stored below
 `${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/`. The directory uses mode
 `0700`; files use mode `0600`. Transcript paths, session identifiers, message
 identifiers, and de-duplication keys are hashed before they enter durable state.
-Prompts, responses, tool calls, tool results, and credentials are not cached. Incremental scan positions retain bounded numeric file identity/offset metadata, a SHA-256 tail guard, and sanitized parser state; they never retain the raw guard bytes. Custom prices are non-secret, validated settings bounded to 64 KiB and 128 models.
+Usage caches contain no prompts, responses, tool calls, tool results, or credentials.
+T3 access tokens are stored separately in private authentication state files.
+Incremental scan positions retain bounded numeric file identity/offset metadata, a SHA-256 tail guard, and sanitized parser state; they never retain the raw guard bytes. Custom prices are non-secret, validated settings bounded to 64 KiB and 128 models.
+
+Private-state writes and management-key staging traverse every directory component
+from the filesystem root using `O_DIRECTORY | O_NOFOLLOW`. Ancestors must be owned
+by root or the current user and not writable by other users/groups; root-owned
+sticky ancestors such as `/tmp` are allowed. The final directory must belong to
+the current user and be `0700`. For JSON state only, an owned directory with full
+owner access and no group/other write access can be tightened to `0700` through
+its validated descriptor. Ancestors, symlink targets, foreign directories, and
+writable-by-others directories are never chmodded. Key staging requires an already
+private leaf or creates a new one. Symlinked XDG directory paths and `..` traversal
+are rejected rather than resolved.
+
+JSON temporary files use unpredictable names, exclusive no-follow creation, and
+mode `0600`. Creation, replacement, and failure cleanup are relative to the same
+open directory descriptor; file data and the containing directory are synced.
+Replacing an existing symlink or hard-link entry does not open or modify its
+referent. A renamed directory stays pinned, so replacing a pathname with a symlink
+cannot redirect the write, permission change, or cleanup. This does not isolate
+the plugin from another process already running as the same user or as root.
 
 In CLIProxyAPI mode, the plugin reads a user-owned management key file with
 private permissions (default: `$XDG_CONFIG_HOME/omarchy/model-usage/cliproxy.key`,

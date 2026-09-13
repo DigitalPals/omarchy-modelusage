@@ -129,6 +129,41 @@ class ManagementKeyTests(unittest.TestCase):
                 for path in paths.values():
                     self.assertEqual(Path(path).exists(), decision == "commit")
 
+    def test_symlink_in_each_key_directory_ancestor_is_rejected(self):
+        for depth in range(3):
+            with self.subTest(depth=depth), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                config = root / "config"
+                outside = root / "outside"
+                outside.mkdir(mode=0o700)
+                parts = ("config", "omarchy", "model-usage")
+                parent = root
+                for part in parts[:depth]:
+                    parent /= part
+                    parent.mkdir(mode=0o700)
+                (parent / parts[depth]).symlink_to(outside, target_is_directory=True)
+                process = self.start(config)
+                stdout, stderr = process.communicate(timeout=3)
+                self.assertEqual((process.returncode, stdout, stderr), (1, "", ""))
+                self.assertEqual(list(outside.iterdir()), [])
+
+    def test_abort_after_directory_swap_removes_only_the_original_staged_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            process = self.start(root / "config")
+            path = Path(json.loads(process.stdout.readline())["path"])
+            held = root / "held"
+            path.parent.rename(held)
+            outside = root / "outside"
+            outside.mkdir(mode=0o700)
+            sentinel = outside / path.name
+            sentinel.write_text("untouched")
+            path.parent.symlink_to(outside, target_is_directory=True)
+            process.communicate("abort\n", timeout=3)
+            self.assertEqual(process.returncode, 1)
+            self.assertEqual(list(held.iterdir()), [])
+            self.assertEqual(sentinel.read_text(), "untouched")
+
     def test_four_t3_credentials_commit_or_roll_back_together(self):
         for decision in ("commit", "abort"):
             with self.subTest(decision=decision), tempfile.TemporaryDirectory() as config:

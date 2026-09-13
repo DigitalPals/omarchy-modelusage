@@ -13,6 +13,8 @@ import stat
 import sys
 import uuid
 
+from model_usage_common import open_private_directory
+
 
 def interrupted(_signum, _frame):
     raise InterruptedError
@@ -43,11 +45,7 @@ def main() -> int:
             keys[name] = key
         config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
         directory = config_home / "omarchy" / "model-usage" / "management-keys"
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        info = os.fstat(directory_fd)
-        if info.st_uid != os.getuid() or info.st_mode & 0o077:
-            raise ValueError
+        directory_fd = open_private_directory(directory, create=True)
         paths = {}
         for name, key in keys.items():
             filename = "key-" + uuid.uuid4().hex + ".key"

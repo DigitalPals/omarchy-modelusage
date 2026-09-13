@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "digitalpals.model-usage",
   "name": "Model Usage",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "DigitalPals",
   "license": "MIT",
   "description": "Track Claude Code, OpenAI Codex, and Kimi Code subscription limits from your Omarchy menu bar. Connect local CLIs or CLIProxyAPI to monitor multiple accounts, remaining quotas, reset times, and credits. Explore 24-hour, 7-day, and 30-day token history and estimated API costs from local Codex/Claude transcripts and remote T3 Code servers, with cache-aware pricing, custom model rates, and provider/model breakdowns. Includes private account labels, quota history, and keyboard-friendly settings.",
