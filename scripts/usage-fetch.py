@@ -683,6 +683,77 @@ def fetch_codex(timeout: float) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- Kimi
 
+# Public OAuth client id used by the official Kimi Code CLI.
+KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
+KIMI_USER_AGENT = "kimi-code-cli/0.39.1"
+KIMI_DEFAULT_OAUTH_HOST = "https://auth.kimi.com"
+
+
+def kimi_credentials_path(kimi_home: Path) -> Path | None:
+    credentials_dir = kimi_home / "credentials"
+    legacy = credentials_dir / "kimi-code.json"
+    if legacy.is_file():
+        return legacy
+    # Newer Kimi Code CLI revisions store one credentials file per OAuth
+    # environment, named after the config.toml key "oauth/kimi-code-env-<hash>".
+    if not credentials_dir.is_dir():
+        return None
+    candidates = [p for p in credentials_dir.glob("kimi-code-env-*.json") if p.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def kimi_oauth_host(kimi_home: Path) -> str:
+    try:
+        text = (kimi_home / "config.toml").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return KIMI_DEFAULT_OAUTH_HOST
+    match = re.search(r'oauth_host\s*=\s*"([^"]+)"', text[:65536])
+    return match.group(1) if match else KIMI_DEFAULT_OAUTH_HOST
+
+
+def kimi_refresh(path: Path, credentials: dict[str, Any], host: str, timeout: float) -> dict[str, Any] | None:
+    # Access tokens live only `expires_in` seconds (currently ~15 minutes), so
+    # an idle CLI leaves an expired token behind. Mirror the CLI's own
+    # refresh_token grant and persist the rotated tokens back to the same file.
+    refresh_token = credentials.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return None
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": KIMI_CLIENT_ID,
+    }).encode()
+    request = urllib.request.Request(
+        host.rstrip("/") + "/api/oauth/token",
+        data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": KIMI_USER_AGENT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read(MAX_HTTP_RESPONSE_BYTES + 1))
+        token = payload.get("access_token")
+        if not isinstance(token, str) or not token:
+            return None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    updated = dict(credentials)
+    updated["access_token"] = token
+    if isinstance(payload.get("refresh_token"), str) and payload["refresh_token"]:
+        updated["refresh_token"] = payload["refresh_token"]
+    expires_in = number(payload.get("expires_in")) or 900
+    updated["expires_at"] = int(time.time()) + int(expires_in)
+    try:
+        atomic_write_json(path, updated)
+    except OSError:
+        pass  # The fresh token remains usable for this run even if persisting fails.
+    return updated
+
 
 KIMI_TIME_UNITS = {
     "TIME_UNIT_SECOND": 1,
@@ -809,8 +880,8 @@ def parse_kimi_profile(payload: Any) -> tuple[str, str]:
 def fetch_kimi(timeout: float) -> dict[str, Any]:
     provider_id = "kimi"
     kimi_home = Path(os.environ.get("KIMI_CODE_HOME") or (Path.home() / ".kimi-code")).expanduser()
-    credentials_path = kimi_home / "credentials" / "kimi-code.json"
-    if not credentials_path.is_file():
+    credentials_path = kimi_credentials_path(kimi_home)
+    if credentials_path is None:
         return error_provider(provider_id, "no_credentials", "No Kimi Code sign-in was found.")
     try:
         credentials = read_json(credentials_path)
@@ -822,10 +893,35 @@ def fetch_kimi(timeout: float) -> dict[str, Any]:
 
     expires_at = epoch_seconds(credentials.get("expires_at"))
     if expires_at is not None and expires_at <= int(time.time()):
-        return error_provider(provider_id, "expired", "The Kimi Code sign-in has expired.")
+        refreshed = kimi_refresh(credentials_path, credentials, kimi_oauth_host(kimi_home), timeout)
+        if refreshed is not None:
+            credentials = refreshed
+            token = credentials["access_token"]
+        else:
+            # The CLI may have refreshed the file concurrently; re-read once.
+            try:
+                latest = read_json(credentials_path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                latest = None
+            if isinstance(latest, dict):
+                latest_expiry = epoch_seconds(latest.get("expires_at"))
+                latest_token = latest.get("access_token")
+                if isinstance(latest_token, str) and latest_token and (
+                    latest_expiry is None or latest_expiry > int(time.time())
+                ):
+                    credentials = latest
+                    token = latest_token
+                else:
+                    return error_provider(provider_id, "expired", "The Kimi Code sign-in has expired.")
+            else:
+                return error_provider(provider_id, "expired", "The Kimi Code sign-in has expired.")
 
     base_url = (os.environ.get("KIMI_CODE_BASE_URL") or "https://api.kimi.com/coding/v1").rstrip("/")
-    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Accept": "application/json",
+        "User-Agent": KIMI_USER_AGENT,
+    }
     try:
         payload = http_json(base_url + "/usages", headers, timeout)
         windows, credits, fallback_plan = parse_kimi_usage(payload)
