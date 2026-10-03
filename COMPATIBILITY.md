@@ -76,3 +76,19 @@ Reference implementations inspected during development:
 - MoonshotAI/kimi-cli wire usage: `cbc15c076d17f70fec9f89c90c0502e68657f505`
 - pingdotgg/t3code: `b1e223e2b0d87124883b1410ab52dd6a1338e40d`
 - BerriAI/LiteLLM public model-price schema, fetched at runtime
+
+## CLIProxyAPI Rust
+
+CLIProxyAPI-Rust v0.3.2 at `3f937ce690d7507065a42be9ce11b26fc16eee06`
+uses authenticated `GET /api/accounts`. The adapter detects that API with the
+same management key used for Go. Cached quota lookup supports Claude and Codex
+OAuth accounts; other account types remain visible with quota unavailable.
+Absent windows, balances, Claude extra usage, and banked reset credits are
+unknown. Native `/reset` only clears cooldowns and is never a banked reset.
+
+Rust quota observation times are retained and marked stale after ten minutes.
+Expired windows are omitted, and duplicate observations do not extend quota
+history. Activity records the latest completed request, including failures,
+resets when the proxy restarts, and requires no Keeper. Costs still uses only
+local/T3 transcripts. Synthetic HTTP tests cover detection, invalid keys,
+malformed data, identity continuity, activity, and forbidden actions.

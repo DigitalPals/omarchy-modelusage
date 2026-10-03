@@ -13,6 +13,7 @@ ShellRoot {
     property string usageSource: "cliproxy"
     property string cliproxyUrl: "http://synthetic.invalid"
     property string cliproxyKeyFile: ""
+    property string proxyImplementation: "go"
     readonly property string connectionId: JSON.stringify([usageSource, cliproxyUrl])
     function localPath(url) { return String(url).replace("file://", "") }
   }
@@ -70,6 +71,10 @@ ShellRoot {
         root.check(b.providers.length === 0, "oversized output cannot supply account activity")
         b.settings = {}
         root.check(!b.trackingEnabled && b.notice.indexOf("Configure") >= 0, "missing Keeper gives setup guidance")
+        usage.proxyImplementation = "rust"
+        root.check(b.trackingEnabled && b.rustProxy, "Rust activity works without Keeper")
+        usage.proxyImplementation = "go"
+        root.check(!b.trackingEnabled && b.providers.length === 0, "changing implementation clears native activity")
         root.check(root.startupVerified, "activity startup probe completed")
         console.log("Activity QML contract: passed")
         Qt.quit()

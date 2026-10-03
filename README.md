@@ -24,7 +24,7 @@ Cropped captures of the running widget, September 2026. Account emails are hidde
 ## Highlights
 
 - **Multiple subscriptions:** CLIProxyAPI discovers managed accounts automatically. Each account gets its own quota card, plan, reset time, and supported credits. Codex banked resets can be reviewed and applied with confirmation.
-- **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. Optional [CPA Usage Keeper](docs/keeper-deployment.md) activity identifies the last-used proxy account in the bar.
+- **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. CLIProxyAPI-Rust reports last-used accounts directly; Go proxies can use optional [CPA Usage Keeper](docs/keeper-deployment.md) activity.
 - **Combined cost history:** local Codex/Claude transcripts and up to four [T3 Code](https://github.com/pingdotgg/t3code) servers in one 24H/7D/30D view, with API estimates, tokens, and provider/model breakdowns.
 - **Improved accounting:** common pricing across sources, cache-aware token costs, shared-folder deduplication, corrected handling of equal-sized Codex responses, custom model rates, and incremental scans.
 - **Cleaner UI:** Limits/Costs tabs, a compact provider menu, expandable details, separate quota and cost settings, fixed Save/Cancel controls, and square usage cards with a theme-corner option. Keyboard navigation and Omarchy theme/scaling support are built in.
@@ -102,7 +102,7 @@ Limits are provider-reported subscription allowances. Cards and bar chips show *
 
 - **Local mode** shows the signed-in account's reported session, weekly, model-specific, and other windows. Its bar percentage uses the most restrictive reported window.
 - **Proxy mode** shows each subscription separately. Cards default to overall weekly limits, then other weekly/monthly allowances or the first reported window. **Additional limits** reveals the other windows. Three subscriptions remain three readings: percentages are never added or averaged across accounts.
-- **Proxy bar selection:** matching Keeper activity selects the last-used account, whose most restrictive window supplies the percentage. Without matching activity, or with tied timestamps, the bar uses the best-capacity account and labels that fallback in its tooltip. This is the latest recorded request, not a prediction of which account the next request will use. Keeper polls every 15 seconds; quota polling is separate.
+- **Proxy bar selection:** native Rust activity or matching Go/Keeper activity selects the last-used account, whose most restrictive window supplies the percentage. Without matching activity, or with tied timestamps, the bar uses the best-capacity account and labels that fallback in its tooltip. This is the latest recorded request, not a prediction of which account the next request will use. Account activity polls every 15 seconds; quota polling is separate. Rust activity reflects completed requests, including failures, and resets when the server restarts.
 - **Quota history** starts with successful widget readings and survives restarts. It is sampled allowance usage, not a reconstructed request log. Proxy history records the best-capacity pool summary, with separate storage per server and separate direct-CLI history. Failed readings are not recorded as zero.
 
 ### Cost and token coverage

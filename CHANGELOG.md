@@ -4,6 +4,18 @@ All notable changes to this project will be documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-03
+
+### Added
+
+- Detect CLIProxyAPI-Rust automatically with the existing management key. Read
+  cached Claude/Codex quota windows and native last-used account timestamps.
+  Keeper is optional only for Go proxy activity; Rust activity works without it.
+- Preserve OAuth filename account hashes and quota observation timestamps.
+  Show missing/stale quota data explicitly, avoid recording unchanged cached
+  observations as fresh history, and disable unavailable Rust banked resets.
+
+
 ## [Unreleased]
 
 ## [1.1.1] - 2026-09-13

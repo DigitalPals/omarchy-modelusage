@@ -123,3 +123,23 @@ responses clear old activity. The worker has a 10-second request budget (plus
 bounded logout), a 15-second QML watchdog, a 2 MiB identity response ceiling, a
 4096-identity limit, and a 64 KiB QML output ceiling. Only opaque account hashes
 and timestamps cross the activity process boundary; no activity is persisted.
+
+## Rust proxy account snapshots
+
+The proxy collector first tries the Go auth-file inventory. Legacy HTTP
+401/403/404/405 allows a bounded authenticated native inventory probe; a valid
+`/api/accounts` array is required to identify Rust. An outage is not treated as
+an implementation change. The payload adds `proxyImplementation: go|rust`;
+account rows add the same marker and `supportsBankedReset`. Rust is read-only:
+no `api-call`, mutation, token refresh, or model generation is invoked.
+
+Rust quota rows retain `quotaUpdatedAt` and use it for `fetchedAt` and history
+sampling. Native amounts are percentages, reset timestamps require timezones,
+missing quota remains unknown, and observations older than ten minutes are
+`stale`. Cached windows past reset are omitted. Rust credits stay null and
+banked reset actions are refused. Switching implementations cannot restore old
+credits from a prior successful reading.
+
+Native account activity uses `last_used` and the same hashed filename account
+identity as quota rows. It denotes completed requests including failures;
+timestamp ties are ambiguous, and empty post-restart activity clears selection.

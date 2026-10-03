@@ -16,7 +16,7 @@ Environment overrides owned by the CLIs are honored: `CLAUDE_CONFIG_DIR`, `CODEX
 
 ### CLIProxyAPI
 
-Open the Model Usage popup and click the **gear icon** in its upper-right corner. Select **CLIProxyAPI** under **Quota source** to discover all providers and accounts managed by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). Local CLI sign-ins are not needed for this source. The default `direct` source retains the existing behavior. Click **Save** to apply your configuration.
+Open the Model Usage popup and click the **gear icon** in its upper-right corner. Select **CLIProxyAPI** under **Quota source** to discover all providers and accounts managed by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) or [CLIProxyAPI-Rust](https://github.com/IuCC123/CLIProxyAPI-Rust). The implementation is detected automatically with the same management key. Local CLI sign-ins are not needed for this source. The default `direct` source retains the existing behavior. Click **Save** to apply your configuration.
 
 Set **CLIProxyAPI server URL** to your server address (default `http://127.0.0.1:8317`). Dashboard URLs ending in `/management.html`, management API URLs ending in `/v0/management` or `/v0/management/auth-files`, and reverse-proxy path prefixes are accepted. HTTPS certificates are verified; redirects are rejected.
 
@@ -37,7 +37,7 @@ omarchy bar set digitalpals.model-usage usageSource cliproxy
 omarchy bar set digitalpals.model-usage cliproxyUrl https://proxy.example.com
 ```
 
-The collector lists managed accounts and asks CLIProxyAPI to make read-only upstream quota calls using `$TOKEN$` substitution. Provider tokens stay on the server. All managed providers are discovered automatically, independently of the local CLI provider selection. Claude, Codex, Kimi, and Antigravity have quota lookups; other providers stay visible with an explicit unsupported-quota notice. Antigravity requires the account’s project ID. Paused accounts remain browsable without being queried. Remote servers must permit remote management access.
+The Go collector lists managed accounts and asks CLIProxyAPI to make read-only upstream quota calls using `$TOKEN$` substitution. Provider tokens stay on the server. All managed providers are discovered automatically, independently of the local CLI provider selection. Claude, Codex, Kimi, and Antigravity have quota lookups; other providers stay visible with an explicit unsupported-quota notice. Antigravity requires the account’s project ID. Paused accounts remain browsable without being queried. Remote servers must permit remote management access.
 
 **Limits** shows every connected account for the selected provider as a separate card, with its own account label, plan, remaining quota, and reset time. Codex defaults to the overall weekly limit, with **Codex Pro · 20×** and **Codex Pro · 5×** labels taken from the reported plan tier. A badge beside each Codex plan shows its banked manual resets, including zero; the badge is hidden when the count is unavailable. For example, three connected Codex subscriptions produce three account cards. **Show additional limits** reveals session, model-specific, and other windows. Monthly-only plans show their monthly allowance; accounts without a weekly/monthly allowance show their first reported window. Paused and failed accounts stay visible with their own status. Percentages are never added across accounts.
 
@@ -159,3 +159,13 @@ New installations use `Percentages`: one compact provider-logo chip per provider
 **The backend cannot start.** Python 3.10 or newer must be available as `python3`. The backend uses only the Python standard library.
 
 **I see two AI widgets.** `digitalpals.model-usage` and `omarchy.agents` are intentionally independent. Disable whichever one you do not want.
+
+## Rust proxy support
+
+Rust uses cached `GET /api/accounts` data for Claude and Codex OAuth quotas.
+It does not need Keeper for account activity. Missing windows, plan metadata,
+credits, and banked resets remain unavailable. Quota observation time comes
+from the server; caches older than ten minutes are marked as last-known data.
+Native account activity reflects completed requests including failures and
+resets when the server restarts. Rust does not collect durable cost history;
+Costs continues to use local/T3 transcripts.
