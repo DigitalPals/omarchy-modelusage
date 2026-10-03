@@ -1240,7 +1240,7 @@ def collect_cliproxy(provider_ids: list[str], timeout: float, address: str, key_
                      discover: bool = False, metadata: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     if not provider_ids and not discover:
         return []
-    overall_deadline = time.monotonic() + timeout
+    overall_deadline = time.monotonic() + timeout if discover else None
     try:
         client = CliProxyClient(address, read_cliproxy_key(key_path))
         entries = client.auth_files(timeout)
