@@ -1191,7 +1191,7 @@ Ui.Panel {
               id: modelBadge
               required property string modelData
               objectName: "accountModelBadge"
-              anchors.right: parent.right
+              anchors.right: parent ? parent.right : undefined
               width: Math.min(implicitWidth, activityBadges.width)
               implicitWidth: badgeLabel.implicitWidth + horizontalPadding * 2 + Style.spacing.hairline * 2
               implicitHeight: badgeLabel.implicitHeight + verticalPadding * 2 + Style.spacing.hairline * 2
