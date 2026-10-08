@@ -59,6 +59,28 @@ class LiveNormalization(unittest.TestCase):
             with self.assertRaises(ValueError):
                 live.Tracker().accept_load(data)
 
+    def test_active_models_are_bounded_sorted_and_do_not_expose_sessions(self):
+        tracker = live.Tracker()
+        tracker.inventory([entry("file:private.json")])
+        models = [{"model": "z-model", "in_flight": 3, "sessions": 1, "untracked_requests": 1,
+                   "session_ids": ["secret-session"]},
+                  {"model": "a-model", "in_flight": 1, "sessions": 1, "untracked_requests": 0}]
+        tracker.accept_load({"file:private.json": {"in_flight": 4, "sessions": 5, "active_models": models}})
+        rows = tracker.payload()["accounts"][0]["activeModels"]
+        self.assertEqual([r["model"] for r in rows], ["a-model", "z-model"])
+        self.assertEqual(rows[1]["sessions"], 1)
+        self.assertEqual(rows[1]["untrackedRequests"], 1)
+        self.assertNotIn("secret-session", json.dumps(tracker.payload()))
+        for bad in (models * 17, [dict(models[0], model="bad\nmodel")],
+                    [dict(models[0], sessions=True)], [dict(models[0], sessions=3)],
+                    [dict(models[0], in_flight=5)], models + [models[0]]):
+            with self.assertRaises(ValueError):
+                tracker.accept_load({"file:private.json": {"in_flight": 4, "sessions": 5, "active_models": bad}})
+        tracker.accept_load({"file:private.json": {"in_flight": 1, "sessions": 5}})
+        self.assertIsNone(tracker.payload()["accounts"][0]["activeModels"])
+        tracker.accept_load({})
+        self.assertEqual(tracker.payload()["accounts"][0]["activeModels"], [])
+
     def test_websocket_url_keeps_base_path_and_no_secrets(self):
         self.assertEqual(live.websocket_url("https://proxy.example/prefix/"),
                          "wss://proxy.example/prefix/api/live")

@@ -55,6 +55,25 @@ function validLivePayload(payload) {
     for (var j = 0; j < counts.length; j++)
       if (typeof counts[j] !== "number" || !isFinite(counts[j])
           || Math.floor(counts[j]) !== counts[j] || counts[j] < 0 || counts[j] > 1000000) return false
+    if (row.activeModels !== undefined && row.activeModels !== null) {
+      if (!isListLike(row.activeModels) || row.activeModels.length > 32) return false
+      var modelNames = [], total = 0
+      for (var m = 0; m < row.activeModels.length; m++) {
+        var model = row.activeModels[m]
+        if (!model || typeof model.model !== "string" || !model.model.length || model.model.length > 128
+            || model.model.trim() !== model.model || /[\x00-\x1f\x7f]/.test(model.model)
+            || contains(modelNames, model.model)) return false
+        modelNames.push(model.model)
+        var modelCounts = [model.inFlight, model.sessions, model.untrackedRequests]
+        for (var c = 0; c < modelCounts.length; c++)
+          if (typeof modelCounts[c] !== "number" || !isFinite(modelCounts[c])
+              || Math.floor(modelCounts[c]) !== modelCounts[c] || modelCounts[c] < 0 || modelCounts[c] > 1000000) return false
+        if (model.inFlight === 0 || model.sessions + model.untrackedRequests > model.inFlight
+            || (model.sessions === 0) !== (model.inFlight === model.untrackedRequests)) return false
+        total += model.inFlight
+      }
+      if (total > row.inFlight) return false
+    }
   }
   return payload.state === "live" || payload.accounts.length === 0
 }
@@ -67,18 +86,39 @@ function accountLoad(account, activity) {
   return null
 }
 
-function servingAccounts(provider, activity) {
-  if (!provider || !activity || activity.liveState !== "live") return null
-  var count = 0
-  var accounts = listOrEmpty(provider.accounts)
-  for (var i = 0; i < accounts.length; i++) {
-    var load = accountLoad(accounts[i], activity)
-    if (!load) return null
+// Keep the account row compact; all remaining models are available in details.
+function activeSessionLabel(row) {
+  if (row.untrackedRequests > 0 && row.sessions === 0) return "sessions unknown"
+  return row.sessions + (row.untrackedRequests > 0 ? "+" : "")
+    + (row.sessions === 1 && row.untrackedRequests === 0 ? " session" : " sessions")
+}
+
+function activityBadges(load) {
+  if (!load) return ["Activity unknown"]
+  if (!load.inFlight) return ["Idle"]
+  var models = listOrEmpty(load.activeModels)
+  if (!models.length) return ["Model unknown · " + load.inFlight + (load.inFlight === 1 ? " request" : " requests")]
+  var badges = []
+  for (var i = 0; i < Math.min(3, models.length); i++)
+    badges.push(models[i].model + " · " + activeSessionLabel(models[i]))
+  if (models.length > 3) badges.push("+" + (models.length - 3) + " more models")
+  return badges
+}
+
+function activityDetails(load) {
+  if (!load) return "Live activity is unknown until Fusebox reconnects."
+  if (!load.inFlight) return "No requests are serving on this account."
+  var lines = [load.inFlight + (load.inFlight === 1 ? " unfinished request" : " unfinished requests") + ", including streams."]
+  var models = listOrEmpty(load.activeModels)
+  if (!models.length) lines.push("This Fusebox version does not report active models or active session counts.")
+  for (var i = 0; i < models.length; i++) {
+    var row = models[i]
+    lines.push(row.model + " · " + activeSessionLabel(row) + " · " + row.inFlight
+      + (row.inFlight === 1 ? " request" : " requests"))
+    if (row.untrackedRequests > 0) lines.push(row.untrackedRequests + " requests have no session ID.")
   }
-  var rows = listOrEmpty(activity.liveAccounts)
-  for (var j = 0; j < rows.length; j++)
-    if (rows[j].provider === provider.id && rows[j].inFlight > 0) count++
-  return count
+  lines.push("Active sessions have unfinished requests. Parallel requests in the same session count once per model.")
+  return lines.join("\n")
 }
 
 function clamp(value, minimum, maximum) {

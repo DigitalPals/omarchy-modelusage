@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "digitalpals.model-usage",
   "name": "Model Usage",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "author": "DigitalPals",
   "license": "MIT",
   "description": "Track Claude Code, OpenAI Codex, and Kimi Code subscription limits from your Omarchy menu bar. Connect local CLIs or CLIProxyAPI to monitor multiple accounts, remaining quotas, reset times, and credits. Explore 24-hour, 7-day, and 30-day token history and estimated API costs from local Codex/Claude transcripts and remote T3 Code servers, with cache-aware pricing, custom model rates, and provider/model breakdowns. Includes private account labels, quota history, and keyboard-friendly settings.",
@@ -48,7 +48,6 @@
       ],
       "costT3Servers": "[]",
       "liveAccountActivity": true,
-      "showBarActivity": true,
       "showRecentSessions": false
     },
     "schema": [
@@ -236,13 +235,6 @@
         "label": "Live account activity",
         "defaultValue": true,
         "description": "Use one shared Fusebox stream for requests serving now. Older Rust proxies show unavailable activity."
-      },
-      {
-        "key": "showBarActivity",
-        "type": "boolean",
-        "label": "Show serving accounts in menu bar",
-        "defaultValue": true,
-        "description": "Add a static dot and serving account count to percentage chips; unknown activity is marked with a question mark."
       },
       {
         "key": "showRecentSessions",

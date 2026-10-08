@@ -39,7 +39,6 @@ Ui.Panel {
     { value: "limits", label: "Limits" },
     { value: "costs", label: "Costs" }
   ]
-  readonly property bool showBarActivity: setting("showBarActivity", true) !== false
   readonly property bool showRecentSessions: setting("showRecentSessions", false) === true
   readonly property bool hideAccountEmails: setting("hideAccountEmails", true) !== false
   readonly property real usageCardRadius: setting("squareUsageCards", true) === true ? 0 : Style.cornerRadius
@@ -477,8 +476,6 @@ Ui.Panel {
           id: providerChip
           required property var modelData
 
-          readonly property var servingCount: UsageLogic.servingAccounts(modelData, activityBackend)
-          readonly property bool showActivity: root.showBarActivity && activityBackend.useLive
           readonly property var lastAccount: root.lastAccount(modelData)
           readonly property bool usingPoolQuota: root.proxyMode && !lastAccount.reading
           readonly property var reading: root.proxyMode && lastAccount.reading ? lastAccount.reading : modelData
@@ -503,7 +500,6 @@ Ui.Panel {
               : " usage · " + Math.round(remainingValue) + "% remaining")
             + (root.proxyMode ? "\n" + root.lastAccountTooltip(lastAccount) : "")
             + (usingPoolQuota ? "\nQuota shown: account with the most remaining capacity." : "")
-            + (showActivity ? "\n" + (servingCount === null ? "Activity unknown" : servingCount + " accounts serving now") : "")
           onPressed: function(buttonCode) {
             root.handleProviderChipPress(String(providerChip.modelData.id), buttonCode)
           }
@@ -558,16 +554,7 @@ Ui.Panel {
               font.pixelSize: Style.font.bodySmall
               font.weight: Font.Medium
             }
-            Text {
-              objectName: "barServingAccounts"
-              y: Math.round((parent.height - height) / 2)
-              visible: providerChip.showActivity && (providerChip.servingCount === null || providerChip.servingCount > 0)
-              text: providerChip.servingCount === null ? "· ?" : "● " + providerChip.servingCount
-              color: providerChip.servingCount === null ? root.dim : providerChip.contentColor
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              Accessible.name: providerChip.servingCount === null ? "Account activity unknown" : providerChip.servingCount + " accounts serving now"
-            }
+
           }
         }
       }
@@ -1165,29 +1152,77 @@ Ui.Panel {
           }
         }
       }
-      Text {
+      Item {
+        objectName: "accountIdentityRow"
         width: parent.width
-        text: root.accountDisplayName(accountCard.account, accountCard.accountNumber)
-        textFormat: Text.PlainText
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideMiddle
-      }
-
-      Ui.Button {
-        objectName: "accountServingBadge"
-        visible: activityBackend.useLive
-        text: accountCard.load === null ? "Activity unknown"
-          : accountCard.serving ? "● Serving · " + accountCard.load.inFlight + (accountCard.load.inFlight === 1 ? " request" : " requests")
-          : "Idle"
-        focusable: true
-        horizontalPadding: Style.spacing.md
-        foreground: accountCard.serving ? root.foreground : root.dim
-        fontFamily: root.fontFamily
-        fontSize: Style.font.caption
-        Accessible.name: text + (accountCard.activityExpanded ? ", hide activity details" : ", show activity details")
-        onClicked: accountCard.activityExpanded = !accountCard.activityExpanded
+        implicitHeight: Math.max(accountName.implicitHeight, activityBadges.visible ? activityBadges.implicitHeight : 0)
+        Text {
+          id: accountName
+          objectName: "accountName"
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.max(0, parent.width - (activityBadges.visible ? activityBadges.width + Style.spacing.md : 0))
+          text: root.accountDisplayName(accountCard.account, accountCard.accountNumber)
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideMiddle
+          ToolTip.visible: accountNameMouse.containsMouse
+          ToolTip.text: text
+          MouseArea { id: accountNameMouse; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+        }
+        Column {
+          id: activityBadges
+          anchors.right: parent.right
+          visible: activityBackend.useLive
+          readonly property var labels: UsageLogic.activityBadges(accountCard.load)
+          implicitWidth: {
+            var widest = 0
+            for (var i = 0; i < labels.length; i++) widest = Math.max(widest, badgeMetrics.advanceWidth(labels[i]))
+            return widest + Style.spacing.sm * 2 + Style.spacing.hairline * 2
+          }
+          width: Math.min(parent.width * 0.62, implicitWidth)
+          spacing: Style.spacing.xs
+          FontMetrics { id: badgeMetrics; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+          Repeater {
+            model: activityBadges.labels
+            Ui.Button {
+              id: modelBadge
+              required property string modelData
+              objectName: "accountModelBadge"
+              anchors.right: parent.right
+              width: Math.min(implicitWidth, activityBadges.width)
+              implicitWidth: badgeLabel.implicitWidth + horizontalPadding * 2 + Style.spacing.hairline * 2
+              implicitHeight: badgeLabel.implicitHeight + verticalPadding * 2 + Style.spacing.hairline * 2
+              focusable: true
+              bordered: true
+              horizontalPadding: Style.spacing.sm
+              verticalPadding: Style.spacing.xs
+              foreground: accountCard.serving ? root.foreground : root.dim
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              tooltipText: modelData
+              Accessible.name: modelData + (accountCard.activityExpanded ? ", hide activity details" : ", show activity details")
+              onClicked: accountCard.activityExpanded = !accountCard.activityExpanded
+              Text {
+                id: badgeLabel
+                anchors.fill: parent
+                anchors.margins: Style.spacing.hairline
+                anchors.leftMargin: modelBadge.horizontalPadding + Style.spacing.hairline
+                anchors.rightMargin: modelBadge.horizontalPadding + Style.spacing.hairline
+                text: modelBadge.modelData
+                textFormat: Text.PlainText
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                color: modelBadge.foreground
+                font.family: modelBadge.fontFamily
+                font.pixelSize: modelBadge.fontSize
+              }
+            }
+          }
+        }
       }
       Text {
         objectName: "accountRecentSessions"
@@ -1202,9 +1237,7 @@ Ui.Panel {
         objectName: "accountActivityDetails"
         width: parent.width
         visible: activityBackend.useLive && accountCard.activityExpanded
-        text: accountCard.load === null ? "Live request counts are unknown until activity reconnects."
-          : accountCard.serving ? "Unfinished requests on this account, including streaming responses. Counts update when Fusebox reports a change."
-          : "No requests are serving on this account."
+        text: UsageLogic.activityDetails(accountCard.load)
         textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+
+- Restore quota-only menubar chips. Show active model and distinct in-flight session counts in right-aligned account-name badges, with bounded additional models and accessible details.
+- Accept additive Fusebox active-model snapshots; preserve unknown states for older servers and requests without session IDs.
+
 ## 1.3.0
 
 - Add shared Fusebox live account activity, static bar counts, serving request badges and optional recent sessions. Preserve quota and last-used selection through disconnects; clear live counts to unknown.

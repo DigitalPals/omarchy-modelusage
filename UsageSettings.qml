@@ -81,7 +81,6 @@ Column {
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       liveAccountActivity: value("liveAccountActivity", true) !== false,
-      showBarActivity: value("showBarActivity", true) !== false,
       showRecentSessions: value("showRecentSessions", false) === true,
       hideAccountEmails: value("hideAccountEmails", true) !== false,
       squareUsageCards: value("squareUsageCards", true) === true,
@@ -406,18 +405,6 @@ Column {
     }
     Row {
       width: parent.width
-      Label { width: parent.width - showBarActivitySwitch.width; text: "Show serving accounts in menu bar"; anchors.verticalCenter: parent.verticalCenter }
-      ProviderToggle {
-        id: showBarActivitySwitch
-        objectName: "showBarActivityToggle"
-        width: Style.space(82)
-        checked: root.draft.showBarActivity !== false
-        Accessible.name: "Show serving accounts in menu bar"
-        onToggled: root.setValue("showBarActivity", !checked)
-      }
-    }
-    Row {
-      width: parent.width
       Label { width: parent.width - showRecentSessionsSwitch.width; text: "Show recent sessions"; anchors.verticalCenter: parent.verticalCenter }
       ProviderToggle {
         id: showRecentSessionsSwitch
@@ -428,7 +415,7 @@ Column {
         onToggled: root.setValue("showRecentSessions", !checked)
       }
     }
-    Hint { text: "Serving counts unfinished requests, including streams. Recent sessions may stay assigned after a request finishes." }
+    Hint { text: "Badges show models with unfinished requests and distinct active sessions. Recent sessions may stay assigned after requests finish." }
     Label { text: "CPA Usage Keeper URL" }
     Field {
       id: keeperUrlField
