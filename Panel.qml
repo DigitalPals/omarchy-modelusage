@@ -1177,12 +1177,12 @@ Ui.Panel {
           anchors.right: parent.right
           visible: activityBackend.useLive
           readonly property var labels: UsageLogic.activityBadges(accountCard.load)
-          implicitWidth: {
+          readonly property real preferredWidth: {
             var widest = 0
             for (var i = 0; i < labels.length; i++) widest = Math.max(widest, badgeMetrics.advanceWidth(labels[i]))
             return widest + Style.spacing.sm * 2 + Style.spacing.hairline * 2
           }
-          width: Math.min(parent.width * 0.62, implicitWidth)
+          width: Math.min(parent.width * 0.62, preferredWidth)
           spacing: Style.spacing.xs
           FontMetrics { id: badgeMetrics; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
           Repeater {
