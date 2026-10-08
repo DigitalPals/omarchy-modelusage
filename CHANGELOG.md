@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2
+
+- Name the Rust integration Fusebox in settings, quota diagnostics and account notices. Add a keyboard-accessible link to the Fusebox repository in Limits settings.
+- Keep saved connection keys and Go CLIProxyAPI support compatible.
+
 ## 1.3.1
 
 - Restore quota-only menubar chips. Show Fusebox's session count in the upper-right of account cards, aligned with the subscription title.

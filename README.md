@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/DigitalPals/omarchy-modelusage/actions/workflows/ci.yml/badge.svg)](https://github.com/DigitalPals/omarchy-modelusage/actions/workflows/ci.yml)
 
-AI subscription limits, token activity, and estimated API costs in your Omarchy menu bar. Monitor **Claude Code, OpenAI Codex, and Kimi Code** through local CLI sign-ins or accounts managed by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI).
+AI subscription limits, token activity, and estimated API costs in your Omarchy menu bar. Monitor **Claude Code, OpenAI Codex, and Kimi Code** through local CLI sign-ins or accounts managed by [Fusebox](https://github.com/DigitalPals/Fusebox) or [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI).
 
 <p align="center">
   <img src="docs/model-usage-menubar.png" alt="Omarchy menu bar with Claude and Codex remaining-quota percentages beside the system controls" width="488">
@@ -23,9 +23,9 @@ Cropped captures of the running widget, September 2026. Account emails are hidde
 
 ## Highlights
 
-- **Multiple subscriptions:** CLIProxyAPI discovers managed accounts automatically. Each account gets its own quota card, plan, reset time, and supported credits. Codex banked resets can be reviewed and applied with confirmation.
+- **Multiple subscriptions:** Fusebox and CLIProxyAPI discover managed accounts automatically. Each account gets its own quota card, plan, reset time, and supported credits. Codex banked resets can be reviewed and applied with confirmation.
 - **Live Fusebox activity:** a session-count badge sits in the upper-right of each account card, aligned with the subscription title. Click or hover for details. Counts represent Fusebox's recent assigned sessions and may remain after requests finish. Disconnected streams show “Sessions unknown” and keep quota readings. The menu bar shows quota percentages only. No model display or continuous animations.
-- **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. CLIProxyAPI-Rust reports last-used accounts directly; Go proxies can use optional [CPA Usage Keeper](docs/keeper-deployment.md) activity.
+- **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. Fusebox reports last-used accounts directly; Go proxies can use optional [CPA Usage Keeper](docs/keeper-deployment.md) activity.
 - **Combined cost history:** local Codex/Claude transcripts and up to four [T3 Code](https://github.com/pingdotgg/t3code) servers in one 24H/7D/30D view, with API estimates, tokens, and provider/model breakdowns.
 - **Improved accounting:** common pricing across sources, cache-aware token costs, shared-folder deduplication, corrected handling of equal-sized Codex responses, custom model rates, and incremental scans.
 - **Cleaner UI:** Limits/Costs tabs, a compact provider menu, expandable details, separate quota and cost settings, fixed Save/Cancel controls, and square usage cards with a theme-corner option. Keyboard navigation and Omarchy theme/scaling support are built in.
@@ -77,11 +77,13 @@ The plugin reads existing CLI credentials; sign-in and credential renewal remain
 
 The current UI rendered with representative fixture data; this is a local CLI mode example, not a live account reading.
 
-### CLIProxyAPI limits
+### Fusebox and CLIProxyAPI limits
 
-1. Open **Limits → gear** and select **CLIProxyAPI** under **Quota source**.
+1. Open **Limits → gear** and select **Fusebox** (or **Fusebox / CLIProxyAPI** before detection) under **Quota source**. The Go implementation appears as **CLIProxyAPI**.
 2. Enter the server URL, such as `http://127.0.0.1:8317`, and its **Management API key**.
 3. Save. All managed providers and accounts are discovered automatically; local CLI sign-ins are unnecessary.
+
+The **Fusebox on GitHub** link in Limits settings opens [the project repository](https://github.com/DigitalPals/Fusebox).
 
 Use the plaintext management key accepted by the proxy dashboard, not a client API key or the server's bcrypt hash. The masked field saves it to a private file; leaving a replacement blank preserves the saved key. Server URLs, `/management.html` URLs, management API URLs, and reverse-proxy prefixes are accepted. Remote servers must permit remote management access.
 

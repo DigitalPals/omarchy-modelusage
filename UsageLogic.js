@@ -77,6 +77,12 @@ function sessionDetails(load) {
   return sessionBadgeText(load) + " assigned to this account recently. Sessions may remain assigned after a request finishes."
 }
 
+function proxyName(implementation) {
+  if (implementation === "rust") return "Fusebox"
+  if (implementation === "go") return "CLIProxyAPI"
+  return "Fusebox / CLIProxyAPI"
+}
+
 function clamp(value, minimum, maximum) {
   var number = Number(value)
   if (!isFinite(number)) return minimum
@@ -250,7 +256,7 @@ function errorTitle(provider) {
   if (!provider) return "Provider unavailable"
   var name = String(provider.name || provider.id || "Provider")
   switch (provider.errorKind) {
-  case "config": return "CLIProxyAPI configuration required"
+  case "config": return proxyName(provider.proxyImplementation) + " configuration required"
   case "no_credentials": return name + " sign-in required"
   case "expired": return name + " sign-in expired"
   case "rate_limited": return name + " is rate limited"

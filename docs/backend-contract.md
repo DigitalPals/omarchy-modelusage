@@ -125,7 +125,7 @@ bounded logout), a 15-second QML watchdog, a 2 MiB identity response ceiling, a
 4096-identity limit, and a 64 KiB QML output ceiling. Only opaque account hashes
 and timestamps cross the activity process boundary; no activity is persisted.
 
-## Rust proxy account snapshots
+## Fusebox account snapshots
 
 The proxy collector first tries the Go auth-file inventory. Legacy HTTP
 401/403/404/405 allows a bounded authenticated native inventory probe; a valid
@@ -180,3 +180,10 @@ details explain this; disconnects show “Sessions unknown”. No model discover
 per-session queries, extra polling or Fusebox server changes are needed.
 The collector requires optional Python websockets 15+; Go/Keeper retains its
 existing dependency and polling behavior.
+
+Limits settings call the native Rust integration **Fusebox** and expose a
+keyboard-accessible repository link to `https://github.com/DigitalPals/Fusebox`.
+The Go implementation retains its CLIProxyAPI name. Before discovery, the
+source is labelled “Fusebox / CLIProxyAPI”. Saved `usageSource: cliproxy`,
+`cliproxyUrl`, `cliproxyKeyFile` and protocol `proxyImplementation: rust` remain
+compatible; branding adds no network calls or background processes.

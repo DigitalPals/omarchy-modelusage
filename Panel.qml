@@ -765,6 +765,7 @@ Ui.Panel {
             fontFamily: root.fontFamily
             accountDetails: root.accountTooltip(root.provider)
             proxyProviders: root.proxyMode ? backend.providers : []
+            proxyImplementation: backend.proxyImplementation
             onSaveRequested: function(values) { root.saveSettings(values) }
             onCancelRequested: root.leaveSettings()
             onRevealRequested: function(item) {
@@ -838,7 +839,7 @@ Ui.Panel {
             bottomPadding: Style.spacing.huge
             text: backend.loading
               ? "Loading AI subscription usage…"
-              : root.proxyMode ? "No enabled managed accounts found. Check the accounts configured in CLIProxyAPI."
+              : root.proxyMode ? "No enabled managed accounts found. Check the accounts configured in " + UsageLogic.proxyName(backend.proxyImplementation) + "."
               : "No connected providers found. Enable a provider in the widget settings and sign in to its CLI."
             color: root.dim
             font.family: root.fontFamily
