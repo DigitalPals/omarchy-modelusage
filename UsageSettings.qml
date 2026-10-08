@@ -80,6 +80,9 @@ Column {
       costKeeperPasswordFile: String(value("costKeeperPasswordFile", "")),
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
+      liveAccountActivity: value("liveAccountActivity", true) !== false,
+      showBarActivity: value("showBarActivity", true) !== false,
+      showRecentSessions: value("showRecentSessions", false) === true,
       hideAccountEmails: value("hideAccountEmails", true) !== false,
       squareUsageCards: value("squareUsageCards", true) === true,
       barDisplayMode: value("barDisplayMode", "Percentages"),
@@ -387,8 +390,45 @@ Column {
     id: activitySection
     objectName: "accountActivitySection"
     visible: root.proxyMode
-    title: "Last-used account"
-    summary: root.draft.costKeeperUrl ? "Configured" : "Optional"
+    title: "Account activity"
+    summary: root.draft.liveAccountActivity !== false ? "Live on Fusebox" : "Last used"
+    Row {
+      width: parent.width
+      Label { width: parent.width - liveAccountActivitySwitch.width; text: "Live account activity"; anchors.verticalCenter: parent.verticalCenter }
+      ProviderToggle {
+        id: liveAccountActivitySwitch
+        objectName: "liveAccountActivityToggle"
+        width: Style.space(82)
+        checked: root.draft.liveAccountActivity !== false
+        Accessible.name: "Live account activity"
+        onToggled: root.setValue("liveAccountActivity", !checked)
+      }
+    }
+    Row {
+      width: parent.width
+      Label { width: parent.width - showBarActivitySwitch.width; text: "Show serving accounts in menu bar"; anchors.verticalCenter: parent.verticalCenter }
+      ProviderToggle {
+        id: showBarActivitySwitch
+        objectName: "showBarActivityToggle"
+        width: Style.space(82)
+        checked: root.draft.showBarActivity !== false
+        Accessible.name: "Show serving accounts in menu bar"
+        onToggled: root.setValue("showBarActivity", !checked)
+      }
+    }
+    Row {
+      width: parent.width
+      Label { width: parent.width - showRecentSessionsSwitch.width; text: "Show recent sessions"; anchors.verticalCenter: parent.verticalCenter }
+      ProviderToggle {
+        id: showRecentSessionsSwitch
+        objectName: "showRecentSessionsToggle"
+        width: Style.space(82)
+        checked: root.draft.showRecentSessions === true
+        Accessible.name: "Show recent sessions"
+        onToggled: root.setValue("showRecentSessions", !checked)
+      }
+    }
+    Hint { text: "Serving counts unfinished requests, including streams. Recent sessions may stay assigned after a request finishes." }
     Label { text: "CPA Usage Keeper URL" }
     Field {
       id: keeperUrlField
@@ -411,7 +451,7 @@ Column {
     Hint { text: "Show the last-used account in the percentage menu bar." }
     Section {
       title: "Learn more"
-      Hint { text: "Go proxies use Keeper for account activity. Rust proxies report activity directly and do not need Keeper. Activity updates every 15 seconds, independently of Costs." }
+      Hint { text: "Go proxies use Keeper for account activity. Fusebox streams live activity without Keeper. One connection is shared by all panels. Go/Keeper and Rust with live activity off update last-used accounts every 15 seconds, independently of Costs." }
     }
   }
 

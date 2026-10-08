@@ -12,6 +12,7 @@ python3 -m py_compile "$repo_root/scripts/cost-fetch.py"
 python3 -m py_compile "$repo_root/scripts/t3_costs.py"
 python3 -m py_compile "$repo_root/scripts/keeper_client.py"
 python3 -m py_compile "$repo_root/scripts/proxy-activity.py"
+python3 -m py_compile "$repo_root/scripts/proxy-live.py"
 python3 -m py_compile "$repo_root/scripts/management-key.py"
 python3 -m py_compile "$repo_root/scripts/reset-credit.py"
 python3 -m unittest discover -s "$repo_root/tests" -p 'test_*.py' -v
@@ -36,7 +37,7 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
   lint_log="$lint_root/qmllint.log"
   if ! "$qml_lint" -W 0 --missing-property disable --signal-handler-parameters disable \
     -I "$lint_root" \
-    "$repo_root/Panel.qml" "$repo_root/UsageNavigation.qml" "$repo_root/UsageSelect.qml" "$repo_root/UsageTabs.qml" "$repo_root/UsageDisclosure.qml" "$repo_root/UsageBackend.qml" "$repo_root/UsageActivityBackend.qml" \
+    "$repo_root/Panel.qml" "$repo_root/UsageNavigation.qml" "$repo_root/UsageSelect.qml" "$repo_root/UsageTabs.qml" "$repo_root/UsageDisclosure.qml" "$repo_root/UsageBackend.qml" "$repo_root/UsageActivityBackend.qml" "$repo_root/UsageLiveConnection.qml" \
     "$repo_root/CostBackend.qml" "$repo_root/UsageCosts.qml" "$repo_root/CostPriceEditor.qml" "$repo_root/CostSettings.qml" \
     "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
     "$repo_root/UsageSettings.qml" "$repo_root/SettingsSection.qml" "$repo_root/SettingsField.qml" \
@@ -98,6 +99,30 @@ PY
     exit 1
   fi
   echo "Activity QML contract: passed (synthetic account switches, outages, and connection changes)"
+
+  live_root="$test_root/live"
+  mkdir -p "$live_root"
+  cp "$repo_root/tests/qml/live-shell.qml" "$live_root/shell.qml"
+  QT_QPA_PLATFORM=offscreen MODEL_USAGE_REPO_URL="$repo_url" \
+  MODEL_USAGE_FAKE_LIVE="$repo_root/tests/fake_live.py" MODEL_USAGE_LIVE_MARKER="$live_root/events.jsonl" \
+    timeout 10 quickshell -p "$live_root" --no-color >"$live_root/runtime.log" 2>&1 || {
+      cat "$live_root/runtime.log"
+      exit 1
+    }
+  if ! rg -q 'Live QML contract: passed' "$live_root/runtime.log" \
+      || rg -n 'Error:|ReferenceError|TypeError|Binding loop|Unable to assign|failed to load|LIVE TEST FAILED' "$live_root/runtime.log"; then
+    cat "$live_root/runtime.log"
+    exit 1
+  fi
+  python3 - "$live_root/events.jsonl" <<'LIVEPY'
+import json, pathlib, sys
+rows = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+starts = [row for row in rows if row['event'] == 'start']
+stops = [row for row in rows if row['event'] == 'stop']
+assert len(starts) == 2 and len(stops) == 2, rows
+assert {row['pid'] for row in starts} == {row['pid'] for row in stops}, rows
+LIVEPY
+  echo "Live QML contract: passed (shared lifetime and connection replacement)"
 
   cost_root="$test_root/cost"
   mkdir -p "$cost_root/config" "$cost_root/cache"

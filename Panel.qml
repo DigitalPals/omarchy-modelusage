@@ -39,6 +39,8 @@ Ui.Panel {
     { value: "limits", label: "Limits" },
     { value: "costs", label: "Costs" }
   ]
+  readonly property bool showBarActivity: setting("showBarActivity", true) !== false
+  readonly property bool showRecentSessions: setting("showRecentSessions", false) === true
   readonly property bool hideAccountEmails: setting("hideAccountEmails", true) !== false
   readonly property real usageCardRadius: setting("squareUsageCards", true) === true ? 0 : Style.cornerRadius
 
@@ -475,6 +477,8 @@ Ui.Panel {
           id: providerChip
           required property var modelData
 
+          readonly property var servingCount: UsageLogic.servingAccounts(modelData, activityBackend)
+          readonly property bool showActivity: root.showBarActivity && activityBackend.useLive
           readonly property var lastAccount: root.lastAccount(modelData)
           readonly property bool usingPoolQuota: root.proxyMode && !lastAccount.reading
           readonly property var reading: root.proxyMode && lastAccount.reading ? lastAccount.reading : modelData
@@ -499,6 +503,7 @@ Ui.Panel {
               : " usage · " + Math.round(remainingValue) + "% remaining")
             + (root.proxyMode ? "\n" + root.lastAccountTooltip(lastAccount) : "")
             + (usingPoolQuota ? "\nQuota shown: account with the most remaining capacity." : "")
+            + (showActivity ? "\n" + (servingCount === null ? "Activity unknown" : servingCount + " accounts serving now") : "")
           onPressed: function(buttonCode) {
             root.handleProviderChipPress(String(providerChip.modelData.id), buttonCode)
           }
@@ -552,6 +557,16 @@ Ui.Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               font.weight: Font.Medium
+            }
+            Text {
+              objectName: "barServingAccounts"
+              y: Math.round((parent.height - height) / 2)
+              visible: providerChip.showActivity && (providerChip.servingCount === null || providerChip.servingCount > 0)
+              text: providerChip.servingCount === null ? "· ?" : "● " + providerChip.servingCount
+              color: providerChip.servingCount === null ? root.dim : providerChip.contentColor
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              Accessible.name: providerChip.servingCount === null ? "Account activity unknown" : providerChip.servingCount + " accounts serving now"
             }
           }
         }
@@ -794,6 +809,18 @@ Ui.Panel {
             width: parent.width
             spacing: Style.spacing.lg
 
+            Text {
+              objectName: "liveActivityStatus"
+              width: parent.width
+              visible: activityBackend.useLive
+              text: activityBackend.liveNotice
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
             Repeater {
               id: accountRepeater
               model: root.proxyAccounts
@@ -1020,6 +1047,9 @@ Ui.Panel {
     objectName: "proxyAccountCard"
     property var account: ({})
     property int accountNumber: 0
+    property bool activityExpanded: false
+    readonly property var load: UsageLogic.accountLoad(account, activityBackend)
+    readonly property bool serving: load !== null && load.inFlight > 0
     readonly property var windows: UsageLogic.accountWindows(account, root.expandedAccountLimits)
     readonly property bool healthy: account.status === "ok"
     implicitHeight: accountContent.implicitHeight + contentTopInset + contentBottomInset
@@ -1143,6 +1173,43 @@ Ui.Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         elide: Text.ElideMiddle
+      }
+
+      Ui.Button {
+        objectName: "accountServingBadge"
+        visible: activityBackend.useLive
+        text: accountCard.load === null ? "Activity unknown"
+          : accountCard.serving ? "● Serving · " + accountCard.load.inFlight + (accountCard.load.inFlight === 1 ? " request" : " requests")
+          : "Idle"
+        focusable: true
+        horizontalPadding: Style.spacing.md
+        foreground: accountCard.serving ? root.foreground : root.dim
+        fontFamily: root.fontFamily
+        fontSize: Style.font.caption
+        Accessible.name: text + (accountCard.activityExpanded ? ", hide activity details" : ", show activity details")
+        onClicked: accountCard.activityExpanded = !accountCard.activityExpanded
+      }
+      Text {
+        objectName: "accountRecentSessions"
+        width: parent.width
+        visible: activityBackend.useLive && root.showRecentSessions && accountCard.load !== null
+        text: accountCard.load ? accountCard.load.sessions + " recent " + (accountCard.load.sessions === 1 ? "session" : "sessions") : ""
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        objectName: "accountActivityDetails"
+        width: parent.width
+        visible: activityBackend.useLive && accountCard.activityExpanded
+        text: accountCard.load === null ? "Live request counts are unknown until activity reconnects."
+          : accountCard.serving ? "Unfinished requests on this account, including streaming responses. Counts update when Fusebox reports a change."
+          : "No requests are serving on this account."
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
       }
 
       Repeater {

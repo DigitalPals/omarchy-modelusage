@@ -150,3 +150,31 @@ for (const raw of ["null", "[]", "{", '{"x":{"inputCostPerMillionTokens":true,"o
 const specialId = context.encodeCostPrices([{...customRows[0], model: "__proto__"}]);
 assert.ok(Object.prototype.hasOwnProperty.call(JSON.parse(specialId), "__proto__"));
 console.log("Custom cost price validation: passed");
+
+const a = { id: 'codex', accountId: '0123456789abcdef' };
+const b = { id: 'codex', accountId: 'fedcba9876543210' };
+const activity = { liveState: 'live', liveAccounts: [
+  { provider: 'codex', accountId: a.accountId, inFlight: 3, sessions: 5 },
+  { provider: 'codex', accountId: b.accountId, inFlight: 1, sessions: 1 }
+] };
+assert.equal(context.servingAccounts({ id: 'codex', accounts: [a,b] }, activity), 2);
+activity.liveAccounts[1].inFlight = 0;
+assert.equal(context.servingAccounts({ id: 'codex', accounts: [a,b] }, activity), 1);
+activity.liveAccounts[0].inFlight = 0;
+assert.equal(context.servingAccounts({ id: 'codex', accounts: [a,b] }, activity), 0);
+activity.liveState = 'reconnecting';
+assert.equal(context.accountLoad(a, activity), null);
+assert.equal(context.servingAccounts({ id: 'codex', accounts: [a,b] }, activity), null);
+const payload = { schemaVersion: 1, state: 'live', message: 'Live', providers: [], accounts: activity.liveAccounts };
+assert.equal(context.validLivePayload(payload), true);
+assert.equal(context.validLivePayload({ ...payload, state: 'reconnecting' }), false);
+assert.equal(context.validLivePayload({ ...payload, accounts: [{...activity.liveAccounts[0], inFlight: NaN}] }), false);
+assert.equal(context.validLivePayload({ ...payload, accounts: [{...activity.liveAccounts[0], inFlight: true}] }), false);
+let created = 0, stopped = 0, destroyed = 0;
+const factory = { createObject(parent) { assert.equal(parent,null); created++; return {
+  stop() { stopped++; }, destroy() { destroyed++; }
+}; } };
+assert.equal(context.acquireLive('test', factory, {}), context.acquireLive('test', factory, {}));
+assert.equal(created,1);
+context.releaseLive('test'); assert.equal(stopped,0);
+context.releaseLive('test'); assert.equal(stopped,1);

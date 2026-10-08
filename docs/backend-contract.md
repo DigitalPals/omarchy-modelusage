@@ -95,7 +95,8 @@ CLIProxyAPI management responses have the same 2 MiB ceiling. The management key
 
 ## Last-used proxy account activity
 
-`UsageActivityBackend.qml` runs `scripts/proxy-activity.py` every 15 seconds in
+`UsageActivityBackend.qml` uses the shared live collector for Rust by default.
+With live disabled, or for Go/Keeper, it runs `scripts/proxy-activity.py` every 15 seconds in
 CLIProxyAPI mode when a Keeper URL is configured. It reuses `costKeeperUrl` and
 `costKeeperPasswordFile` independently of Costs source configuration. The process reads proxy
 `auth-files`, logs in to Keeper, reads `status` and `usage/identities`, and logs
@@ -143,3 +144,36 @@ credits from a prior successful reading.
 Native account activity uses `last_used` and the same hashed filename account
 identity as quota rows. It denotes completed requests including failures;
 timestamp ties are ambiguous, and empty post-restart activity clears selection.
+
+## Fusebox live activity
+
+`UsageLogic.js` owns a reference-counted registry of parentless
+`UsageLiveConnection.qml` objects keyed by proxy URL, key-file path and collector
+path. Multiple bars/panels share a single `scripts/proxy-live.py` process. The
+last consumer stops and destroys it; a connection change clears counts before
+starting the new observer. It never reparents the observer to a panel.
+
+The helper authenticates `/api/live` with a Bearer upgrade header, verifies TLS,
+limits frames to 512 KiB and queues to four frames. Load snapshots report real
+`in_flight` attempts and recent `sessions`. Only hashed account IDs, provider IDs,
+counts and last-used timestamps cross the process boundary. Raw IDs and request
+metadata are discarded. Native IDs are kept privately for mapping file/API-key
+accounts to the existing stable hashes. Omitted inventory accounts have zero
+load after the initial complete snapshot; unmatched quota cards remain unknown.
+
+A 15-second heartbeat/snapshot deadline clears live counts on stale or broken
+connections. Reconnect backoff grows from 2 to 60 seconds and resets only after
+30 seconds of stability. Unsupported endpoints and a missing dependency retry
+at 60 seconds, keeping cached last-used inventory available. QML additionally
+limits stdout to 1 MiB and stops a stalled helper after 20 seconds. A crashed
+helper restarts at most once per minute. Disconnect never replaces quota with
+zero or invents idle. Last-used selection retains its existing semantics.
+
+Inventory reads only `/api/accounts`, at most once per 15 seconds on request,
+account or unknown-ID events, otherwise once per 60 seconds. These read the
+server cache and do not trigger upstream quota refreshes. Heartbeat frames do
+not change visible QML properties. `liveAccountActivity` defaults on,
+`showBarActivity` defaults on (percentage chips), and `showRecentSessions`
+defaults off. Recent sessions can outlive requests and never select a serving
+badge or affect quota. The collector requires optional Python websockets 15+;
+Go/Keeper retains its existing dependency and polling behavior.

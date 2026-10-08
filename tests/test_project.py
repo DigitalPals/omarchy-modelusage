@@ -23,7 +23,7 @@ class ProjectContractTests(unittest.TestCase):
         keys = {entry["key"] for entry in manifest["barWidget"]["schema"]}
         self.assertEqual(keys, {
             "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
-            "warningThreshold", "criticalThreshold",
+            "warningThreshold", "criticalThreshold", "liveAccountActivity", "showBarActivity", "showRecentSessions",
             "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails", "squareUsageCards", "costPriceOverrides",
             "costLocalProviders", "costKeeperUrl", "costKeeperPasswordFile", "costT3Servers",
         })

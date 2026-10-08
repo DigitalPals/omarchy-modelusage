@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- Add shared Fusebox live account activity, static bar counts, serving request badges and optional recent sessions. Preserve quota and last-used selection through disconnects; clear live counts to unknown.
+- Bound stream parsing, heartbeat expiry and reconnect backoff; keep Go/Keeper polling compatible.
+
 All notable changes to this project will be documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

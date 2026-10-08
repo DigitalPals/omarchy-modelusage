@@ -69,7 +69,7 @@ ShellRoot {
         root.phase++
       } else if (root.phase === 3 && b.fetchError !== "") {
         root.check(b.providers.length === 0, "oversized output cannot supply account activity")
-        b.settings = {}
+        b.settings = { liveAccountActivity: false }
         root.check(!b.trackingEnabled && b.notice.indexOf("Configure") >= 0, "missing Keeper gives setup guidance")
         usage.proxyImplementation = "rust"
         root.check(b.trackingEnabled && b.rustProxy, "Rust activity works without Keeper")

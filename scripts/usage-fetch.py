@@ -1002,7 +1002,7 @@ class CliProxyClient:
             if marker in seen:
                 raise ProviderFailure("malformed", "CLIProxyAPI-Rust returned duplicate account identities.")
             seen.add(marker)
-            entries.append(dict(row, id=identity, _rust=True))
+            entries.append(dict(row, id=identity, _native_id=row["id"], _rust=True))
         self.implementation = "rust"
         return entries
 
