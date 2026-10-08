@@ -39,7 +39,6 @@ Ui.Panel {
     { value: "limits", label: "Limits" },
     { value: "costs", label: "Costs" }
   ]
-  readonly property bool showRecentSessions: setting("showRecentSessions", false) === true
   readonly property bool hideAccountEmails: setting("hideAccountEmails", true) !== false
   readonly property real usageCardRadius: setting("squareUsageCards", true) === true ? 0 : Style.cornerRadius
 
@@ -1036,7 +1035,6 @@ Ui.Panel {
     property int accountNumber: 0
     property bool activityExpanded: false
     readonly property var load: UsageLogic.accountLoad(account, activityBackend)
-    readonly property bool serving: load !== null && load.inFlight > 0
     readonly property var windows: UsageLogic.accountWindows(account, root.expandedAccountLimits)
     readonly property bool healthy: account.status === "ok"
     implicitHeight: accountContent.implicitHeight + contentTopInset + contentBottomInset
@@ -1058,7 +1056,8 @@ Ui.Panel {
       Item {
         width: parent.width
         implicitHeight: Math.max(accountLogo.height, accountPlan.implicitHeight,
-          resetBadge.visible ? resetBadge.implicitHeight : 0)
+          resetBadge.visible ? resetBadge.implicitHeight : 0,
+          sessionBadge.visible ? sessionBadge.implicitHeight : 0)
 
         Item {
           id: accountLogo
@@ -1093,7 +1092,8 @@ Ui.Panel {
           anchors.leftMargin: Style.spacing.md
           anchors.verticalCenter: parent.verticalCenter
           width: Math.max(0, parent.width - accountLogo.width - Style.spacing.md
-            - (resetBadge.visible ? resetBadge.width + Style.spacing.md : 0))
+            - (resetBadge.visible ? resetBadge.width + Style.spacing.md : 0)
+            - (sessionBadge.visible ? sessionBadge.width + Style.spacing.md : 0))
           text: UsageLogic.accountPlanLabel(accountCard.account)
           textFormat: Text.PlainText
           color: root.foreground
@@ -1104,10 +1104,30 @@ Ui.Panel {
           wrapMode: Text.WordWrap
         }
 
+        Ui.Button {
+          id: sessionBadge
+          objectName: "accountSessionBadge"
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          visible: activityBackend.useLive
+          text: UsageLogic.sessionBadgeText(accountCard.load)
+          focusable: true
+          bordered: true
+          horizontalPadding: Style.spacing.sm
+          verticalPadding: Style.spacing.xs
+          foreground: accountCard.load !== null && accountCard.load.sessions > 0 ? root.foreground : root.dim
+          fontFamily: root.fontFamily
+          fontSize: Style.font.caption
+          tooltipText: UsageLogic.sessionDetails(accountCard.load)
+          Accessible.name: text + (accountCard.activityExpanded ? ", hide session details" : ", show session details")
+          onClicked: accountCard.activityExpanded = !accountCard.activityExpanded
+        }
+
         Rectangle {
           id: resetBadge
           objectName: "accountResetBadge"
-          anchors.right: parent.right
+          anchors.right: sessionBadge.visible ? sessionBadge.left : parent.right
+          anchors.rightMargin: sessionBadge.visible ? Style.spacing.md : 0
           anchors.verticalCenter: parent.verticalCenter
           visible: resetLabel.text !== ""
           implicitWidth: resetLabel.implicitWidth + Style.spacing.lg * 2
@@ -1152,92 +1172,21 @@ Ui.Panel {
           }
         }
       }
-      Item {
-        objectName: "accountIdentityRow"
-        width: parent.width
-        implicitHeight: Math.max(accountName.implicitHeight, activityBadges.visible ? activityBadges.implicitHeight : 0)
-        Text {
-          id: accountName
-          objectName: "accountName"
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          width: Math.max(0, parent.width - (activityBadges.visible ? activityBadges.width + Style.spacing.md : 0))
-          text: root.accountDisplayName(accountCard.account, accountCard.accountNumber)
-          textFormat: Text.PlainText
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideMiddle
-          ToolTip.visible: accountNameMouse.containsMouse
-          ToolTip.text: text
-          MouseArea { id: accountNameMouse; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
-        }
-        Column {
-          id: activityBadges
-          anchors.right: parent.right
-          visible: activityBackend.useLive
-          readonly property var labels: UsageLogic.activityBadges(accountCard.load)
-          readonly property real preferredWidth: {
-            var widest = 0
-            for (var i = 0; i < labels.length; i++) widest = Math.max(widest, badgeMetrics.advanceWidth(labels[i]))
-            return widest + Style.spacing.sm * 2 + Style.spacing.hairline * 2
-          }
-          width: Math.min(parent.width * 0.62, preferredWidth)
-          spacing: Style.spacing.xs
-          FontMetrics { id: badgeMetrics; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
-          Repeater {
-            model: activityBadges.labels
-            Ui.Button {
-              id: modelBadge
-              required property string modelData
-              objectName: "accountModelBadge"
-              anchors.right: parent ? parent.right : undefined
-              width: Math.min(implicitWidth, activityBadges.width)
-              implicitWidth: badgeLabel.implicitWidth + horizontalPadding * 2 + Style.spacing.hairline * 2
-              implicitHeight: badgeLabel.implicitHeight + verticalPadding * 2 + Style.spacing.hairline * 2
-              focusable: true
-              bordered: true
-              horizontalPadding: Style.spacing.sm
-              verticalPadding: Style.spacing.xs
-              foreground: accountCard.serving ? root.foreground : root.dim
-              fontFamily: root.fontFamily
-              fontSize: Style.font.caption
-              tooltipText: modelData
-              Accessible.name: modelData + (accountCard.activityExpanded ? ", hide activity details" : ", show activity details")
-              onClicked: accountCard.activityExpanded = !accountCard.activityExpanded
-              Text {
-                id: badgeLabel
-                anchors.fill: parent
-                anchors.margins: Style.spacing.hairline
-                anchors.leftMargin: modelBadge.horizontalPadding + Style.spacing.hairline
-                anchors.rightMargin: modelBadge.horizontalPadding + Style.spacing.hairline
-                text: modelBadge.modelData
-                textFormat: Text.PlainText
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
-                color: modelBadge.foreground
-                font.family: modelBadge.fontFamily
-                font.pixelSize: modelBadge.fontSize
-              }
-            }
-          }
-        }
-      }
       Text {
-        objectName: "accountRecentSessions"
+        objectName: "accountName"
         width: parent.width
-        visible: activityBackend.useLive && root.showRecentSessions && accountCard.load !== null
-        text: accountCard.load ? accountCard.load.sessions + " recent " + (accountCard.load.sessions === 1 ? "session" : "sessions") : ""
+        text: root.accountDisplayName(accountCard.account, accountCard.accountNumber)
+        textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
+        elide: Text.ElideMiddle
       }
       Text {
         objectName: "accountActivityDetails"
         width: parent.width
         visible: activityBackend.useLive && accountCard.activityExpanded
-        text: UsageLogic.activityDetails(accountCard.load)
+        text: UsageLogic.sessionDetails(accountCard.load)
         textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily

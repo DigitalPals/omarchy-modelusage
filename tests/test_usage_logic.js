@@ -159,28 +159,16 @@ const activity = { liveState: 'live', liveAccounts: [
 ] };
 activity.liveState = 'reconnecting';
 assert.equal(context.accountLoad(a, activity), null);
-assert.deepEqual(Array.from(context.activityBadges(null)), ['Activity unknown']);
-assert.deepEqual(Array.from(context.activityBadges({inFlight: 0})), ['Idle']);
-assert.deepEqual(Array.from(context.activityBadges({inFlight: 2})), ['Model unknown · 2 requests']);
-const activeModel = {model: 'gpt-6.1-sol', inFlight: 4, sessions: 2, untrackedRequests: 0};
-assert.deepEqual(Array.from(context.activityBadges({inFlight: 4, activeModels: [activeModel]})), ['gpt-6.1-sol · 2 sessions']);
-assert.equal(context.activeSessionLabel({...activeModel, sessions: 1}), '1 session');
-assert.equal(context.activeSessionLabel({...activeModel, untrackedRequests: 1}), '2+ sessions');
-assert.equal(context.activeSessionLabel({...activeModel, sessions: 0, untrackedRequests: 4}), 'sessions unknown');
-assert.match(context.activityDetails({inFlight: 4, activeModels: [activeModel]}), /4 unfinished requests/);
-assert.equal(context.activityBadges({inFlight: 5, activeModels: Array(5).fill(activeModel)})[3], '+2 more models');
+assert.equal(context.sessionBadgeText(null), 'Sessions unknown');
+assert.equal(context.sessionBadgeText({sessions: 0}), '0 sessions');
+assert.equal(context.sessionBadgeText({sessions: 1, inFlight: 3}), '1 session');
+assert.equal(context.sessionBadgeText({sessions: 5, inFlight: 0}), '5 sessions');
+assert.match(context.sessionDetails({sessions: 5}), /may remain assigned after a request finishes/);
 const payload = { schemaVersion: 1, state: 'live', message: 'Live', providers: [], accounts: activity.liveAccounts };
 assert.equal(context.validLivePayload(payload), true);
 assert.equal(context.validLivePayload({ ...payload, state: 'reconnecting' }), false);
 assert.equal(context.validLivePayload({ ...payload, accounts: [{...activity.liveAccounts[0], inFlight: NaN}] }), false);
 assert.equal(context.validLivePayload({ ...payload, accounts: [{...activity.liveAccounts[0], inFlight: true}] }), false);
-const withModels = {...payload, accounts: [{...activity.liveAccounts[0], inFlight: 4, activeModels: [activeModel]}]};
-assert.equal(context.validLivePayload(withModels), true);
-for (const bad of [{...activeModel, sessions: 5}, {...activeModel, untrackedRequests: -1},
-  {...activeModel, model: 'bad\nmodel'}, {...activeModel, inFlight: 0}])
-  assert.equal(context.validLivePayload({...withModels, accounts: [{...withModels.accounts[0], activeModels: [bad]}]}), false);
-assert.equal(context.validLivePayload({...withModels, accounts: [{...withModels.accounts[0], inFlight: 1}]}), false);
-assert.equal(context.validLivePayload({...withModels, accounts: [{...withModels.accounts[0], activeModels: [activeModel, activeModel]}]}), false);
 let created = 0, stopped = 0, destroyed = 0;
 const factory = { createObject(parent) { assert.equal(parent,null); created++; return {
   stop() { stopped++; }, destroy() { destroyed++; }

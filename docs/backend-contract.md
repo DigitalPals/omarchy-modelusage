@@ -155,10 +155,8 @@ starting the new observer. It never reparents the observer to a panel.
 
 The helper authenticates `/api/live` with a Bearer upgrade header, verifies TLS,
 limits frames to 512 KiB and queues to four frames. Load snapshots report real
-`in_flight` attempts and recent `sessions`. Additive `active_models` rows report
-actual selected upstream model, unfinished attempts, distinct in-flight sessions
-and requests without session IDs. Only hashed account IDs, provider IDs, model
-names, counts and last-used timestamps cross the process boundary. Raw IDs and request
+`in_flight` attempts and recent `sessions`. Only hashed account IDs, provider IDs,
+counts and last-used timestamps cross the process boundary. Raw IDs and request
 metadata are discarded. Native IDs are kept privately for mapping file/API-key
 accounts to the existing stable hashes. Omitted inventory accounts have zero
 load after the initial complete snapshot; unmatched quota cards remain unknown.
@@ -175,16 +173,10 @@ Inventory reads only `/api/accounts`, at most once per 15 seconds on request,
 account or unknown-ID events, otherwise once per 60 seconds. These read the
 server cache and do not trigger upstream quota refreshes. Heartbeat frames do
 not change visible QML properties. `liveAccountActivity` defaults on,
-`showRecentSessions` defaults off. The menu bar remains quota-only. Recent sessions can outlive requests and never select a serving
-badge or affect quota. The collector requires optional Python websockets 15+;
-Go/Keeper retains its existing dependency and polling behavior.
-
-Active model rows are limited to 32 per account, model names to 128 characters,
-and counts to one million. Invalid totals, duplicates and control characters
-are refused. Older load snapshots retain account counts with unknown models;
-omitted idle accounts have empty model lists. No session IDs cross the collector
-boundary. The account name elides to leave room for up to three right-aligned
-model/session badges; remaining models and complete names are available in
-keyboard-accessible details/tooltips. Parallel requests in a session count once
-per model. Sessionless requests use “sessions unknown” or an explicit “+” beside
-the known session count. Recent affinity sessions never become active counts.
+Session counts appear beside the subscription title in a right-aligned badge.
+The menu bar remains quota-only. Counts retain Fusebox's recent-affinity meaning:
+sessions may remain assigned after requests finish. Tooltip and expandable
+details explain this; disconnects show “Sessions unknown”. No model discovery,
+per-session queries, extra polling or Fusebox server changes are needed.
+The collector requires optional Python websockets 15+; Go/Keeper retains its
+existing dependency and polling behavior.

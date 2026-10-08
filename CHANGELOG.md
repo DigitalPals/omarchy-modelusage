@@ -2,8 +2,8 @@
 
 ## 1.3.1
 
-- Restore quota-only menubar chips. Show active model and distinct in-flight session counts in right-aligned account-name badges, with bounded additional models and accessible details.
-- Accept additive Fusebox active-model snapshots; preserve unknown states for older servers and requests without session IDs.
+- Restore quota-only menubar chips. Show Fusebox's session count in the upper-right of account cards, aligned with the subscription title.
+- Keep session details accessible by click, hover and keyboard; unknown counts remain explicit during disconnects. Remove obsolete menubar and separate recent-session settings. No server changes required.
 
 ## 1.3.0
 

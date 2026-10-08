@@ -47,8 +47,7 @@
         "codex"
       ],
       "costT3Servers": "[]",
-      "liveAccountActivity": true,
-      "showRecentSessions": false
+      "liveAccountActivity": true
     },
     "schema": [
       {
@@ -235,13 +234,6 @@
         "label": "Live account activity",
         "defaultValue": true,
         "description": "Use one shared Fusebox stream for requests serving now. Older Rust proxies show unavailable activity."
-      },
-      {
-        "key": "showRecentSessions",
-        "type": "boolean",
-        "label": "Show recent sessions",
-        "defaultValue": false,
-        "description": "Show recent assigned sessions separately from requests serving now. Sessions can remain after requests finish."
       }
     ]
   }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One bounded Fusebox observer. Emit only account hashes, model names and activity counts.
+"""One bounded Fusebox observer. Emit only account hashes and activity counts.
 
 Inventory reads use Fusebox's cache; this collector never requests provider
 quota refreshes. Request bodies, identities and credentials stay out of stdout.
@@ -60,33 +60,7 @@ class Tracker:
             values = [counts.get("in_flight"), counts.get("sessions")]
             if any(type(value) is not int or not 0 <= value <= 1000000 for value in values):
                 raise ValueError("invalid count")
-            models = counts.get("active_models")
-            normalized = None
-            if models is not None:
-                if not isinstance(models, list) or len(models) > 32:
-                    raise ValueError("invalid models")
-                normalized, seen, total = [], set(), 0
-                for row in models:
-                    if not isinstance(row, dict):
-                        raise ValueError("invalid model")
-                    model = row.get("model")
-                    if (not isinstance(model, str) or not model or model != model.strip()
-                            or len(model) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in model)
-                            or model in seen):
-                        raise ValueError("invalid model")
-                    requests, sessions, unknown = (row.get(k) for k in ("in_flight", "sessions", "untracked_requests"))
-                    if (any(type(v) is not int or not 0 <= v <= 1000000 for v in (requests, sessions, unknown))
-                            or requests == 0 or sessions + unknown > requests
-                            or (sessions == 0) != (requests == unknown)):
-                        raise ValueError("invalid model count")
-                    seen.add(model)
-                    total += requests
-                    normalized.append({"model": model, "inFlight": requests,
-                                       "sessions": sessions, "untrackedRequests": unknown})
-                if total > values[0]:
-                    raise ValueError("invalid model total")
-                normalized.sort(key=lambda row: row["model"])
-            clean[identity] = [*values, normalized]
+            clean[identity] = values
         self.load = clean
         self.state, self.message = "live", "Live account activity"
         return any(identity not in self.identities for identity in clean)
@@ -99,9 +73,9 @@ class Tracker:
         accounts = []
         if self.state == "live" and self.load is not None:
             for native, (provider, account_id) in self.identities.items():
-                requests, sessions, models = self.load.get(native, [0, 0, []])
+                requests, sessions = self.load.get(native, [0, 0])
                 accounts.append({"provider": provider, "accountId": account_id,
-                                 "inFlight": requests, "sessions": sessions, "activeModels": models})
+                                 "inFlight": requests, "sessions": sessions})
         return {"schemaVersion": 1, "state": self.state, "message": self.message,
                 "providers": activity.normalize_rust_activity(self.entries), "accounts": accounts}
 

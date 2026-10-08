@@ -81,7 +81,6 @@ Column {
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       liveAccountActivity: value("liveAccountActivity", true) !== false,
-      showRecentSessions: value("showRecentSessions", false) === true,
       hideAccountEmails: value("hideAccountEmails", true) !== false,
       squareUsageCards: value("squareUsageCards", true) === true,
       barDisplayMode: value("barDisplayMode", "Percentages"),
@@ -403,19 +402,7 @@ Column {
         onToggled: root.setValue("liveAccountActivity", !checked)
       }
     }
-    Row {
-      width: parent.width
-      Label { width: parent.width - showRecentSessionsSwitch.width; text: "Show recent sessions"; anchors.verticalCenter: parent.verticalCenter }
-      ProviderToggle {
-        id: showRecentSessionsSwitch
-        objectName: "showRecentSessionsToggle"
-        width: Style.space(82)
-        checked: root.draft.showRecentSessions === true
-        Accessible.name: "Show recent sessions"
-        onToggled: root.setValue("showRecentSessions", !checked)
-      }
-    }
-    Hint { text: "Badges show models with unfinished requests and distinct active sessions. Recent sessions may stay assigned after requests finish." }
+    Hint { text: "Fusebox session counts appear beside the subscription title. Sessions may remain assigned after requests finish." }
     Label { text: "CPA Usage Keeper URL" }
     Field {
       id: keeperUrlField
