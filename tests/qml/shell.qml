@@ -251,11 +251,17 @@ ShellRoot {
         assertTrue(tip.indexOf("@example.invalid") < 0, "hidden account emails stay out of tooltips")
         var badge = namedChild(cards[i], "accountResetBadge")
         var label = namedChild(cards[i], "accountResetLabel")
-        assertTrue(badge !== null && badge.visible === (i > 0), "only accounts with banked resets show the reset pill")
+        assertTrue(badge !== null && badge.visible === (i > 0), "only accounts with banked resets show the reset button")
         if (i > 0) {
-          assertTrue(badge.width > 0 && badge.height > 0, "reset pill has a visible size")
-          assertEqual(label ? label.text : "", "↺ " + i, "each account shows its own banked resets")
+          assertTrue(badge.width > 0 && badge.height > 0, "reset button has a visible size")
+          assertEqual(label ? label.text : "", String.fromCodePoint(0xF099B) + " " + i,
+            "each account shows its own banked resets with the font's restore glyph")
+          assertTrue(badge.mapToItem(cards[i], 0, 0).x > namedChild(cards[i], "usageRowReset").mapToItem(cards[i], 0, 0).x,
+            "the reset button is the last column")
         }
+        assertTrue(!cards[i].mainRow.wrapLabel, "account names stay on one line")
+        assertEqual(namedChild(cards[i], "usageRowPercent").x, namedChild(cards[cards.length - 1], "usageRowPercent").x,
+          "a row without banked resets keeps the percentage column aligned")
         assertTrue(!namedChild(cards[i], "accountSessionBadge").visible, "unknown session counts add nothing to the row")
       }
       assertTrue(cards.length > 0 && Qt.colorEqual(namedChild(cards[0], "usageRowPercent").color, proxyWidget.urgent),

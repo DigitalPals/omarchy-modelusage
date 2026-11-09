@@ -86,6 +86,7 @@ Ui.Panel {
   readonly property bool detailsAvailable: providers.length > 0
   // Every card's name column is as wide as the widest name, so meters line up.
   readonly property real labelColumnWidth: Math.ceil(labelRegistry.widest)
+  readonly property bool bankedResetColumn: UsageLogic.hasBankedResets(providers)
   property alias providerCards: providerRepeater
   property alias usageBackend: backend
 
@@ -1037,6 +1038,7 @@ Ui.Panel {
                 historyMode: root.historyMode
                 labelWidth: root.labelColumnWidth
                 labelColumn: labelRegistry
+                reserveResetSlot: root.bankedResetColumn
                 iconSource: root.iconUrl(modelData)
                 nowMs: root.nowMs
                 minuteMs: root.minuteMs

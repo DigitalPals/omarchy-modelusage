@@ -418,7 +418,17 @@ console.log("UsageLogic.js stale readings and resets: passed");
   const withResets = context.accountDetails({id: "codex", status: "ok", windows: [], credits: {resetCreditsAvailable: 2}},
     {label: "Account 2", resetEnabled: true});
   assert.ok(withResets.includes("No subscription limits reported."));
-  assert.ok(withResets.includes("2 banked resets · click ↺ to apply one"));
+  assert.ok(withResets.includes("2 banked resets · click " + context.RESET_ICON + " to apply one"));
+  assert.equal(context.RESET_ICON, "\u{F099B}", "the restore glyph, not the header's refresh glyph");
+  assert.equal(context.accountResetCount({id: "codex", status: "ok", credits: {resetCreditsAvailable: 3}}), 3);
+  assert.equal(context.accountResetCount({id: "codex", status: "ok", credits: {resetCreditsAvailable: 0}}), 0);
+  assert.equal(context.accountResetCount({id: "claude", status: "ok", credits: {resetCreditsAvailable: 3}}), -1,
+    "Claude resets need Fusebox");
+  assert.equal(context.accountResetCount({id: "codex", status: "ok", credits: {resetCreditsAvailable: 1.5}}), -1);
+  const resettable = {id: "codex", status: "ok", credits: {resetCreditsAvailable: 1}};
+  assert.equal(context.hasBankedResets([{accounts: [{...resettable, credits: {resetCreditsAvailable: 0}}]}]), false);
+  assert.equal(context.hasBankedResets([{accounts: []}, {accounts: [resettable]}]), true);
+  assert.equal(context.hasBankedResets(null), false);
   const failedDetails = context.accountDetails({status: "error", errorKind: "expired", message: "Sign in again.", windows: [weekly]},
     {label: "Account 3"});
   assert.equal(failedDetails, "Account 3\nSign in again.", "a failed account shows its error, not old limits");

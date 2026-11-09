@@ -14,7 +14,7 @@ AI subscription limits, token activity, and estimated API costs in your Omarchy 
     <th>Costs · estimated API value</th>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/model-usage-panel.png" alt="Limits with one card per provider: two Claude accounts, three Codex Pro 20× accounts with banked-reset pills, two Kimi accounts and an unsupported Gemini provider, one line per account with weekly meter, percentage left and reset countdown" width="420"></td>
+    <td valign="top"><img src="docs/model-usage-panel.png" alt="Limits with one card per provider: two Claude accounts, three Codex Pro 20× accounts with banked-reset buttons, two Kimi accounts and an unsupported Gemini provider, one line per account with weekly meter, percentage left and reset countdown" width="420"></td>
     <td valign="top"><img src="docs/model-usage-costs.png" alt="30-day API cost estimate with a daily chart, Claude and Codex totals, and expandable token and model details" width="420"></td>
   </tr>
 </table>
@@ -24,7 +24,7 @@ Rendered from the test fixtures (synthetic data, not live accounts), November 20
 ## Highlights
 
 - **Multiple subscriptions:** Fusebox and CLIProxyAPI discover managed accounts automatically. Limits shows every provider at once, one card each, with one compact line per account: meter, percentage left and reset countdown. Hover a line for the plan, every limit, renewal, credits and session details, or press **Details** (`a`) to show them inline. Fusebox adds Meta and Antigravity quotas, model and spending limits, renewals, and cooldowns. Banked resets can be reviewed and applied with confirmation: Codex through either proxy, Claude through Fusebox.
-- **Live Fusebox activity:** a session-count pill sits beside each account name; hover the line for details. Counts represent Fusebox's recent assigned sessions and may remain after requests finish. While the stream is disconnected, one line above the cards says so, the pills are hidden, and quota readings stay. The menu bar shows quota percentages only. No model display or continuous animations.
+- **Live Fusebox activity:** a session count sits at the right edge of each account's name; hover the line for details. Counts represent Fusebox's recent assigned sessions and may remain after requests finish. While the stream is disconnected, one line above the cards says so, the counts are hidden, and quota readings stay. The menu bar shows quota percentages only. No model display or continuous animations.
 - **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. Fusebox reports last-used accounts directly; Go proxies can use optional [CPA Usage Keeper](docs/keeper-deployment.md) activity.
 - **Combined cost history:** local Codex/Claude transcripts and up to four [T3 Code](https://github.com/pingdotgg/t3code) servers in one 24H/7D/30D view, with API estimates, tokens, and provider/model breakdowns, plus Fusebox's priced usage history.
 - **Improved accounting:** common pricing across sources, cache-aware token costs, shared-folder deduplication, corrected handling of equal-sized Codex responses, custom model rates, and incremental scans.

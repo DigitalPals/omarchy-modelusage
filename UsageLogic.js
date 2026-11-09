@@ -568,10 +568,27 @@ function supportsAccountReset(account) {
 }
 
 function accountResetLabel(account) {
-  if (!supportsAccountReset(account)) return ""
+  var count = accountResetCount(account)
+  return count < 0 ? "" : plural(count, "banked reset")
+}
+
+// Banked resets an account reports, or -1 when unknown or unsupported.
+function accountResetCount(account) {
+  if (!supportsAccountReset(account)) return -1
   var count = account.credits && account.credits.resetCreditsAvailable
-  if (typeof count !== "number" || !isFinite(count) || count < 0 || Math.floor(count) !== count) return ""
-  return plural(count, "banked reset")
+  if (typeof count !== "number" || !isFinite(count) || count < 0 || Math.floor(count) !== count) return -1
+  return count
+}
+
+// Whether any account has a reset to apply: every row then reserves the
+// banked-reset column, so percentages and countdowns stay aligned.
+function hasBankedResets(providers) {
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) {
+    var accounts = listOrEmpty(list[i] && list[i].accounts)
+    for (var j = 0; j < accounts.length; j++) if (accountResetCount(accounts[j]) > 0) return true
+  }
+  return false
 }
 
 function shortDuration(seconds) {
@@ -690,6 +707,11 @@ function hasAdditionalWindows(accounts, warningThreshold, criticalThreshold) {
 }
 
 // ------------------------------------------------------------ Compact rows
+
+// Nerd Font glyphs, like the panel's header icons (the bar font has them; a
+// plain "↺" falls back to another font). Restore (⟲) differs from refresh (⟳).
+var RESET_ICON = String.fromCodePoint(0xF099B)
+var SESSION_ICON = String.fromCodePoint(0xF018D)
 
 // One line per account or limit. The row's meter shows the main allowance;
 // everything else is in the row tooltip, or inline when Details is open.
@@ -866,7 +888,7 @@ function accountDetails(account, options) {
   var credits = accountCreditsText(account)
   if (credits !== "") lines.push(credits)
   var resets = accountResetLabel(account)
-  if (resets !== "") lines.push(resets + (opts.resetEnabled ? " · click ↺ to apply one" : ""))
+  if (resets !== "") lines.push(resets + (opts.resetEnabled ? " · click " + RESET_ICON + " to apply one" : ""))
   if (opts.liveActivity) lines.push(sessionDetails(opts.load || null))
   if (account.stale === true) lines.push(String(account.notice || "Last known reading; it may be out of date."))
   return lines.join("\n")

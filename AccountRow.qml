@@ -19,6 +19,7 @@ Column {
   property bool liveActivity: false
   property var load: null
   property bool resetEnabled: false
+  property bool reserveResetSlot: false
   property real labelWidth: 0
   property var labelColumn: null
   property double nowMs: Date.now()
@@ -35,10 +36,7 @@ Column {
   readonly property var windows: UsageLogic.accountWindows(account, expanded, warningThreshold, criticalThreshold)
   readonly property var rowWindows: UsageLogic.accountRowWindows(account, expanded, warningThreshold, criticalThreshold)
   readonly property var urgentFacts: UsageLogic.urgentAccountFacts(account, minuteMs)
-  readonly property int resetCount: {
-    if (UsageLogic.accountResetLabel(account) === "") return -1
-    return Number(account.credits.resetCreditsAvailable)
-  }
+  readonly property int resetCount: UsageLogic.accountResetCount(account)
   property alias mainRow: mainRow
 
   signal resetRequested()
@@ -50,6 +48,7 @@ Column {
     objectName: "accountMainRow"
     width: root.width
     label: root.accountLabel
+    wrapLabel: false
     tag: root.planTag
     window: root.healthy ? root.rowWindows.main : null
     stale: root.account.stale === true
@@ -65,6 +64,7 @@ Column {
     sessions: root.liveActivity && root.load !== null ? Number(root.load.sessions) : -1
     resetCount: root.resetCount
     resetEnabled: root.resetEnabled
+    reserveResetSlot: root.reserveResetSlot
     labelWidth: root.labelWidth
     labelColumn: root.labelColumn
     nowMs: root.nowMs
@@ -91,6 +91,7 @@ Column {
       tooltipText: UsageLogic.windowSummary(modelData, root.nowMs, root.refreshing)
       detailText: UsageLogic.windowFacts(modelData, root.minuteMs, root.refreshing)
       showDetail: root.expanded
+      reserveResetSlot: root.reserveResetSlot
       labelWidth: root.labelWidth
       labelColumn: root.labelColumn
       nowMs: root.nowMs

@@ -26,6 +26,8 @@ Ui.BorderSurface {
   property string historyMode: "h24"
   property real labelWidth: 0
   property var labelColumn: null
+  // Every row reserves the banked-reset column when any account has one.
+  property bool reserveResetSlot: false
   property url iconSource: ""
   property double nowMs: Date.now()
   property double minuteMs: Math.floor(nowMs / 60000) * 60000
@@ -158,8 +160,8 @@ Ui.BorderSurface {
         expanded: root.expanded
         liveActivity: root.liveActivity
         load: UsageLogic.accountLoad(modelData, root.activity)
-        resetEnabled: root.proxyMode && UsageLogic.supportsAccountReset(modelData)
-          && Number(modelData.credits && modelData.credits.resetCreditsAvailable) > 0 && root.resetAllowed
+        resetEnabled: root.proxyMode && UsageLogic.accountResetCount(modelData) > 0 && root.resetAllowed
+        reserveResetSlot: root.reserveResetSlot
         labelWidth: root.labelWidth
         labelColumn: root.labelColumn
         nowMs: root.nowMs
@@ -216,6 +218,7 @@ Ui.BorderSurface {
           + (root.provider.stale === true ? "\n" + UsageLogic.staleExplanation(root.provider, root.provider) : "")
         detailText: UsageLogic.windowFacts(modelData, root.minuteMs, root.refreshing)
         showDetail: root.expanded
+        reserveResetSlot: root.reserveResetSlot
         labelWidth: root.labelWidth
         labelColumn: root.labelColumn
         nowMs: root.nowMs
@@ -242,6 +245,7 @@ Ui.BorderSurface {
       detailText: root.credits ? [root.creditsMeter ? UsageLogic.creditsPrimary(root.credits) : "",
         UsageLogic.creditsDetail(root.credits)].filter(function(line) { return line !== "" }).join(" · ") : ""
       showDetail: root.expanded
+      reserveResetSlot: root.reserveResetSlot
       labelWidth: root.labelWidth
       labelColumn: root.labelColumn
       nowMs: root.nowMs
