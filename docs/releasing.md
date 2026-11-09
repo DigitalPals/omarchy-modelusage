@@ -12,7 +12,8 @@
    tooltips. Label fixture examples in the README.
    Update root `preview.png` separately: the marketplace reads this image, not
    the README gallery. The current 1920×1080 composition uses the menu bar,
-   three Codex account cards, and Costs. Check both the full image and a small
+   three Codex account cards, and Costs; it predates the one-line account rows
+   and should be recomposed with the next release. Check both the full image and a small
    landscape crop so the marketplace card retains the title and main views.
 6. Push the release commit, create an annotated `vX.Y.Z` tag, and publish release
    notes from `CHANGELOG.md`.

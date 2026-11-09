@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Show every provider at once in Limits instead of choosing one from a provider menu: one card per provider, in menu-bar order. A percentage chip opens Limits scrolled to its provider's card, and middle click, `h`/`l` and Left/Right jump between cards; `p` is gone.
+- Fit each account on one line: name, meter, percentage left and reset countdown, in a name column shared by every card so meters line up. A plan every account shares heads the card once, and differing plans are tagged on each line. Hover a line for the plan, every limit with its reset time, renewal, credits, banked resets and sessions; **Details** (`a`, formerly **Additional limits**) shows the same inline. A tighter shorter limit gets an indented line, and cooldowns and errors stay visible under the account.
+- Show banked resets as a `↺ 2` pill beside the account name, only when there are resets to apply; the tooltip still names the count, including zero. Session counts are a small pill beside the name, and a disconnected live stream is one line above the cards instead of “Sessions unknown” on every account.
+- Show local CLI limits as one line per window, credits as a line with their balance or cap meter, and each provider's quota history behind a **Quota history** toggle. Long model limit names wrap to a second line rather than losing the ending that tells them apart.
+- Replace `AccountCard.qml`, `LimitCard.qml` and `CreditsCard.qml` with `ProviderCard.qml`, `AccountRow.qml` and `UsageRow.qml`; card titles, plan tags, tooltip and Details text live in the node-tested `UsageLogic.js`. Re-render the README Limits screenshots from the test fixtures.
 - Refresh the reading when a reset time passes even while the panel is closed, so the menu bar does not keep a spent limit until the next scheduled refresh.
 - Treat one last-known account as a stale reading: the pool chip shows `?`, the icon turns urgent, and the tooltip uses the provider's own explanation (a failed refresh or an old Fusebox quota cache). The footer adds “some readings are last known” instead of looking fresh during an outage.
 - Mark a cost source partial when complete transcript lines with usage are malformed, and say how many were skipped; a growing file's unfinished last line is still read again later. Note a partial estimate neutrally whenever some responses are unpriced.

@@ -4,9 +4,9 @@
 
 ## Architecture
 
-- `Panel.qml` owns the injected bar widget, native popup, keyboard behavior, provider selection, panel layout, and namespaced IPC.
-- `AccountCard.qml`, `LimitCard.qml`, and `CreditsCard.qml` render one managed account, one limit window, and one credits balance. They take explicit properties (thresholds, colors, time) and emit signals; they do not reach into the panel.
-- `UsageLogic.js` also holds the presentation rules shared by those cards: window severity, compact account-window selection, reset and refresh wording, credits formatting, bar-chip selection, and the secondary-text color. Its node tests cover them without Quickshell.
+- `Panel.qml` owns the injected bar widget, native popup, keyboard behavior, panel layout, and namespaced IPC. Limits shows every provider at once; a bar chip or `←`/`→` only scrolls to that provider's card.
+- `ProviderCard.qml` renders one provider: one `AccountRow.qml` per managed account, or (local CLIs) one `UsageRow.qml` per limit window plus credits and a collapsible quota history. `UsageRow.qml` is one line: name, meter, percentage left and reset countdown, with the details in its tooltip and, while **Details** is open, in a caption. Main rows report their natural name width to the panel, which gives every card the widest so meters line up. The components take explicit properties (thresholds, colors, time) and emit signals; they do not reach into the panel.
+- `UsageLogic.js` also holds the presentation rules shared by those rows: window severity, compact account-window selection, card titles and plan tags, tooltip and Details text, reset and refresh wording, credits formatting, bar-chip selection, and the secondary-text color. Its node tests cover them without Quickshell.
 - `UsageBackend.qml` owns one bounded asynchronous Python process, coalesces duplicate refresh requests, applies the configured interval, and rejects malformed contract output.
 - `scripts/usage-fetch.py` performs parallel, failure-isolated provider collection and emits the versioned provider-neutral contract documented in [docs/backend-contract.md](backend-contract.md).
 - `scripts/proxy_connection.py` is the single Fusebox / CLIProxyAPI connection layer: URL normalization, private key files, redirect rejection, the management client, implementation detection, and the shared `--proxy-url`/`--proxy-key-file`/`--implementation` flags. Quota, activity, live, reset, Fusebox cost, and connection-test scripts all use it.

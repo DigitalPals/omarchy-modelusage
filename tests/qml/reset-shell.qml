@@ -113,10 +113,10 @@ ShellRoot {
         root.widget.resetAction.scriptPath = Quickshell.env("MODEL_USAGE_FAKE_RESET")
         root.phase++
       } else if (root.phase === 6 && root.widget.providers.length > 0) {
-        root.widget.selectProviderId("codex")
-        root.check(root.widget.accountCards.count === 3, "account badge integration fixture loaded")
-        var zero = root.namedChild(root.widget.accountCards.itemAt(0), "accountResetAction")
-        var action = root.namedChild(root.widget.accountCards.itemAt(1), "accountResetAction")
+        var card = root.widget.providerCard("codex")
+        root.check(card !== null && card.accountRows.count === 3, "account badge integration fixture loaded")
+        var zero = card ? root.namedChild(card.accountRows.itemAt(0), "accountResetAction") : null
+        var action = card ? root.namedChild(card.accountRows.itemAt(1), "accountResetAction") : null
         root.check(zero && !zero.enabled, "zero resets badge is disabled")
         root.check(action && action.enabled, "nonzero resets badge is actionable")
         action.activate()

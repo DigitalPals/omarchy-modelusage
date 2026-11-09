@@ -213,10 +213,11 @@ Inventory reads only `/api/accounts`, at most once per 15 seconds on request,
 account or unknown-ID events, otherwise once per 60 seconds. These read the
 server cache and do not trigger upstream quota refreshes. Heartbeat frames do
 not change visible QML properties. `liveAccountActivity` defaults on,
-Session counts appear beside the subscription title in a right-aligned badge.
+Session counts appear as a small pill beside each account name in Limits.
 The menu bar remains quota-only. Counts retain Fusebox's recent-affinity meaning:
-sessions may remain assigned after requests finish. Tooltip and expandable
-details explain this; disconnects show “Sessions unknown”. No model discovery,
+sessions may remain assigned after requests finish. The account line's tooltip
+explains this; while disconnected, one line above the cards says so and the
+pills are hidden. No model discovery,
 per-session queries, extra polling or Fusebox server changes are needed.
 The collector requires optional Python websockets 15+; Go/Keeper retains its
 existing dependency and polling behavior.

@@ -24,8 +24,12 @@ Ui.Panel {
   readonly property bool proxyMode: backend.usageSource === "proxy"
   readonly property var providers: UsageLogic.availableProviders(proxyMode
     ? backend.providers : UsageLogic.selectedProviders(backend.providers, backend.enabledProviderIds))
-  property string selectedProviderId: ""
+  // The provider card the bar chip or ←/→ last jumped to; Limits shows all.
+  property string focusedProviderId: ""
+  // Details: every limit and account fact inline, not only in tooltips.
   property bool expandedAccountLimits: false
+  // Quota history chart per local provider, collapsed by default.
+  property var historyOpen: ({})
   property bool shortcutsVisible: false
   // Reset time already refreshed for, so a passed reset triggers one refresh.
   property double refreshedForResetAt: 0
@@ -49,7 +53,7 @@ Ui.Panel {
   readonly property real usageCardRadius: setting("squareUsageCards", true) === true ? 0 : Style.cornerRadius
 
   function accountDisplayName(account, index) {
-    return hideAccountEmails ? "Account " + index : String(account.account || "Account " + index)
+    return UsageLogic.accountDisplayName(account, index, hideAccountEmails)
   }
 
   readonly property int criticalThreshold: UsageLogic.clamp(
@@ -63,29 +67,27 @@ Ui.Panel {
   readonly property bool percentageMode: displayMode === "Percentages"
     && !(bar && bar.vertical) && percentageProviders.length > 0
   readonly property bool alarming: anyProviderAlarming()
-  readonly property int providerIndex: {
+  readonly property int focusedIndex: {
     for (let i = 0; i < providers.length; i++)
-      if (providers[i].id === selectedProviderId) return i
-    return 0
+      if (providers[i].id === focusedProviderId) return i
+    return -1
   }
-  readonly property var providerSummary: providers.length > 0 ? providers[providerIndex] : null
-  readonly property var provider: providerSummary
-  readonly property var proxyAccounts: UsageLogic.listOrEmpty(providerSummary && providerSummary.accounts)
-  readonly property bool accountOverview: proxyMode && proxyAccounts.length > 0
-  readonly property bool historyAvailable: !accountOverview && !!provider && !!provider.history
-    && ((UsageLogic.isListLike(provider.history.h24) && provider.history.h24.length > 0)
-      || (UsageLogic.isListLike(provider.history.d7) && provider.history.d7.length > 0))
-  readonly property bool hasAdditionalLimits: accountOverview
-    && UsageLogic.hasAdditionalWindows(proxyAccounts, warningThreshold, criticalThreshold)
-  property alias accountCards: accountRepeater
-  property alias quotaHistory: history
+  readonly property bool historyAvailable: {
+    for (let i = 0; i < providers.length; i++)
+      if (UsageLogic.hasQuotaHistory(providers[i])) return true
+    return false
+  }
+  readonly property bool hasAdditionalLimits: {
+    for (let i = 0; i < providers.length; i++)
+      if (UsageLogic.hasAdditionalWindows(providers[i].accounts, warningThreshold, criticalThreshold)) return true
+    return false
+  }
+  // Details adds reset times, account facts and every other limit inline.
+  readonly property bool detailsAvailable: providers.length > 0
+  // Every card's name column is as wide as the widest name, so meters line up.
+  readonly property real labelColumnWidth: Math.ceil(labelRegistry.widest)
+  property alias providerCards: providerRepeater
   property alias usageBackend: backend
-  readonly property var providerOptions: {
-    var result = []
-    for (let i = 0; i < providers.length; i++)
-      result.push({ value: String(providers[i].id), label: String(providers[i].name || providers[i].id) })
-    return result
-  }
 
   function alpha(color, opacity) {
     return UsageLogic.alpha(color, opacity)
@@ -103,34 +105,56 @@ Ui.Panel {
     return false
   }
 
-  function ensureSelection() {
-    if (providers.length === 0) {
-      selectedProviderId = ""
-      return
+  function providerCard(providerId) {
+    for (let i = 0; i < providerRepeater.count; i++) {
+      const card = providerRepeater.itemAt(i)
+      if (card && card.providerId === providerId) return card
     }
-    for (let i = 0; i < providers.length; i++)
-      if (providers[i].id === selectedProviderId) return
-    selectedProviderId = providers[0].id
+    return null
   }
 
-  function selectProvider(index) {
+  // Scroll so the provider's card starts at the top of the panel.
+  function scrollToProvider(providerId) {
+    const card = providerCard(providerId)
+    if (!card || !panelFlick) return false
+    const point = card.mapToItem(panelFlick.contentItem, 0, 0)
+    panelFlick.contentY = clamp(point.y - Style.spacing.sm, 0,
+      Math.max(0, panelFlick.contentHeight - panelFlick.height))
+    return true
+  }
+
+  // A bar chip or ←/→ jumps to a provider. The panel lays out its cards after
+  // opening, so the scroll waits for them.
+  function focusProvider(providerId) {
+    focusedProviderId = String(providerId)
+    if (viewMode === "limits") scrollTimer.begin()
+  }
+
+  function stepProvider(direction) {
     if (providers.length === 0) return
-    var wrapped = ((index % providers.length) + providers.length) % providers.length
-    selectedProviderId = String(providers[wrapped].id)
-    if (panelFlick) panelFlick.contentY = 0
+    const start = focusedIndex < 0 ? (direction > 0 ? -1 : 0) : focusedIndex
+    const wrapped = ((start + direction) % providers.length + providers.length) % providers.length
+    focusProvider(providers[wrapped].id)
   }
 
-  function selectProviderId(providerId) {
-    for (let i = 0; i < providers.length; i++) {
-      if (providers[i].id === providerId) {
-        selectProvider(i)
-        return
-      }
-    }
-  }
-
+  // Middle click and IPC `next`: open Limits at the next provider's card.
   function nextProvider() {
-    selectProvider(providerIndex + 1)
+    if (!opened || viewMode !== "limits") {
+      viewMode = "limits"
+      open()
+    }
+    stepProvider(1)
+  }
+
+  function toggleHistory(providerId) {
+    const next = Object.assign({}, historyOpen)
+    next[providerId] = !next[providerId]
+    historyOpen = next
+  }
+
+  function historyView(providerId) {
+    const card = providerCard(providerId)
+    return card ? card.historyView : null
   }
 
   function refreshNow() {
@@ -181,11 +205,11 @@ Ui.Panel {
   function shortcutRows() {
     const rows = [{ key: viewMode === "costs" ? "u" : "c", action: viewMode === "costs" ? "Limits" : "Costs" }]
     if (viewMode === "limits" && providers.length > 1)
-      rows.push({ key: "←/→ h/l", action: "provider" }, { key: "p", action: "provider menu" })
+      rows.push({ key: "←/→ h/l", action: "jump to provider" })
     if (viewMode === "costs") rows.push({ key: "[ ]", action: "period" })
     else if (historyAvailable) rows.push({ key: "[ ]", action: "history range" })
-    if (viewMode === "limits" && (hasAdditionalLimits || expandedAccountLimits))
-      rows.push({ key: "a", action: "additional limits" })
+    if (viewMode === "limits" && (detailsAvailable || expandedAccountLimits))
+      rows.push({ key: "a", action: "details" })
     if (viewMode === "costs")
       rows.push({ key: "m", action: "metric" }, { key: "d", action: "token details" }, { key: "b", action: "models" })
     rows.push({ key: "r", action: "refresh" }, { key: "s", action: "settings" }, { key: "↑/↓ j/k", action: "scroll" },
@@ -242,17 +266,21 @@ Ui.Panel {
     else if (buttonCode === Qt.LeftButton) toggle()
   }
 
+  // A chip opens Limits at its provider's card; clicking it again closes.
   function handleProviderChipPress(providerId, buttonCode) {
     if (buttonCode === Qt.MiddleButton) {
       nextProvider()
       return
     }
     if (buttonCode !== Qt.LeftButton) return
-    var sameProvider = viewMode === "limits" && selectedProviderId === providerId
+    var sameProvider = opened && viewMode === "limits" && focusedProviderId === String(providerId)
+    if (sameProvider) {
+      close()
+      return
+    }
     viewMode = "limits"
-    selectProviderId(providerId)
-    if (opened && sameProvider) close()
-    else open()
+    open()
+    focusProvider(providerId)
   }
 
   function windowSeverity(window) {
@@ -268,6 +296,33 @@ Ui.Panel {
     var lines = []
     if (!hideAccountEmails && provider.account) lines.push("Account: " + String(provider.account))
     if (provider.source) lines.push("Source: " + String(provider.source))
+    return lines.join("\n")
+  }
+
+  // Settings diagnostics: the account and source of every provider shown.
+  function accountDiagnostics() {
+    var blocks = []
+    for (let i = 0; i < providers.length; i++) {
+      const details = accountTooltip(providers[i])
+      if (details !== "") blocks.push(String(providers[i].name || providers[i].id) + "\n" + details)
+    }
+    return blocks.join("\n")
+  }
+
+  // Icon mode: one line per provider, as the chips would show it.
+  function iconTooltip() {
+    if (providers.length === 0) return "Model usage"
+    var lines = ["Model usage"]
+    for (let i = 0; i < providers.length; i++) {
+      const provider = providers[i]
+      const last = proxyMode ? lastAccount(provider) : null
+      const reading = last && last.reading ? last.reading : provider
+      const remaining = UsageLogic.minRemaining(reading)
+      lines.push(String(provider.name || provider.id) + " · "
+        + (remaining !== null ? Math.round(remaining) + "% left"
+          : provider.status === "error" ? "unavailable" : "no reading")
+        + (last ? " · last used " + last.label : ""))
+    }
     return lines.join("\n")
   }
 
@@ -312,11 +367,7 @@ Ui.Panel {
   }
 
   function errorBody(provider) {
-    if (!provider) return ""
-    var message = String(provider.message || "Usage data is unavailable.")
-    if (provider.authCommand && (provider.errorKind === "no_credentials" || provider.errorKind === "expired"))
-      message += " Run “" + provider.authCommand + "” in a terminal, then refresh."
-    return message
+    return UsageLogic.errorBody(provider)
   }
 
   function footerLeft() {
@@ -358,10 +409,7 @@ Ui.Panel {
       return costBackend.loading && costsView.hasResult ? "Refreshing…" : ""
     // Before the first reading the body shows the loading state.
     if (providers.length === 0) return ""
-    let context = accountOverview
-      ? UsageLogic.plural(proxyAccounts.length, "connected account") : heroMeta(provider)
-    if (providers.length === 1 && provider)
-      context = provider.name + (context ? " · " + context : "")
+    const context = UsageLogic.limitsContext(providers, proxyMode)
     return context + (backend.loading ? (context ? " · " : "") + "Refreshing…" : "")
   }
 
@@ -369,11 +417,7 @@ Ui.Panel {
   implicitWidth: percentageMode ? percentageGroup.implicitWidth : iconButton.implicitWidth
   implicitHeight: percentageMode ? percentageGroup.implicitHeight : iconButton.implicitHeight
 
-  onProvidersChanged: {
-    ensureSelection()
-    resetRefreshTimer.schedule()
-  }
-  onSelectedProviderIdChanged: expandedAccountLimits = false
+  onProvidersChanged: resetRefreshTimer.schedule()
   onOpenedChanged: if (opened) {
     nowMs = Date.now()
     if (viewMode === "costs") costBackend.ensureLoaded()
@@ -384,13 +428,12 @@ Ui.Panel {
       else keyCatcher.forceActiveFocus()
     })
   } else {
-    navigation.closeProviderMenu()
+    scrollTimer.stop()
     if (costsView) costsView.closeMenu()
     if (configuring) viewMode = settingsReturnView
   }
 
   onViewModeChanged: {
-    navigation.closeProviderMenu()
     if (costsView) costsView.closeMenu()
     if (viewMode !== "settings") configForm.discardKey()
     if (viewMode !== "cost-settings") costConfigForm.discardKey()
@@ -426,6 +469,58 @@ Ui.Panel {
   CostBackend {
     id: costBackend
     settings: root.settings
+  }
+
+  // Every row reports its natural name width here; every card then uses the
+  // widest (capped per row), so the meters of all providers start at the same x.
+  QtObject {
+    id: labelRegistry
+    property var rows: []
+    property real widest: 0
+    property bool pending: false
+    function add(row) {
+      rows.push(row)
+      schedule()
+    }
+    function remove(row) {
+      const index = rows.indexOf(row)
+      if (index >= 0) rows.splice(index, 1)
+      schedule()
+    }
+    function schedule() {
+      if (pending) return
+      pending = true
+      Qt.callLater(measure)
+    }
+    function measure() {
+      pending = false
+      let widest = 0
+      for (let i = 0; i < rows.length; i++)
+        widest = Math.max(widest, Number(rows[i].naturalLabelWidth) || 0)
+      labelRegistry.widest = widest
+    }
+  }
+
+  // Jumping to a provider waits until the panel is open and laid out.
+  Timer {
+    id: scrollTimer
+    property int attempts: 0
+    interval: 30
+    repeat: true
+    function begin() {
+      attempts = 0
+      restart()
+    }
+    onTriggered: {
+      attempts++
+      const card = root.providerCard(root.focusedProviderId)
+      if (root.opened && root.viewMode === "limits" && card && card.height > 0) {
+        root.scrollToProvider(root.focusedProviderId)
+        stop()
+      } else if (attempts >= 20) {
+        stop()
+      }
+    }
   }
 
   Timer {
@@ -485,8 +580,7 @@ Ui.Panel {
     bar: root.bar
     text: "󱚣"
     active: root.alarming
-    tooltipText: root.provider ? "Model usage · " + root.provider.name
-      + (root.proxyMode ? "\n" + root.lastAccountTooltip(root.lastAccount(root.provider)) : "") : "Model usage"
+    tooltipText: root.iconTooltip()
     onPressed: function(buttonCode) { root.handleBarPress(buttonCode) }
   }
 
@@ -612,11 +706,11 @@ Ui.Panel {
     Ui.PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.configuring || resetBackend.active || navigation.menuOpen || costsView.menuOpen
+      blocked: root.configuring || resetBackend.active || costsView.menuOpen
 
       onMoveRequested: function(dx, dy) {
         if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
-          root.selectProvider(root.providerIndex + dx)
+          root.stepProvider(dx)
         }
         if (dy !== 0) {
           let target = panelFlick.contentY + dy * Style.space(56)
@@ -631,7 +725,6 @@ Ui.Panel {
         if (text === "r" || text === "R") root.refreshNow()
         else if (text === "c" || text === "C") root.showCosts()
         else if (text === "u" || text === "U") root.showLimits()
-        else if (text === "p" || text === "P") navigation.openProviderMenu()
         else if (root.viewMode === "costs" && (text === "m" || text === "M")) costsView.openMetricMenu()
         else if (root.viewMode === "costs" && (text === "d" || text === "D")) costsView.tokenDetailsExpanded = !costsView.tokenDetailsExpanded
         else if (root.viewMode === "costs" && (text === "b" || text === "B")) costsView.modelsExpanded = !costsView.modelsExpanded
@@ -640,7 +733,7 @@ Ui.Panel {
         else if (text === "]") root.stepRange(1)
         else if (text === "?") root.shortcutsVisible = !root.shortcutsVisible
         else if ((text === "a" || text === "A") && root.viewMode === "limits"
-            && (root.hasAdditionalLimits || root.expandedAccountLimits))
+            && (root.detailsAvailable || root.expandedAccountLimits))
           root.expandedAccountLimits = !root.expandedAccountLimits
       }
 
@@ -776,29 +869,50 @@ Ui.Panel {
               width: parent.width
               viewMode: root.viewMode
               viewOptions: root.viewOptions
-              providerOptions: root.providerOptions
-              providerId: root.selectedProviderId
               foreground: root.foreground
-              surface: root.surface
               fontFamily: root.fontFamily
               onViewRequested: function(value) { root.viewMode = value }
-              onProviderRequested: function(value) { root.selectProviderId(value) }
-              onMenuClosed: Qt.callLater(function() {
-                if (root.opened && !root.configuring && !resetBackend.active)
-                  keyCatcher.forceActiveFocus()
-              })
             }
 
-            Text {
-              objectName: "panelContext"
+            // "7 accounts · 3 providers", with the Details toggle beside it.
+            Item {
               width: parent.width
-              text: root.contextText()
-              visible: text !== ""
-              textFormat: Text.PlainText
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
+              visible: panelContext.text !== "" || detailsToggle.visible
+              implicitHeight: Math.max(panelContext.implicitHeight, detailsToggle.visible ? detailsToggle.implicitHeight : 0)
+
+              Text {
+                id: panelContext
+                objectName: "panelContext"
+                anchors.left: parent.left
+                anchors.right: detailsToggle.visible ? detailsToggle.left : parent.right
+                anchors.rightMargin: detailsToggle.visible ? Style.spacing.md : 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.contextText()
+                textFormat: Text.PlainText
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+
+              Ui.Button {
+                id: detailsToggle
+                objectName: "additionalLimitsToggle"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.viewMode === "limits" && (root.detailsAvailable || root.expandedAccountLimits)
+                text: "Details " + (root.expandedAccountLimits ? "▴" : "▾")
+                focusable: true
+                horizontalPadding: Style.spacing.sm
+                verticalPadding: Style.spacing.xxs
+                tooltipText: root.expandedAccountLimits ? "Hide details (a)"
+                  : "Show every limit, reset time and account fact (a)"
+                Accessible.name: root.expandedAccountLimits ? "Hide details" : "Show details"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: root.expandedAccountLimits = !root.expandedAccountLimits
+              }
             }
           }
 
@@ -840,7 +954,7 @@ Ui.Panel {
             urgent: root.urgent
             surface: root.surface
             fontFamily: root.fontFamily
-            accountDetails: root.accountTooltip(root.provider)
+            accountDetails: root.accountDiagnostics()
             proxyProviders: root.proxyMode ? backend.providers : []
             proxyImplementation: backend.proxyImplementation
             onSaveRequested: function(values) { root.saveSettings(values) }
@@ -867,69 +981,19 @@ Ui.Panel {
             }
           }
 
-          Column {
-            id: accountOverviewSection
-            visible: root.viewMode === "limits" && root.accountOverview
+          // Session counts need Fusebox's live feed; while it is down, one line
+          // says so instead of every account row.
+          Text {
+            objectName: "liveActivityStatus"
             width: parent.width
-            spacing: Style.spacing.lg
-
-            Text {
-              objectName: "liveActivityStatus"
-              width: parent.width
-              visible: activityBackend.useLive
-              text: activityBackend.liveNotice
-              textFormat: Text.PlainText
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            Ui.Button {
-              objectName: "additionalLimitsToggle"
-              visible: root.expandedAccountLimits
-                || root.hasAdditionalLimits
-              text: "Additional limits " + (root.expandedAccountLimits ? "▴" : "▾")
-              focusable: true
-              horizontalPadding: Style.spacing.sm
-              tooltipText: "Show every limit on each account (a)"
-              Accessible.name: root.expandedAccountLimits ? "Hide additional limits" : "Show additional limits"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              onClicked: root.expandedAccountLimits = !root.expandedAccountLimits
-            }
-
-            Repeater {
-              id: accountRepeater
-              model: root.proxyAccounts
-              AccountCard {
-                required property var modelData
-                required property int index
-                width: accountOverviewSection.width
-                account: modelData
-                accountLabel: root.accountDisplayName(modelData, index + 1)
-                expanded: root.expandedAccountLimits
-                liveActivity: activityBackend.useLive
-                load: UsageLogic.accountLoad(modelData, activityBackend)
-                resetEnabled: root.proxyMode && UsageLogic.supportsAccountReset(modelData)
-                  && Number(modelData.credits && modelData.credits.resetCreditsAvailable) > 0
-                  && !resetBackend.active && !resetBackend.busy
-                iconSource: root.iconUrl(modelData)
-                nowMs: root.nowMs
-                refreshing: backend.loading
-                minuteMs: root.minuteMs
-                warningThreshold: root.warningThreshold
-                criticalThreshold: root.criticalThreshold
-                errorText: root.errorBody(modelData)
-                foreground: root.foreground
-                urgent: root.urgent
-                fontFamily: root.fontFamily
-                cardRadius: root.usageCardRadius
-                onResetRequested: resetBackend.begin(modelData, accountLabel)
-              }
-            }
-
+            visible: root.viewMode === "limits" && activityBackend.useLive
+              && activityBackend.liveState !== "live" && root.providers.length > 0
+            text: activityBackend.liveNotice + " Session counts are hidden until it reconnects."
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
 
           Text {
@@ -948,85 +1012,34 @@ Ui.Panel {
             wrapMode: Text.WordWrap
           }
 
-          Ui.BorderSurface {
-            id: errorCard
-            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && root.provider.status === "error"
-            width: parent.width
-            implicitHeight: errorColumn.implicitHeight + errorCard.contentTopInset + errorCard.contentBottomInset
-            color: root.alpha(root.urgent, 0.09)
-            borderSpec: Border.flat(root.alpha(root.urgent, 0.4), Style.spacing.hairline)
-            padding: Style.spacing.xxl
-            radius: root.usageCardRadius
-
-            Column {
-              id: errorColumn
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.top: parent.top
-              anchors.leftMargin: errorCard.contentLeftInset
-              anchors.rightMargin: errorCard.contentRightInset
-              anchors.topMargin: errorCard.contentTopInset
-              spacing: Style.spacing.labelGap
-
-              Text {
-                width: parent.width
-                text: UsageLogic.errorTitle(root.provider)
-                color: root.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
-                wrapMode: Text.WordWrap
-              }
-
-              Text {
-                width: parent.width
-                text: root.errorBody(root.provider)
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                textFormat: Text.PlainText
-                wrapMode: Text.WordWrap
-              }
-            }
-          }
-
-          Text {
-            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && root.provider.status !== "error"
-              && String(root.provider.notice || "") !== ""
-            width: parent.width
-            text: root.provider ? String(root.provider.notice || "") : ""
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
-
-          Ui.PanelSeparator {
-            visible: root.viewMode === "limits" && (limitsSection.visible || creditsSection.visible)
-            foreground: root.foreground
-          }
-
+          // Every provider at once, one card each.
           Column {
-            id: limitsSection
-            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider && root.provider.status === "ok"
-              && UsageLogic.isListLike(root.provider.windows) && root.provider.windows.length > 0
+            id: providerSection
+            visible: root.viewMode === "limits" && root.providers.length > 0
             width: parent.width
             spacing: Style.spacing.lg
 
-            Ui.PanelSectionHeader {
-              text: "USAGE LIMITS"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
             Repeater {
-              model: root.provider ? UsageLogic.listOrEmpty(root.provider.windows) : []
+              id: providerRepeater
+              model: root.providers
 
-              LimitCard {
+              ProviderCard {
                 required property var modelData
-                width: limitsSection.width
-                window: modelData
+                width: providerSection.width
+                provider: modelData
+                expanded: root.expandedAccountLimits
+                liveActivity: activityBackend.useLive
+                activity: activityBackend
+                proxyMode: root.proxyMode
+                resetAllowed: !resetBackend.active && !resetBackend.busy
+                hideAccountEmails: root.hideAccountEmails
+                historyOpen: root.historyOpen[String(modelData.id)] === true
+                historyMode: root.historyMode
+                labelWidth: root.labelColumnWidth
+                labelColumn: labelRegistry
+                iconSource: root.iconUrl(modelData)
                 nowMs: root.nowMs
+                minuteMs: root.minuteMs
                 refreshing: backend.loading
                 warningThreshold: root.warningThreshold
                 criticalThreshold: root.criticalThreshold
@@ -1034,50 +1047,13 @@ Ui.Panel {
                 urgent: root.urgent
                 fontFamily: root.fontFamily
                 cardRadius: root.usageCardRadius
+                onResetRequested: function(account, label) { resetBackend.begin(account, label) }
+                onHistoryToggled: function(open) {
+                  if (open !== (root.historyOpen[String(modelData.id)] === true)) root.toggleHistory(String(modelData.id))
+                }
+                onRangeRequested: function(mode) { root.historyMode = mode }
               }
             }
-          }
-
-          Column {
-            id: creditsSection
-            visible: root.viewMode === "limits" && !root.accountOverview && !!root.provider
-              && root.provider.status === "ok" && !!root.provider.credits
-            width: parent.width
-            spacing: Style.spacing.lg
-
-            Ui.PanelSectionHeader {
-              text: root.provider && root.provider.credits
-                ? String(root.provider.credits.label || "CREDITS").toUpperCase() : "CREDITS"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            CreditsCard {
-              width: parent.width
-              credits: root.provider ? root.provider.credits : null
-              warningThreshold: root.warningThreshold
-              foreground: root.foreground
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-              cardRadius: root.usageCardRadius
-            }
-          }
-
-          Ui.PanelSeparator {
-            visible: root.viewMode === "limits" && history.visible
-            foreground: root.foreground
-          }
-
-          UsageHistory {
-            id: history
-            objectName: "quotaHistory"
-            visible: root.viewMode === "limits" && root.historyAvailable
-            width: parent.width
-            history: root.provider ? root.provider.history : ({ h24: [], d7: [] })
-            mode: root.historyMode
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            onRangeRequested: function(mode) { root.historyMode = mode }
           }
 
           UsageCosts {

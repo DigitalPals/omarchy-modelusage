@@ -329,3 +329,118 @@ assert.equal(context.limitLabel(""), "Usage limit");
 assert.equal(context.insecureRemoteUrl("http://[::1"), true, "a malformed IPv6 host warns");
 assert.equal(context.sessionBadgeText({sessions: 1}), "1 session");
 console.log("UsageLogic.js stale readings and resets: passed");
+
+// Compact Limits rows: one line per account, details in the tooltip.
+{
+  const weekly = {id: "weekly", label: "Weekly limit", windowSeconds: 604800, remaining: 85, resetsAt: at(45 * 3600)};
+  const session = {id: "session", label: "5 hour limit", windowSeconds: 18000, remaining: 8, resetsAt: at(42 * 60)};
+  const opus = {id: "opus", label: "Opus weekly", windowSeconds: 604800, remaining: 70, resetsAt: at(45 * 3600)};
+  const claude = {id: "claude", status: "ok", plan: "Claude Ultra", windows: [session, weekly, opus],
+    statusItems: [{kind: "info", text: "No 5-hour limit", at: null},
+      {kind: "renewal", text: "Renews", at: Date.UTC(2030, 0, 24, 12) / 1000},
+      {kind: "cooldown", text: "Cooling down", at: at(720)}]};
+
+  assert.equal(context.shortLimitLabel("Weekly limit"), "Weekly");
+  assert.equal(context.shortLimitLabel("Code review · Weekly limit"), "Code review · Weekly");
+  assert.equal(context.shortLimitLabel("Kimi K2.5 five-hour window"), "Kimi K2.5 five-hour window");
+  assert.equal(context.shortLimitLabel(""), "Usage");
+
+  const compact = context.accountRowWindows(claude, false, 25, 10);
+  assert.equal(compact.main.id, "weekly", "the row meter is the plain weekly allowance");
+  assert.equal(json(compact.extra.map((row) => row.id)), json(["session"]), "a spent shorter window gets its own row");
+  const relaxed = context.accountRowWindows({...claude, windows: [{...session, remaining: 90}, weekly, opus]}, false, 25, 10);
+  assert.equal(relaxed.extra.length, 0, "healthy shorter windows stay in the tooltip");
+  const expanded = context.accountRowWindows(claude, true, 25, 10);
+  assert.equal(json(expanded.extra.map((row) => row.id)), json(["session", "opus"]), "Details lists every other limit");
+  const listLikeWindows = context.accountRowWindows({windows: {0: weekly, 1: session, length: 2}}, true, 25, 10);
+  assert.equal(listLikeWindows.main.id, "weekly");
+  assert.equal(listLikeWindows.extra.length, 1, "list-like windows still separate the main meter");
+  assert.equal(context.accountRowWindows({windows: []}, false).main, null);
+
+  assert.equal(context.accountsCaption([claude, {...claude}]), "weekly · resets");
+  assert.equal(context.accountsCaption([claude, {...claude, windows: [{label: "Monthly limit"}]}]), "left · resets");
+  assert.equal(context.accountsCaption([{...claude, status: "error"}]), "");
+  assert.equal(context.accountsCaption([{...claude, windows: [{label: "Gemini 3 Pro"}]}]), "Gemini 3 Pro · resets");
+
+  const codex = (planType) => ({id: "codex", status: "ok", planType, windows: []});
+  assert.equal(context.providerTitle({id: "codex", name: "OpenAI Codex"}, [codex("pro"), codex("pro")]), "Codex Pro · 20×");
+  assert.equal(context.providerTitle({id: "codex", name: "OpenAI Codex"}, [codex("pro"), codex("prolite")]), "OpenAI Codex",
+    "mixed plans name the provider");
+  assert.equal(context.providerTitle({id: "codex", name: "OpenAI Codex"}, [codex("pro"), {id: "codex", status: "disabled"}]),
+    "Codex Pro · 20×", "an account without a plan does not make the plans mixed");
+  assert.equal(context.providerTitle({id: "claude", name: "Claude Code", plan: "Claude Max 20x"}, []), "Claude Max 20x");
+  assert.equal(context.providerTitle({id: "gemini", name: "Gemini"}, []), "Gemini");
+  assert.equal(context.accountPlanTag(codex("prolite"), "OpenAI Codex"), "Pro · 5×");
+  assert.equal(context.accountPlanTag(codex("pro"), "Codex Pro · 20×"), "", "a plan shown in the header is not repeated");
+  assert.equal(context.accountPlanTag({id: "codex"}, "OpenAI Codex"), "");
+
+  assert.equal(context.accountDisplayName({account: "a@example.invalid"}, 3, true), "Account 3");
+  assert.equal(context.accountDisplayName({account: "a@example.invalid"}, 3, false), "a@example.invalid");
+  assert.equal(context.accountIssue({status: "ok"}), "");
+  assert.equal(context.accountIssue({status: "disabled"}), "Paused");
+  assert.equal(context.accountIssue({status: "error", errorKind: "expired"}), "Sign-in expired");
+  assert.equal(context.accountIssue({status: "error", errorKind: "network"}), "Unavailable");
+  assert.equal(context.accountIssue({status: "unsupported", notice: "Quota lookup unavailable"}), "Quota lookup unavailable");
+  assert.equal(context.errorBody({message: "Expired", errorKind: "expired", authCommand: "kimi login"}),
+    "Expired Run “kimi login” in a terminal, then refresh.");
+
+  assert.equal(context.remainingText(weekly, false), "85%");
+  assert.equal(context.remainingText(weekly, true), "85%?", "a last-known reading is marked like the bar chip");
+  assert.equal(context.remainingText({remaining: null}, false), "—");
+  assert.equal(context.resetShort(weekly, now), "1d 21h");
+  assert.equal(context.resetShort(session, now), "42m");
+  assert.equal(context.resetShort({resetsAt: at(-1)}, now), "due");
+  assert.equal(context.resetShort({resetsAt: null}, now), "");
+  assert.match(context.resetClause(weekly, now), /^Resets [A-Z][a-z]{2} \d+, \d\d:\d\d \(in 1d 21h\)$/);
+  assert.match(context.resetClause(session, now), /^Resets \d\d:\d\d \(in 42m\)$/);
+  assert.equal(context.resetClause({resetsAt: at(-1)}, now, true), "Reset due · updating");
+  assert.match(context.windowSummary(weekly, now), /^Weekly limit: 85% left · resets [A-Z][a-z]{2} \d+, \d\d:\d\d \(in 1d 21h\)$/);
+  assert.equal(context.windowSummary({label: "Spend limit", remaining: 76, detail: "$12.00 used of $50.00"}, now),
+    "Spend limit: 76% left · $12.00 used of $50.00");
+  assert.equal(context.windowSummary({label: "Code review", remaining: 3, informational: true}, now),
+    "Code review: 3% left · informational");
+  assert.match(context.windowFacts(weekly, now), /^Resets [A-Z][a-z]{2} \d+, \d\d:\d\d$/, "Details omits the countdown the row shows");
+  assert.match(context.resetClause(weekly, now + 30000), /\(in 1d 20h\)$/, "the tooltip countdown matches the reset column");
+  assert.equal(context.resetShort(weekly, now + 30000), "1d 20h");
+  assert.equal(context.windowFacts({detail: "x"}, now), "x");
+
+  const details = context.accountDetails({...claude, credits: {label: "Extra usage", currency: "USD", remaining: 37.5}},
+    {label: "Account 1", nowMs: now, liveActivity: true, load: {sessions: 2}});
+  const lines = details.split("\n");
+  assert.equal(lines[0], "Account 1 · Claude Ultra");
+  assert.ok(lines.some((line) => /^Weekly limit: 85% left/.test(line)), "every limit is in the tooltip");
+  assert.ok(lines.some((line) => /^5 hour limit: 8% left/.test(line)));
+  assert.ok(lines.includes("No 5-hour limit") && lines.some((line) => /^Renews Jan 2[34]$/.test(line)));
+  assert.ok(lines.includes("Cooling down · 12m"));
+  assert.ok(lines.includes("Extra usage: $37.50 remaining"));
+  assert.ok(lines.some((line) => /^2 sessions assigned/.test(line)));
+  assert.ok(!details.includes("banked reset"), "Claude without Fusebox has no reset line");
+  const withResets = context.accountDetails({id: "codex", status: "ok", windows: [], credits: {resetCreditsAvailable: 2}},
+    {label: "Account 2", resetEnabled: true});
+  assert.ok(withResets.includes("No subscription limits reported."));
+  assert.ok(withResets.includes("2 banked resets · click ↺ to apply one"));
+  const failedDetails = context.accountDetails({status: "error", errorKind: "expired", message: "Sign in again.", windows: [weekly]},
+    {label: "Account 3"});
+  assert.equal(failedDetails, "Account 3\nSign in again.", "a failed account shows its error, not old limits");
+  assert.ok(context.accountDetails({...claude, stale: true, notice: "Last known reading · Proxy offline"}, {})
+    .endsWith("Last known reading · Proxy offline"));
+
+  const facts = context.accountFacts(claude, weekly, now);
+  assert.match(facts, /^Resets [A-Z][a-z]{2} \d+, \d\d:\d\d · No 5-hour limit · Renews Jan 2[34]$/,
+    "Details shows the reset time and quiet facts; urgent facts have their own line");
+  assert.equal(json(context.urgentAccountFacts(claude, now)), json(["Cooling down · 12m"]));
+  assert.equal(context.urgentAccountFacts({statusItems: []}, now).length, 0);
+
+  const pooled = (id, count) => ({id, status: "ok", accounts: Array.from({length: count}, () => ({status: "ok"}))});
+  assert.equal(context.limitsContext([pooled("claude", 4), pooled("codex", 2), pooled("meta", 1)], true), "7 accounts · 3 providers");
+  assert.equal(context.limitsContext([pooled("claude", 1)], true), "1 account");
+  assert.equal(context.limitsContext([provider("claude", 40), provider("codex", 20)], false), "2 providers");
+  assert.equal(context.limitsContext([provider("claude", 40)], false), "");
+
+  assert.equal(context.hasQuotaHistory({status: "ok", history: {h24: [1], d7: []}}), true);
+  assert.equal(context.hasQuotaHistory({status: "ok", history: {h24: [], d7: []}}), false);
+  assert.equal(context.hasQuotaHistory({status: "ok", accounts: [{}], history: {h24: [1]}}), false,
+    "managed accounts have no shared chart");
+  assert.equal(context.hasQuotaHistory({status: "error", history: {h24: [1]}}), false);
+  console.log("UsageLogic.js compact rows: passed");
+}

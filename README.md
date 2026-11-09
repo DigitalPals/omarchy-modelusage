@@ -10,11 +10,11 @@ AI subscription limits, token activity, and estimated API costs in your Omarchy 
 
 <table>
   <tr>
-    <th>Three Codex subscriptions · CLIProxyAPI</th>
+    <th>Every provider at once · CLIProxyAPI</th>
     <th>Costs · estimated API value</th>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/model-usage-panel.png" alt="Three separate Codex Pro 20× account cards with weekly quotas, reset times, and banked reset counts" width="420"></td>
+    <td valign="top"><img src="docs/model-usage-panel.png" alt="Limits with one card per provider: two Claude accounts, three Codex Pro 20× accounts with banked-reset pills, two Kimi accounts and an unsupported Gemini provider, one line per account with weekly meter, percentage left and reset countdown" width="420"></td>
     <td valign="top"><img src="docs/model-usage-costs.png" alt="30-day API cost estimate with a daily chart, Claude and Codex totals, and expandable token and model details" width="420"></td>
   </tr>
 </table>
@@ -23,12 +23,12 @@ Rendered from the test fixtures (synthetic data, not live accounts), November 20
 
 ## Highlights
 
-- **Multiple subscriptions:** Fusebox and CLIProxyAPI discover managed accounts automatically. Each account gets its own quota card, plan, reset time, and supported credits. Fusebox adds Meta and Antigravity quotas, model and spending limits, renewals, and cooldowns. Banked resets can be reviewed and applied with confirmation: Codex through either proxy, Claude through Fusebox.
-- **Live Fusebox activity:** a session-count badge sits in the upper-right of each account card, aligned with the subscription title. Click or hover for details. Counts represent Fusebox's recent assigned sessions and may remain after requests finish. Disconnected streams show “Sessions unknown” and keep quota readings. The menu bar shows quota percentages only. No model display or continuous animations.
+- **Multiple subscriptions:** Fusebox and CLIProxyAPI discover managed accounts automatically. Limits shows every provider at once, one card each, with one compact line per account: meter, percentage left and reset countdown. Hover a line for the plan, every limit, renewal, credits and session details, or press **Details** (`a`) to show them inline. Fusebox adds Meta and Antigravity quotas, model and spending limits, renewals, and cooldowns. Banked resets can be reviewed and applied with confirmation: Codex through either proxy, Claude through Fusebox.
+- **Live Fusebox activity:** a session-count pill sits beside each account name; hover the line for details. Counts represent Fusebox's recent assigned sessions and may remain after requests finish. While the stream is disconnected, one line above the cards says so, the pills are hidden, and quota readings stay. The menu bar shows quota percentages only. No model display or continuous animations.
 - **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. Fusebox reports last-used accounts directly; Go proxies can use optional [CPA Usage Keeper](docs/keeper-deployment.md) activity.
 - **Combined cost history:** local Codex/Claude transcripts and up to four [T3 Code](https://github.com/pingdotgg/t3code) servers in one 24H/7D/30D view, with API estimates, tokens, and provider/model breakdowns, plus Fusebox's priced usage history.
 - **Improved accounting:** common pricing across sources, cache-aware token costs, shared-folder deduplication, corrected handling of equal-sized Codex responses, custom model rates, and incremental scans.
-- **Cleaner UI:** Limits/Costs tabs, a compact provider menu, expandable details, separate quota and cost settings, fixed Save/Cancel controls, and square usage cards with a theme-corner option. Keyboard navigation and Omarchy theme/scaling support are built in.
+- **Cleaner UI:** Limits/Costs tabs, every provider on one page with details in tooltips, separate quota and cost settings, fixed Save/Cancel controls, and square usage cards with a theme-corner option. Keyboard navigation and Omarchy theme/scaling support are built in.
 
 See the [changelog](CHANGELOG.md) for the complete update history.
 
@@ -72,7 +72,7 @@ Sign in to each provider you want to monitor, then open **Limits → gear** and 
 The plugin reads existing CLI credentials; sign-in and credential renewal remain with the CLI. CLI-owned environment overrides are honored; see the [configuration reference](docs/configuration.md#providers-and-authentication).
 
 <p align="center">
-  <img src="docs/model-usage-local-cli.png" alt="Local Claude Code mode with session, weekly and model-specific limits, extra usage remaining, and 24-hour quota history" width="420">
+  <img src="docs/model-usage-local-cli.png" alt="Local CLI mode with Claude, Codex and Kimi cards: one line per session, weekly and model-specific limit, extra usage and credits, and Claude's 24-hour quota history expanded" width="420">
 </p>
 
 The current UI rendered with representative fixture data; this is a local CLI mode example, not a live account reading.
@@ -118,10 +118,10 @@ Full connection, credential, settings, reset-credit, and troubleshooting details
 
 ### Subscription limits and the menu bar
 
-Limits are provider-reported subscription allowances. Cards, bar chips, and extra-usage meters show **what remains**; the quota-history chart (**Quota used**) records **percentage used**. Extra usage, credit balances, and banked reset counts appear only when the provider exposes them. A provider whose reading fails keeps its bar chip as `!`, with the error in the tooltip; a last-known reading kept through a proxy outage shows as `90%?`. Both make the widget icon urgent. When a reset time passes while the panel is open, the reading refreshes once; until a new reading arrives the card says so instead of showing an old meter as current. Prepaid Kimi wallets show their **balance** separately from the monthly charge cap; credits without a currency are labeled as credits.
+Limits are provider-reported subscription allowances. Rows, bar chips, and extra-usage meters show **what remains**; the quota-history chart (**Quota used**) records **percentage used**. Extra usage, credit balances, and banked reset counts appear only when the provider exposes them. A provider whose reading fails keeps its bar chip as `!`, with the error in the tooltip; a last-known reading kept through a proxy outage shows as `90%?`. Both make the widget icon urgent. When a reset time passes while the panel is open, the reading refreshes once; until a new reading arrives the row says “due” and its tooltip explains, instead of showing an old meter as current. Prepaid Kimi wallets show their **balance** separately from the monthly charge cap; credits without a currency are labeled as credits.
 
-- **Local mode** shows the signed-in account's reported session, weekly, model-specific, and other windows. Its bar percentage uses the most restrictive reported window.
-- **Proxy mode** shows each subscription separately. Cards default to overall weekly limits, then other weekly/monthly allowances or the first reported window. A shorter window at warning or critical level that is tighter than that allowance, such as a spent 5-hour limit, is shown first. **Additional limits** (above the cards, `a`, shown only when there is more to see) reveals the other windows. Three subscriptions remain three readings: percentages are never added or averaged across accounts.
+- **Local mode** shows one line per reported session, weekly, model-specific, and other window, then credits; each provider's 24H/7D chart opens under **Quota history**. Its bar percentage uses the most restrictive reported window.
+- **Proxy mode** shows each subscription as its own line. The meter shows the overall weekly limit, then another weekly/monthly allowance or the first reported window; a plan shared by every account heads the card once, and differing plans are tagged on each line. A shorter window at warning or critical level that is tighter than that allowance, such as a spent 5-hour limit, gets an indented line of its own. Urgent account facts, such as cooldowns, stay visible; everything else is in the line's tooltip, or inline with **Details** (`a`). Three subscriptions remain three readings: percentages are never added or averaged across accounts.
 - **Proxy bar selection:** native Rust activity or matching Go/Keeper activity selects the last-used account, whose most restrictive window supplies the percentage. Without matching activity, or with tied timestamps, the bar uses the best-capacity account and labels that fallback in its tooltip. This is the latest recorded request, not a prediction of which account the next request will use. Fusebox live activity uses one shared `/api/live` WebSocket per proxy connection; cached account inventory refreshes at most every 15 seconds during activity, every 60 seconds when idle. Go/Keeper and Rust with live disabled retain 15-second last-used polling; quota polling is separate. Rust activity reflects completed requests, including failures, and resets when the server restarts.
 - **Quota history** starts with successful widget readings and survives restarts. It is sampled allowance usage, not a reconstructed request log. Proxy history records the best-capacity pool summary, with separate storage per server and separate direct-CLI history. Failed readings are not recorded as zero.
 
@@ -171,14 +171,13 @@ Public prices refresh daily and are cached for offline use. **Refresh in Costs**
 
 | Action | Control |
 |---|---|
-| Open/close the panel | Left click; a percentage chip opens its provider |
-| Next provider | Middle click |
-| Select provider in Limits | `h` / `l`, Left / Right, or provider menu (`p`) |
+| Open/close the panel | Left click; a percentage chip opens Limits at its provider's card |
+| Jump to the next provider's card | Middle click, or `h` / `l` and Left / Right in Limits |
 | Switch tabs | `c` for Costs, `u` for Limits |
 | Refresh the current view | `r` or Enter |
 | Scroll | `j` / `k` or Down / Up |
 | Costs period / Limits history range | `[` / `]` |
-| Show every limit on each managed account | `a` or **Additional limits** |
+| Show every limit, reset time and account fact inline | `a` or **Details** |
 | Costs metric / token details / model breakdown | `m` / `d` / `b` |
 | Settings for the current tab | Gear or `s` |
 | Show the keys that work in the current view | `?` or the **?** button |

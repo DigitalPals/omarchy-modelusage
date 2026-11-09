@@ -150,7 +150,8 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn('lines.push("Account: " + String(provider.account))', panel)
         self.assertIn('lines.push("Source: " + String(provider.source))', panel)
         self.assertIn('iconText: "󰒓"', panel)
-        self.assertIn("accountDetails: root.accountTooltip(root.provider)", panel)
+        self.assertIn("accountDetails: root.accountDiagnostics()", panel)
+        self.assertIn("const details = accountTooltip(providers[i])", panel)
 
 
 if __name__ == "__main__":

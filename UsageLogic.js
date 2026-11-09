@@ -653,7 +653,10 @@ function primaryAccountWindows(rows) {
 // what actually limits requests (e.g. a spent 5-hour limit), so it is shown
 // too, first and tightest first.
 function accountWindows(account, expanded, warningThreshold, criticalThreshold) {
-  var rows = listOrEmpty(account && account.windows)
+  return selectAccountWindows(listOrEmpty(account && account.windows), expanded, warningThreshold, criticalThreshold)
+}
+
+function selectAccountWindows(rows, expanded, warningThreshold, criticalThreshold) {
   if (expanded) return rows
   var shown = primaryAccountWindows(rows)
   if (warningThreshold === undefined || warningThreshold === null) return shown
@@ -684,6 +687,231 @@ function hasAdditionalWindows(accounts, warningThreshold, criticalThreshold) {
         < listOrEmpty(list[i].windows).length) return true
   }
   return false
+}
+
+// ------------------------------------------------------------ Compact rows
+
+// One line per account or limit. The row's meter shows the main allowance;
+// everything else is in the row tooltip, or inline when Details is open.
+
+// "Weekly limit" → "Weekly". Rows and column captions omit the word "limit".
+function shortLimitLabel(label) {
+  var text = String(label || "").replace(/\s+limit$/i, "").trim()
+  return text === "" ? "Usage" : text
+}
+
+// The meter an account row shows (its first weekly/monthly allowance, or its
+// only window), and the windows shown beneath it: tighter shorter windows
+// and other main allowances, or, expanded, every other window. One list is
+// read once, so the main window is found by identity on every Quickshell build.
+function accountRowWindows(account, expanded, warningThreshold, criticalThreshold) {
+  var rows = Array.prototype.slice.call(listOrEmpty(account && account.windows))
+  var primary = primaryAccountWindows(rows)
+  var main = primary.length > 0 ? primary[0] : null
+  var shown = selectAccountWindows(rows, expanded, warningThreshold, criticalThreshold)
+  var extra = []
+  for (var i = 0; i < shown.length; i++) if (shown[i] !== main) extra.push(shown[i])
+  return { main: main, extra: extra }
+}
+
+// The header caption over the percentage and reset columns: "weekly · resets"
+// when every account's meter is the same allowance.
+function accountsCaption(accounts) {
+  var list = listOrEmpty(accounts)
+  var labels = []
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || list[i].status !== "ok") continue
+    var main = accountRowWindows(list[i], false).main
+    if (!main) continue
+    var label = shortLimitLabel(main.label)
+    if (/^(?:weekly|monthly|daily|\d+ hour)$/i.test(label)) label = label.toLowerCase()
+    if (labels.indexOf(label) < 0) labels.push(label)
+  }
+  if (labels.length === 1) return labels[0] + " · resets"
+  return labels.length > 1 ? "left · resets" : ""
+}
+
+function hasPlan(account) {
+  return !!account && String(account.planType || account.plan || "") !== ""
+}
+
+// A plan every account shares heads the card; mixed plans name the provider
+// and tag each row with its own plan instead.
+function providerTitle(provider, accounts) {
+  var list = listOrEmpty(accounts)
+  var plans = []
+  for (var i = 0; i < list.length; i++) {
+    if (!hasPlan(list[i])) continue
+    var plan = accountPlanLabel(list[i])
+    if (plans.indexOf(plan) < 0) plans.push(plan)
+  }
+  if (plans.length === 1) return plans[0]
+  if (list.length === 0 && provider && String(provider.plan || "") !== "") return accountPlanLabel(provider)
+  return String(provider && (provider.name || provider.id) || "Provider")
+}
+
+// "Codex Pro · 5×" → "Pro · 5×" beside an account whose plan differs from
+// the card title.
+function accountPlanTag(account, title) {
+  if (!hasPlan(account)) return ""
+  var plan = accountPlanLabel(account)
+  if (plan === title) return ""
+  var words = plan.split(" ")
+  return words.length > 1 ? words.slice(1).join(" ") : plan
+}
+
+function accountDisplayName(account, index, hideEmails) {
+  return hideEmails ? "Account " + index : String(account && account.account || "Account " + index)
+}
+
+// Replaces an account's meter when it has no current reading.
+function accountIssue(account) {
+  if (!account || account.status === "ok") return ""
+  if (account.status === "disabled") return "Paused"
+  if (account.status === "error") {
+    switch (account.errorKind) {
+    case "expired": return "Sign-in expired"
+    case "no_credentials": return "Sign-in required"
+    case "rate_limited": return "Rate limited"
+    case "timeout": return "Timed out"
+    case "config": return "Configuration required"
+    default: return "Unavailable"
+    }
+  }
+  return String(account.notice || "Quota unavailable")
+}
+
+function errorBody(provider) {
+  if (!provider) return ""
+  var message = String(provider.message || "Usage data is unavailable.")
+  if (provider.authCommand && (provider.errorKind === "no_credentials" || provider.errorKind === "expired"))
+    message += " Run “" + provider.authCommand + "” in a terminal, then refresh."
+  return message
+}
+
+function remainingText(window, stale) {
+  var remaining = windowRemaining(window)
+  return remaining === null ? "—" : Math.round(remaining) + "%" + (stale ? "?" : "")
+}
+
+// The reset column: "1d 21h", "3h 12m", "42m", or "due" once it has passed.
+function resetShort(window, nowMs) {
+  var at = Number(window && window.resetsAt)
+  if (!isFinite(at) || at <= 0) return ""
+  if (at * 1000 <= nowMs) return "due"
+  return shortDuration(Math.ceil(at - nowMs / 1000))
+}
+
+// "Resets Nov 11, 17:00" for the Details line, beside the row's countdown.
+function resetDate(window, nowMs, refreshing) {
+  var at = Number(window && window.resetsAt)
+  if (!isFinite(at) || at <= 0) return ""
+  if (at * 1000 <= nowMs) return refreshing ? "Reset due · updating" : "Reset due · awaiting a new reading"
+  return "Resets " + clockText(at, nowMs)
+}
+
+// "Resets Nov 11, 17:00 (in 1d 21h)" for tooltips, with the row's countdown.
+function resetClause(window, nowMs, refreshing) {
+  var text = resetDate(window, nowMs, refreshing)
+  var at = Number(window && window.resetsAt)
+  if (text === "" || at * 1000 <= nowMs) return text
+  return text + " (in " + resetShort(window, nowMs) + ")"
+}
+
+// One tooltip line per limit: "Weekly limit: 85% left · resets 17:00 (in 3h 2m)".
+function windowSummary(window, nowMs, refreshing) {
+  if (!window) return ""
+  var remaining = windowRemaining(window)
+  var text = String(window.label || "Usage limit") + ": "
+    + (remaining === null ? "unknown" : Math.round(remaining) + "% left")
+  var reset = resetClause(window, nowMs, refreshing)
+  if (reset !== "") text += " · " + reset.charAt(0).toLowerCase() + reset.slice(1)
+  if (window.detail) text += " · " + String(window.detail)
+  if (window.informational === true) text += " · informational"
+  return text
+}
+
+// The Details line under a limit row.
+function windowFacts(window, nowMs, refreshing) {
+  if (!window) return ""
+  var parts = []
+  var reset = resetDate(window, nowMs, refreshing)
+  if (reset !== "") parts.push(reset)
+  if (window.detail) parts.push(String(window.detail))
+  return parts.join(" · ")
+}
+
+function accountCreditsText(account) {
+  var credits = account && account.credits
+  if (!credits || !(present(credits.remaining) || present(credits.used) || credits.unlimited)) return ""
+  return String(credits.label || "Credits") + ": " + creditsPrimary(credits)
+}
+
+// Everything about one account, for its row tooltip: plan, every limit,
+// Fusebox facts, credits, banked resets, sessions and reading age.
+function accountDetails(account, options) {
+  if (!account) return ""
+  var opts = options || {}
+  var lines = []
+  var plan = hasPlan(account) ? accountPlanLabel(account) : ""
+  lines.push(String(opts.label || "Account") + (plan !== "" ? " · " + plan : ""))
+  if (account.status === "error") lines.push(errorBody(account))
+  else if (account.status !== "ok") lines.push(accountIssue(account))
+  var windows = account.status === "ok" ? listOrEmpty(account.windows) : []
+  for (var i = 0; i < windows.length && i < 12; i++) lines.push(windowSummary(windows[i], opts.nowMs, opts.refreshing))
+  if (account.status === "ok" && windows.length === 0) lines.push("No subscription limits reported.")
+  // Fact countdowns tick per minute, like the urgent facts under the row.
+  var facts = accountStatusItems(account, opts.minuteMs !== undefined ? opts.minuteMs : opts.nowMs)
+  for (var j = 0; j < facts.length; j++) lines.push(facts[j].text)
+  var credits = accountCreditsText(account)
+  if (credits !== "") lines.push(credits)
+  var resets = accountResetLabel(account)
+  if (resets !== "") lines.push(resets + (opts.resetEnabled ? " · click ↺ to apply one" : ""))
+  if (opts.liveActivity) lines.push(sessionDetails(opts.load || null))
+  if (account.stale === true) lines.push(String(account.notice || "Last known reading; it may be out of date."))
+  return lines.join("\n")
+}
+
+// The Details line under an account row: when its meter resets, and the
+// account facts that are not urgent (urgent ones are always shown).
+function accountFacts(account, main, nowMs, refreshing) {
+  if (!account) return ""
+  var parts = []
+  var reset = resetDate(main, nowMs, refreshing)
+  if (reset !== "") parts.push(reset)
+  var facts = accountStatusItems(account, nowMs)
+  for (var i = 0; i < facts.length; i++) if (!facts[i].urgent) parts.push(facts[i].text)
+  var credits = accountCreditsText(account)
+  if (credits !== "") parts.push(credits)
+  if (account.stale === true) parts.push(String(account.notice || "Last known reading"))
+  return parts.join(" · ")
+}
+
+// Urgent Fusebox facts (cooldowns, warnings, errors) stay visible under the row.
+function urgentAccountFacts(account, nowMs) {
+  var facts = accountStatusItems(account, nowMs)
+  var result = []
+  for (var i = 0; i < facts.length; i++) if (facts[i].urgent) result.push(facts[i].text)
+  return result
+}
+
+// Local providers keep a 24H/7D chart; managed accounts have none.
+function hasQuotaHistory(provider) {
+  if (!provider || provider.status !== "ok" || listOrEmpty(provider.accounts).length > 0) return false
+  var history = provider.history
+  return !!history && ((isListLike(history.h24) && history.h24.length > 0)
+    || (isListLike(history.d7) && history.d7.length > 0))
+}
+
+// The line under the Limits tabs: "7 accounts · 3 providers".
+function limitsContext(providers, proxyMode) {
+  var list = listOrEmpty(providers)
+  var accounts = 0
+  for (var i = 0; i < list.length; i++) accounts += listOrEmpty(list[i] && list[i].accounts).length
+  var parts = []
+  if (proxyMode && accounts > 0) parts.push(plural(accounts, "account"))
+  if (list.length > 1) parts.push(plural(list.length, "provider"))
+  return parts.join(" · ")
 }
 
 function errorTitle(provider) {

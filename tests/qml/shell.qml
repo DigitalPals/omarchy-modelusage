@@ -37,6 +37,16 @@ ShellRoot {
     if (actual !== expected) fail(message + " expected=" + expected + " actual=" + actual)
   }
   function finite(value) { return isFinite(Number(value)) && Number(value) >= 0 }
+  function providerById(panel, id) {
+    for (var i = 0; i < panel.providers.length; i++)
+      if (panel.providers[i].id === id) return panel.providers[i]
+    return null
+  }
+  function accountRowsOf(card) {
+    var rows = []
+    if (card) for (var i = 0; i < card.accountRows.count; i++) rows.push(card.accountRows.itemAt(i))
+    return rows
+  }
 
   function namedChild(item, name) {
     if (item.objectName === name) return item
@@ -213,52 +223,73 @@ ShellRoot {
     }
     if (proxyWidget) {
       assertEqual(proxyWidget.providers.length, 4, "proxy popup includes newly discovered providers with no local selection")
-      proxyWidget.selectProviderId("codex")
-      assertEqual(proxyWidget.proxyAccounts.length, 3, "all three Codex subscriptions are available together")
-      assertEqual(proxyWidget.accountCards.count, 3, "three separate Codex account cards are rendered")
-      assertEqual(proxyWidget.contextText().split(" · ")[0], "3 connected accounts", "account count heads the overview")
-      assertTrue(namedChild(proxyWidget.accountCards.itemAt(0), "accountResetBadge").border.width === 0,
-        "an unavailable reset is plain text, not a button")
-      assertTrue(proxyWidget.accountOverview, "proxy defaults to account overview")
+      assertEqual(proxyWidget.providerCards.count, 4, "every provider has its own card, with no provider to select")
+      var codexCard = proxyWidget.providerCard("codex")
+      var cards = accountRowsOf(codexCard)
+      assertEqual(cards.length, 3, "three Codex subscriptions get one row each")
+      assertEqual(proxyWidget.contextText().split(" · ")[0], "7 accounts", "the account count covers every provider")
+      assertEqual(proxyWidget.contextText().split(" · ")[1], "4 providers", "the provider count follows the accounts")
+      assertEqual(codexCard ? codexCard.title : "", "Codex Pro · 20×", "a plan every account shares heads the card once")
+      assertEqual(codexCard ? codexCard.caption : "", "weekly · resets", "the header names the column every row shows")
       assertTrue(!proxyWidget.expandedAccountLimits, "weekly limits are the default")
-      var cards = []
-      for (var i = 0; i < proxyWidget.accountCards.count; i++)
-        cards.push(proxyWidget.accountCards.itemAt(i))
-      assertEqual(cards.length, 3, "three account delegates exist in the panel")
+      assertTrue(proxyWidget.labelColumnWidth > 0, "rows report a shared name column")
       for (var i = 0; i < cards.length; i++) {
         assertEqual(cards[i].windows.length, 1, "each account initially shows only its weekly quota")
         assertEqual(cards[i].windows[0].id, "codex-secondary", "main weekly quota wins over scoped and session windows")
         assertEqual(cards[i].windows[0].remaining, [20, 55, 90][i], "account quotas are kept separate")
+        assertEqual(cards[i].mainRow.window.id, "codex-secondary", "the row meter is the weekly allowance")
+        assertEqual(cards[i].mainRow.labelWidth, proxyWidget.labelColumnWidth, "every row uses the shared name column")
+        assertEqual(cards[i].rowWindows.extra.length, 0, "healthy shorter limits stay in the tooltip")
+        assertEqual(namedChild(cards[i], "usageRowPercent").text, [20, 55, 90][i] + "%", "the row shows what is left")
+        assertTrue(namedChild(cards[i], "usageRowReset").text.indexOf("d ") > 0, "the row shows the reset countdown")
+        assertTrue(namedChild(cards[i], "usageRowDetail").visible === false, "details start hidden")
+        var tip = cards[i].mainRow.tooltipText
+        assertTrue(tip.indexOf("Account " + (i + 1) + " · Codex Pro · 20×") === 0, "the tooltip names the account and plan")
+        assertTrue(tip.indexOf("Weekly limit: " + [20, 55, 90][i] + "% left") >= 0, "the tooltip lists the account's limits")
+        assertTrue(tip.indexOf("5 hour limit: 99% left") >= 0, "the tooltip lists limits the row hides")
+        assertTrue(tip.indexOf(i + " banked reset") >= 0, "the tooltip names the banked resets, including zero")
+        assertTrue(tip.indexOf("@example.invalid") < 0, "hidden account emails stay out of tooltips")
         var badge = namedChild(cards[i], "accountResetBadge")
         var label = namedChild(cards[i], "accountResetLabel")
-        assertTrue(badge !== null && badge.width > 0 && badge.height > 0, "reset badge has a visible size")
-        assertEqual(label ? label.text : "", i + " banked reset" + (i === 1 ? "" : "s"), "each account shows its own banked resets including zero")
+        assertTrue(badge !== null && badge.visible === (i > 0), "only accounts with banked resets show the reset pill")
+        if (i > 0) {
+          assertTrue(badge.width > 0 && badge.height > 0, "reset pill has a visible size")
+          assertEqual(label ? label.text : "", "↺ " + i, "each account shows its own banked resets")
+        }
+        assertTrue(!namedChild(cards[i], "accountSessionBadge").visible, "unknown session counts add nothing to the row")
       }
+      assertTrue(cards.length > 0 && Qt.colorEqual(namedChild(cards[0], "usageRowPercent").color, proxyWidget.urgent),
+        "a weekly allowance at the warning level is drawn urgent")
       assertTrue(proxyWidget.hasAdditionalLimits, "the account fixture has more limits to reveal")
       proxyWidget.expandedAccountLimits = true
-      if (cards.length > 0) assertEqual(cards[0].windows.length, 4, "additional limits can be expanded")
-      proxyWidget.selectProviderId("gemini")
-      assertTrue(!proxyWidget.expandedAccountLimits, "provider navigation restores the compact view")
-      assertEqual(proxyWidget.provider.status, "unsupported", "unsupported quota is not shown as zero")
+      if (cards.length > 0) {
+        assertEqual(cards[0].windows.length, 4, "Details reveals every limit")
+        assertEqual(cards[0].rowWindows.extra.length, 3, "the other limits get indented rows")
+        assertTrue(namedChild(cards[0], "usageRowDetail").visible, "Details shows the reset time inline")
+      }
+      proxyWidget.expandedAccountLimits = false
+      var gemini = proxyWidget.providerCard("gemini")
+      assertTrue(gemini !== null && gemini.provider.status === "unsupported", "unsupported quota keeps its own card")
+      assertEqual(gemini ? namedChild(gemini, "providerCardNotice").text : "", "Quota lookup unavailable",
+        "unsupported quota is explained, not shown as zero")
       assertEqual(proxyWidget.viewOptions.length, 2, "proxy shows Limits and Costs only")
       assertTrue(proxyWidget.hideAccountEmails, "account emails are hidden by default")
       assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "Account 2", "hidden label contains no account identity")
       assertTrue(proxyWidget.accountTooltip({account: "secret@example.invalid"}).indexOf("secret") < 0, "settings cannot reveal hidden account identity")
       proxyWidget.settings = Object.assign({}, proxyWidget.settings,
         {barDisplayMode: "Percentages", barProviders: ["codex"]})
-      proxyWidget.selectProviderId("codex")
       proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ok", accountId: "0", lastUsedAt: 123}]
       var barLabel = namedChild(proxyWidget, "barAccountLabel")
       var barRemaining = namedChild(proxyWidget, "barAccountRemaining")
       assertTrue(barLabel === null, "bar contains no account name label")
-      assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "Account 1", "tooltip respects hidden account emails")
+      assertEqual(proxyWidget.lastAccount(providerById(proxyWidget, "codex")).label, "Account 1", "tooltip respects hidden account emails")
       assertEqual(barRemaining ? barRemaining.text : "", "20%", "bar quota belongs to last-used account")
       proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ok", accountId: "1", lastUsedAt: 124}]
-      assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "Account 2", "tooltip follows account switches")
+      assertEqual(proxyWidget.lastAccount(providerById(proxyWidget, "codex")).label, "Account 2", "tooltip follows account switches")
       assertEqual(barRemaining.text, "55%", "account switch updates quota together with label")
       proxyWidget.settings = Object.assign({}, proxyWidget.settings, {hideAccountEmails: false})
       assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "secret@example.invalid", "privacy setting can reveal account labels")
-      assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "codex-1@example.invalid", "tooltip reveals email only when requested")
+      assertEqual(proxyWidget.lastAccount(providerById(proxyWidget, "codex")).label, "codex-1@example.invalid", "tooltip reveals email only when requested")
       assertTrue(namedChild(proxyWidget, "barAccountLabel") === null, "emails stay out of the bar when privacy is disabled")
       proxyWidget.accountActivity.legacyProviders = []
       assertEqual(barRemaining.text, "9%", "missing activity still shows the known pool quota")
@@ -281,6 +312,11 @@ ShellRoot {
         "the chip tooltip explains why the reading is last known")
       assertTrue(proxyWidget.alarming, "one last-known account makes the icon urgent")
       assertTrue(proxyWidget.footerLeft().indexOf("some readings are last known") >= 0, "the footer does not look fresh")
+      var staleRows = accountRowsOf(proxyWidget.providerCard("codex"))
+      assertEqual(staleRows.length === 3 ? namedChild(staleRows[2], "usageRowPercent").text : "", "90%?",
+        "a last-known account row is marked like its chip")
+      assertTrue(staleRows.length === 3 && staleRows[2].mainRow.tooltipText.indexOf("Proxy offline") >= 0,
+        "the row tooltip explains the last-known reading")
       proxyWidget.usageBackend.payload = freshPayload
     }
     if (widget) {
@@ -290,46 +326,77 @@ ShellRoot {
       assertTrue(finite(widget.implicitWidth), "horizontal implicitWidth is finite")
       assertTrue(finite(widget.implicitHeight), "horizontal implicitHeight is finite")
       assertEqual(widget.providers.length, 3, "all normalized providers render")
-      assertEqual(widget.provider.id, "claude", "first provider is selected")
-      assertEqual(widget.provider.windows.length, 3, "arbitrary Claude windows render")
-      assertEqual(widget.heroMeta(widget.provider), "Claude Max 20x",
-        "hero keeps the subscription type visible")
-      assertTrue(widget.heroMeta(widget.provider).indexOf("fixture@example.invalid") < 0,
-        "hero hides account identity")
-      assertTrue(widget.accountTooltip(widget.provider).indexOf("Account: fixture@example.invalid") >= 0,
+      assertEqual(widget.providerCards.count, 3, "every provider has its own card at once")
+      var claude = providerById(widget, "claude")
+      var claudeCard = widget.providerCard("claude")
+      assertEqual(claudeCard ? claudeCard.windowRows.count : 0, 3, "arbitrary Claude windows render as rows")
+      assertEqual(claudeCard ? claudeCard.title : "", "Claude Max 20x", "the card keeps the subscription type visible")
+      assertEqual(claudeCard ? claudeCard.caption : "", "left · resets", "local rows label their own limits")
+      assertEqual(widget.heroMeta(claude), "Claude Max 20x", "hero keeps the subscription type visible")
+      assertTrue(widget.heroMeta(claude).indexOf("fixture@example.invalid") < 0, "hero hides account identity")
+      assertTrue(widget.accountTooltip(claude).indexOf("Account: fixture@example.invalid") >= 0,
         "account identity is available in settings")
-      assertTrue(widget.accountTooltip(widget.provider).indexOf("Source: Claude OAuth usage API") >= 0,
+      assertTrue(widget.accountTooltip(claude).indexOf("Source: Claude OAuth usage API") >= 0,
         "account source is available in settings")
+      assertTrue(widget.accountDiagnostics().indexOf("Claude Code\nAccount: fixture@example.invalid") === 0,
+        "settings diagnostics name every provider")
+      if (claudeCard) {
+        var fable = claudeCard.windowRows.itemAt(2)
+        assertTrue(fable.labelCellWidth <= Math.round(fable.width * 0.45), "a long limit name cannot squeeze the meter")
+        assertEqual(namedChild(fable, "usageRowPercent").text, "9%", "the critical model limit shows what is left")
+        assertTrue(fable.stressed, "a critical limit row uses the urgent color")
+        assertTrue(fable.tooltipText.indexOf("Fable 1M — an intentionally long model label weekly: 9% left") === 0,
+          "the tooltip carries the full limit name")
+        assertTrue(namedChild(claudeCard, "providerCreditsRow").visible, "Claude extra usage renders")
+      }
       assertEqual(widget.percentageMode, true, "percentages show with meaningful horizontal data")
       assertEqual(widget.percentageProviders.length, 3, "compact mode includes every meaningful provider")
       assertTrue(widget.alarming, "critical provider activates urgent state")
-      widget.nextProvider()
-      assertEqual(widget.provider.id, "codex", "next selects Codex")
-      assertEqual(widget.provider.windows.length, 4, "additional Codex windows render")
-      assertTrue(widget.provider.credits !== null, "Codex credits render")
-      widget.nextProvider()
-      assertEqual(widget.provider.id, "kimi", "next selects Kimi")
-      assertTrue(widget.provider.credits !== null, "Kimi extra usage renders")
+      var codexLocal = widget.providerCard("codex")
+      assertEqual(codexLocal ? codexLocal.windowRows.count : 0, 4, "additional Codex windows render")
+      assertTrue(codexLocal && namedChild(codexLocal, "providerCreditsRow").visible, "Codex credits render")
+      if (codexLocal) {
+        var dayLimit = namedChild(codexLocal.windowRows.itemAt(2), "usageRowLabel")
+        var spendLimit = namedChild(codexLocal.windowRows.itemAt(3), "usageRowLabel")
+        assertTrue(!dayLimit.truncated && !spendLimit.truncated && dayLimit.lineCount === 2,
+          "similar long model limits wrap instead of losing the ending that tells them apart")
+      }
+      assertEqual(codexLocal ? namedChild(codexLocal, "providerCreditsRow").message : "", "17.50 credits remaining",
+        "credits without a cap show their balance instead of a meter")
+      var kimiCard = widget.providerCard("kimi")
+      assertTrue(kimiCard && namedChild(kimiCard, "providerCreditsRow").visible, "Kimi extra usage renders")
+      assertEqual(kimiCard ? namedChild(kimiCard, "providerCreditsRow").percentText : "", "75%",
+        "a capped balance fills with what is left of the cap")
+      assertEqual(widget.iconTooltip().split("\n").length, 4, "icon mode lists every provider")
       widget.handleProviderChipPress("codex", Qt.LeftButton)
-      assertEqual(widget.provider.id, "codex", "provider chip opens its provider directly")
+      assertEqual(widget.focusedProviderId, "codex", "a provider chip jumps to its provider")
       assertTrue(widget.opened, "provider chip opens the panel")
       widget.handleProviderChipPress("codex", Qt.LeftButton)
-      assertTrue(!widget.opened, "selected provider chip toggles the panel closed")
-      widget.selectProviderId("claude")
+      assertTrue(!widget.opened, "the same chip toggles the panel closed")
+      widget.stepProvider(1)
+      assertEqual(widget.focusedProviderId, "kimi", "→ jumps to the next provider")
+      widget.stepProvider(1)
+      assertEqual(widget.focusedProviderId, "claude", "→ wraps around")
       widget.viewMode = "limits"
-      var historyView = widget.quotaHistory
-      assertTrue(historyView !== null && widget.historyAvailable, "Claude fixture has quota history")
+      assertTrue(widget.historyAvailable, "the fixture has quota history")
+      assertTrue(widget.historyView("claude") === null, "quota history starts collapsed")
+      widget.toggleHistory("claude")
+      var historyView = widget.historyView("claude")
+      assertTrue(historyView !== null, "the history toggle opens the chart")
       if (historyView) {
         historyView.rangeRequested("d7")
         assertEqual(historyView.mode, "d7", "a range tab click updates the chart")
         widget.stepRange(-1)
         assertEqual(historyView.mode, "h24", "the keyboard range still drives the chart after a click")
       }
+      widget.toggleHistory("claude")
+      assertTrue(widget.historyView("claude") === null, "the chart collapses again")
       var limitKeys = widget.shortcutRows().map(function(row) { return row.action })
-      assertTrue(limitKeys.indexOf("history range") >= 0 && limitKeys.indexOf("provider") >= 0, "Limits legend lists its keys")
+      assertTrue(limitKeys.indexOf("history range") >= 0 && limitKeys.indexOf("jump to provider") >= 0
+        && limitKeys.indexOf("details") >= 0, "Limits legend lists its keys")
       widget.viewMode = "costs"
       var costKeys = widget.shortcutRows().map(function(row) { return row.action })
-      assertTrue(costKeys.indexOf("provider") < 0 && costKeys.indexOf("period") >= 0, "Costs legend lists only keys that work there")
+      assertTrue(costKeys.indexOf("jump to provider") < 0 && costKeys.indexOf("period") >= 0, "Costs legend lists only keys that work there")
       widget.viewMode = "limits"
       assertEqual(widget.windowSeverity({ remaining: 9 }), "critical", "critical quota state")
       assertEqual(widget.windowSeverity({ remaining: 20 }), "warning", "warning quota state")
@@ -433,7 +500,6 @@ ShellRoot {
 
   function startPanelChecks() {
     if (widget) {
-      if (screenshotMode) widget.selectProviderId("claude")
       panelPositionIndex = 0
       mapPanelAtCurrentEdge()
     } else {

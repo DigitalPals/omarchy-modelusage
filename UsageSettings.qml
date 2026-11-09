@@ -543,7 +543,7 @@ Column {
   Section {
     id: diagnosticsSection
     title: "Diagnostics"
-    Hint { text: root.draft.hideAccountEmails !== false ? root.accountDetails.replace(/^Account:.*(?:\n|$)/m, "") : root.accountDetails }
+    Hint { text: root.draft.hideAccountEmails !== false ? root.accountDetails.replace(/^Account:.*(?:\n|$)/gm, "") : root.accountDetails }
     Hint { text: "The widget uses an icon on vertical bars or when selected providers have no quota data." }
   }
 
