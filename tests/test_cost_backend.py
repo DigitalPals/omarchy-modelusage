@@ -268,6 +268,46 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(coverage[0]["status"], "failed")
         self.assertEqual(coverage[0]["skippedFiles"], 1)
 
+    def test_malformed_usage_lines_mark_coverage_partial(self):
+        valid = (FIXTURES / "claude-transcript.jsonl").read_text(encoding="utf-8").splitlines()[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transcript_root = root / "claude" / "projects"
+            transcript_root.mkdir(parents=True)
+            transcript = transcript_root / "session.jsonl"
+            # A complete malformed usage line is lost data; an unterminated
+            # last line may still be growing and is not counted.
+            transcript.write_text(valid + "\n" + '{"usage": broken\n' + '{"usage": still-writ', encoding="utf-8")
+            now_ms = int(transcript.stat().st_mtime * 1000)
+            with mock.patch.object(costs, "transcript_root", return_value=transcript_root):
+                records, coverage = costs.scan_transcripts(["claude"], root / "state", now_ms)
+                self.assertEqual(len(records), 1)
+                self.assertEqual(coverage[0]["status"], "partial")
+                self.assertIn("1 malformed usage line was skipped", coverage[0]["message"])
+                # The cached result keeps the count until the file changes.
+                records, coverage = costs.scan_transcripts(["claude"], root / "state", now_ms)
+                self.assertEqual(coverage[0]["status"], "partial")
+                # Resuming a grown file keeps the earlier count.
+                with transcript.open("a", encoding="utf-8") as handle:
+                    handle.write("ing\n" + valid.replace("message-private-1", "message-private-9") + "\n")
+                now_ms = int(transcript.stat().st_mtime * 1000)
+                records, coverage = costs.scan_transcripts(["claude"], root / "state", now_ms)
+                self.assertEqual(len(records), 2)
+                self.assertIn("2 malformed usage lines were skipped", coverage[0]["message"])
+
+    def test_clean_transcript_stays_ok(self):
+        valid = (FIXTURES / "claude-transcript.jsonl").read_text(encoding="utf-8").splitlines()[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            transcript_root = root / "claude" / "projects"
+            transcript_root.mkdir(parents=True)
+            transcript = transcript_root / "session.jsonl"
+            transcript.write_text(valid + "\n", encoding="utf-8")
+            now_ms = int(transcript.stat().st_mtime * 1000)
+            with mock.patch.object(costs, "transcript_root", return_value=transcript_root):
+                _, coverage = costs.scan_transcripts(["claude"], root / "state", now_ms)
+        self.assertEqual(coverage[0]["status"], "ok")
+
     def test_total_record_ceiling_marks_coverage_partial(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

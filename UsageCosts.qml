@@ -1,8 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls as Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
@@ -21,17 +21,23 @@ Item {
     ? Number(payload.period.days) : periodDays
   readonly property bool incompletePricing: Number(totals.unpricedRecords || 0) > 0
   readonly property bool lowPricingCoverage: incompletePricing && priceCoverage(totals) < 0.9
-  property color foreground: Color.foreground
-  property color urgent: Color.urgent
-  property color surface: Color.popups.background
+  property color foreground: Commons.Color.foreground
+  property color urgent: Commons.Color.urgent
+  property color surface: Commons.Color.popups.background
   property string fontFamily: Style.font.family
+  property real cardRadius: Style.cornerRadius
 
-  readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color dim: UsageLogic.dimColor(foreground)
   readonly property var totals: payload && payload.totals ? payload.totals : ({})
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property var models: payload ? UsageLogic.listOrEmpty(payload.models) : []
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
   readonly property bool hasResult: !!(payload && payload.generatedAt && periods.length > 0)
+  readonly property bool hasData: hasResult && Number(totals.records || 0) > 0
+  readonly property bool hasGaps: periods.some(function(row) { return row.historyStatus === "unavailable" })
+  readonly property var sources: payload ? UsageLogic.listOrEmpty(payload.sources) : []
+  readonly property bool sourceProblem: sources.some(function(row) {
+    return row.status === "failed" || row.status === "unavailable" })
   readonly property real chartMaximum: maximumPeriodValue()
 
   signal periodRequested(int days)
@@ -45,7 +51,7 @@ Item {
   function closeMenu() { metricMenu.closeMenu() }
 
   function alpha(color, opacity) {
-    return Qt.rgba(color.r, color.g, color.b, opacity)
+    return UsageLogic.alpha(color, opacity)
   }
 
   function formatUsd(value) {
@@ -96,18 +102,21 @@ Item {
 
   function maximumPeriodValue() {
     var maximum = 0
-    for (var i = 0; i < periods.length; i++) maximum = Math.max(maximum, periodValue(periods[i]))
+    for (let i = 0; i < periods.length; i++) maximum = Math.max(maximum, periodValue(periods[i]))
     return maximum
   }
 
   function axisLabel(period) {
     if (!period) return ""
     if (displayedPeriodDays === 1) {
-      var date = new Date(String(period.start || ""))
+      let date = new Date(String(period.start || ""))
       return isNaN(date.getTime()) ? "" : Qt.formatTime(date, "HH:mm")
     }
-    var value = String(period.start || "")
-    return value.length >= 10 ? value.substring(5).replace("-", "/") : value
+    // Same month-name style as reset dates in Limits ("Nov 12").
+    const value = String(period.start || "")
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+    const month = match ? UsageLogic.MONTHS[Number(match[2]) - 1] : undefined
+    return month ? month + " " + Number(match[3]) : value
   }
 
   function primaryValue(row) {
@@ -132,9 +141,35 @@ Item {
   }
 
   function pricingNotice() {
+    // A few unpriced responses can still be expensive: say so, neutrally,
+    // below the warning threshold too.
+    if (incompletePricing && !lowPricingCoverage) return "Partial estimate · " + pricingPercent(totals) + " of responses priced"
     if (!lowPricingCoverage) return ""
     if (Number(totals.pricedRecords || 0) === 0) return "Pricing unavailable · tokens are still included"
     return "Incomplete estimate · " + pricingPercent(totals) + " of responses priced"
+  }
+
+  // Partial, offline or failed sources, so a total never looks more complete
+  // than it is. Details stay in Costs settings › Last scan.
+  function sourceNotice() {
+    const groups = [
+      { statuses: ["failed", "unavailable"], label: "Unavailable" },
+      { statuses: ["stale"], label: "Saved offline history" },
+      { statuses: ["partial"], label: "Partial history" }
+    ]
+    const parts = []
+    for (let g = 0; g < groups.length; g++) {
+      const names = []
+      for (let i = 0; i < sources.length; i++)
+        if (groups[g].statuses.indexOf(sources[i].status) >= 0) names.push(String(sources[i].name || sources[i].id))
+      if (names.length > 0) parts.push(groups[g].label + ": " + names.join(", "))
+    }
+    return parts.join(" · ")
+  }
+
+  function chartPeakText() {
+    if (chartMaximum <= 0) return ""
+    return "peak " + (metric === "tokens" ? formatTokens(chartMaximum) : formatUsd(chartMaximum))
   }
 
   function summaryDetail() {
@@ -212,7 +247,7 @@ Item {
       color: root.alpha(root.urgent, 0.09)
       borderSpec: Border.flat(root.alpha(root.urgent, 0.4), Style.spacing.hairline)
       padding: Style.spacing.xxl
-      radius: Style.cornerRadius
+      radius: root.cardRadius
 
       Text {
         id: errorText
@@ -266,32 +301,81 @@ Item {
 
       Text {
         objectName: "costPricingNotice"
-        visible: root.metric === "cost" && root.lowPricingCoverage
+        visible: root.metric === "cost" && root.incompletePricing
         width: parent.width
         text: root.pricingNotice()
-        color: root.urgent
+        color: root.lowPricingCoverage ? root.urgent : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+
+      Text {
+        objectName: "costSourceNotice"
+        visible: text !== ""
+        width: parent.width
+        text: root.sourceNotice()
+        textFormat: Text.PlainText
+        color: root.sourceProblem ? root.urgent : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
       }
     }
 
+    Text {
+      objectName: "costEmptyState"
+      visible: root.hasResult && !root.hasData
+      width: parent.width
+      topPadding: Style.spacing.xl
+      bottomPadding: Style.spacing.xl
+      text: root.totals.historyStatus === "unavailable"
+        ? "Session history is unavailable for this period." : "No transcript usage was found in this period."
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      horizontalAlignment: Text.AlignHCenter
+      wrapMode: Text.WordWrap
+    }
+
 
     Column {
-      visible: root.hasResult
+      visible: root.hasData || (root.hasResult && root.hasGaps)
       width: parent.width
       spacing: Style.spacing.lg
 
-      Ui.PanelSectionHeader {
-        text: root.displayedPeriodDays === 1 ? "HOURLY" : "DAILY"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
+      Item {
+        width: parent.width
+        implicitHeight: Math.max(chartTitle.implicitHeight, chartPeak.implicitHeight)
+
+        Ui.PanelSectionHeader {
+          id: chartTitle
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.displayedPeriodDays === 1 ? "HOURLY" : "DAILY"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          id: chartPeak
+          objectName: "costChartPeak"
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.chartPeakText()
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
 
       Row {
         id: chart
         width: parent.width
         height: Style.space(82)
+        Accessible.role: Accessible.Chart
+        Accessible.name: (root.displayedPeriodDays === 1 ? "Hourly " : "Daily ")
+          + (root.metric === "tokens" ? "tokens" : "estimated cost") + ", " + root.chartPeakText()
         spacing: Style.spacing.xxs
 
         Repeater {
@@ -306,6 +390,8 @@ Item {
               ? (chart.width - chart.spacing * (root.periods.length - 1)) / root.periods.length
               : 0
             height: chart.height
+            Accessible.role: Accessible.StaticText
+            Accessible.name: root.axisLabel(bucket.modelData) + " " + root.primaryValue(bucket.modelData)
 
             function providerValue(row) {
               if (!row) return 0
@@ -316,7 +402,7 @@ Item {
             function cumulative(endIndex) {
               var total = 0
               var rows = modelData && modelData.providers ? modelData.providers : []
-              for (var i = 0; i < endIndex && i < rows.length; i++) total += providerValue(rows[i])
+              for (let i = 0; i < endIndex && i < rows.length; i++) total += providerValue(rows[i])
               return total
             }
 
@@ -344,8 +430,9 @@ Item {
             }
 
             HoverHandler { id: bucketHover }
-            Controls.ToolTip {
+            Ui.PanelToolTip {
               visible: bucketHover.hovered
+              fontFamily: root.fontFamily
               text: root.axisLabel(bucket.modelData) + " · " + root.primaryValue(bucket.modelData)
                 + (bucket.modelData.historyStatus === "unavailable" ? " · History unavailable" : "")
             }
@@ -416,7 +503,7 @@ Item {
       }
 
       Text {
-        visible: root.periods.some(function(row) { return row.historyStatus === "unavailable" })
+        visible: root.hasGaps
         width: parent.width
         text: "Outlined gaps: history unavailable"
         color: root.dim
@@ -427,7 +514,7 @@ Item {
     }
 
     Column {
-      visible: root.hasResult && root.providers.length > 0
+      visible: root.hasData && root.providers.length > 0
       width: parent.width
       spacing: Style.spacing.lg
 
@@ -441,10 +528,10 @@ Item {
         id: providerSurface
         width: parent.width
         implicitHeight: providerRows.implicitHeight + contentTopInset + contentBottomInset
-        color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
+        color: Style.normalFillFor(root.foreground, Commons.Color.accent, root.urgent)
         borderSpec: Border.flat(root.alpha(root.foreground, 0.22), Style.spacing.hairline)
         padding: Style.spacing.xl
-        radius: Style.cornerRadius
+        radius: root.cardRadius
 
         Column {
           id: providerRows
@@ -521,7 +608,7 @@ Item {
     }
 
     Column {
-      visible: root.hasResult
+      visible: root.hasData
       width: parent.width
       spacing: Style.spacing.lg
 
@@ -596,7 +683,7 @@ Item {
     }
 
     Column {
-      visible: root.hasResult && root.models.length > 0
+      visible: root.hasData && root.models.length > 0
       width: parent.width
       spacing: Style.spacing.lg
 
@@ -616,10 +703,10 @@ Item {
         visible: root.modelsExpanded
         width: parent.width
         implicitHeight: modelRows.implicitHeight + contentTopInset + contentBottomInset
-        color: Style.normalFillFor(root.foreground, Color.accent, root.urgent)
+        color: Style.normalFillFor(root.foreground, Commons.Color.accent, root.urgent)
         borderSpec: Border.flat(root.alpha(root.foreground, 0.22), Style.spacing.hairline)
         padding: Style.spacing.xl
-        radius: Style.cornerRadius
+        radius: root.cardRadius
 
         Column {
           id: modelRows
@@ -691,18 +778,5 @@ Item {
       }
     }
 
-    Text {
-      visible: root.hasResult && Number(root.totals.records || 0) === 0
-      width: parent.width
-      topPadding: Style.spacing.huge
-      bottomPadding: Style.spacing.huge
-      text: root.totals.historyStatus === "unavailable"
-        ? "Session history is unavailable for this period." : "No transcript usage was found in this period."
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      horizontalAlignment: Text.AlignHCenter
-      wrapMode: Text.WordWrap
-    }
   }
 }

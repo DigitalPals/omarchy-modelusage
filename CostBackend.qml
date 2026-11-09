@@ -59,7 +59,7 @@ Item {
     var allowed = ["claude", "codex"]
     var requestedProviders = UsageLogic.isListLike(value) ? value : allowed
     var result = []
-    for (var i = 0; i < allowed.length; i++)
+    for (let i = 0; i < allowed.length; i++)
       if (UsageLogic.contains(requestedProviders, allowed[i])) result.push(allowed[i])
     return result
   }
@@ -145,20 +145,20 @@ Item {
     } else if (fetchProcess.lastExit !== 0) {
       fetchError = "Estimated-cost backend exited with status " + fetchProcess.lastExit
     } else {
-      var parsed = null
+      let parsed = null
       try { parsed = JSON.parse(fetchProcess.body) } catch (e) { parsed = null }
       if (!parsed || parsed.schemaVersion !== 1 || !UsageLogic.isListLike(parsed.providers)
           || !UsageLogic.isListLike(parsed.models) || !UsageLogic.isListLike(parsed.periods)
           || !parsed.totals || !parsed.period || !parsed.pricing) {
         fetchError = "Estimated-cost backend returned unreadable data"
       } else {
-        var backendError = String(parsed.backendError || "")
+        let backendError = String(parsed.backendError || "")
         if (backendError !== "") {
           fetchError = backendError
         } else {
           payload = parsed
           fetchError = ""
-          var generated = new Date(String(parsed.generatedAt || "")).getTime()
+          let generated = new Date(String(parsed.generatedAt || "")).getTime()
           lastSuccessAt = isFinite(generated) ? generated : Date.now()
           refreshed()
         }

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
@@ -9,8 +10,11 @@ Item {
   id: root
 
   property var history: ({ h24: [], d7: [] })
+  // Set by the panel; the range tabs request changes instead of assigning it,
+  // so keyboard and mouse changes go through the same binding.
   property string mode: "h24"
-  property color foreground: Color.foreground
+  signal rangeRequested(string mode)
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
 
   readonly property var values: mode === "d7"
@@ -18,6 +22,17 @@ Item {
     : (history ? UsageLogic.listOrEmpty(history.h24) : [])
 
   implicitHeight: content.implicitHeight
+
+  // The chart's text equivalent. Each bar is the highest reading in its hour
+  // (24H) or day (7D), so "latest" is the latest bar's peak, not a live value.
+  function summary() {
+    if (values.length === 0) return "No quota history"
+    let peak = 0
+    for (let i = 0; i < values.length; i++) peak = Math.max(peak, Number(values[i]) || 0)
+    const latest = Number(values[values.length - 1]) || 0
+    return (mode === "d7" ? "Peak per day: " : "Peak per hour: ") + Math.round(peak) + "% highest, "
+      + Math.round(latest) + "% in the " + (mode === "d7" ? "latest day" : "latest hour")
+  }
 
   Column {
     id: content
@@ -32,13 +47,14 @@ Item {
         id: title
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        text: "USAGE HISTORY"
+        text: "QUOTA USED"
         foreground: root.foreground
         fontFamily: root.fontFamily
       }
 
-      Ui.ButtonGroup {
+      UsageTabs {
         id: ranges
+        objectName: "historyRangeTabs"
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         options: [
@@ -49,14 +65,16 @@ Item {
         foreground: root.foreground
         fontFamily: root.fontFamily
         fontSize: Style.font.caption
-        focusable: false
-        onChanged: function(value) { root.mode = value }
+        onChanged: function(value) { root.rangeRequested(value) }
       }
     }
 
     Row {
       id: chart
+      objectName: "quotaHistoryChart"
       width: parent.width
+      Accessible.role: Accessible.Chart
+      Accessible.name: root.summary()
       height: Style.space(58)
       spacing: Style.spacing.xxs
 
@@ -112,7 +130,7 @@ Item {
         id: axisStart
         anchors.left: parent.left
         text: root.mode === "h24" ? "−24h" : "−7d"
-        color: Qt.darker(root.foreground, 1.55)
+        color: UsageLogic.dimColor(root.foreground)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -121,7 +139,7 @@ Item {
         id: axisMiddle
         anchors.horizontalCenter: parent.horizontalCenter
         text: root.mode === "h24" ? "−12h" : "−3d"
-        color: Qt.darker(root.foreground, 1.55)
+        color: UsageLogic.dimColor(root.foreground)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -130,10 +148,20 @@ Item {
         id: axisEnd
         anchors.right: parent.right
         text: "now"
-        color: Qt.darker(root.foreground, 1.55)
+        color: UsageLogic.dimColor(root.foreground)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
+    }
+
+    Text {
+      objectName: "quotaHistorySummary"
+      width: parent.width
+      text: root.summary()
+      color: UsageLogic.dimColor(root.foreground)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
     }
   }
 }

@@ -232,3 +232,100 @@ assert.equal(context.validSecret("bad\nkey"), false);
 assert.equal(context.validSecret("   "), false);
 assert.equal(context.validSecret("x".repeat(8192)), false);
 console.log("Connection settings: passed");
+
+// Compact account cards keep a spent shorter window visible.
+const json = (value) => JSON.stringify(value);
+const spentSession = [
+  {id: "codex-primary", label: "5 hour limit", windowSeconds: 18000, remaining: 0},
+  {id: "codex-secondary", label: "Weekly limit", windowSeconds: 604800, remaining: 90},
+  {id: "review", label: "Code review · Weekly limit", windowSeconds: 604800, remaining: 3, informational: true}
+];
+assert.equal(json(Array.from(context.accountWindows({windows: spentSession}, false, 25, 10)).map((row) => row.id)), json(["codex-primary", "codex-secondary"]));
+assert.equal(json(Array.from(context.accountWindows({windows: spentSession}, false)).map((row) => row.id)), json(["codex-secondary"]));
+assert.equal(json(Array.from(context.accountWindows({windows: [{...spentSession[0], remaining: 15}, spentSession[1]]}, false, 25, 10)).map((row) => row.id)), json(["codex-primary", "codex-secondary"]), "a warning-level shorter window is shown too");
+assert.equal(json(Array.from(context.accountWindows({windows: [{...spentSession[0], remaining: 40}, spentSession[1]]}, false, 25, 10)).map((row) => row.id)), json(["codex-secondary"]));
+assert.equal(json(Array.from(context.accountWindows({windows: [{...spentSession[0], remaining: 20}, {...spentSession[1], remaining: 10}]}, false, 25, 10)).map((row) => row.id)), json(["codex-secondary"]), "a looser shorter window stays hidden");
+assert.equal(context.hasAdditionalWindows([{status: "ok", windows: spentSession}], 25, 10), true);
+assert.equal(context.hasAdditionalWindows([{status: "ok", windows: [spentSession[1]]}], 25, 10), false);
+assert.equal(context.hasAdditionalWindows([{status: "error", windows: spentSession}], 25, 10), false);
+assert.equal(context.windowSeverity({remaining: 9}, 25, 10), "critical");
+assert.equal(context.windowSeverity({remaining: 20}, 25, 10), "warning");
+assert.equal(context.windowSeverity({remaining: 80}, 25, 10), "ok");
+assert.equal(context.windowSeverity({remaining: 0, informational: true}, 25, 10), "none");
+assert.equal(context.windowSeverity({remaining: null}, 25, 10), "none");
+
+// Reset and refresh wording.
+const now = Date.UTC(2030, 0, 1, 12, 0, 0);
+const at = (seconds) => now / 1000 + seconds;
+assert.match(context.resetText({resetsAt: at(3 * 3600 + 120)}, now), /^Resets in 3h 2m · \d\d:\d\d$/);
+assert.match(context.resetText({resetsAt: at(2 * 86400 + 3600)}, now), /^Resets in 2d 1h · [A-Z][a-z]{2} \d+, \d\d:\d\d$/);
+assert.match(context.resetText({resetsAt: at(0.4)}, now), /^Resets in 1s · /);
+assert.equal(context.resetText({resetsAt: at(-5)}, now, true), "Reset due · updating");
+assert.equal(context.resetText({resetsAt: at(-5)}, now, false), "Reset due · awaiting a new reading");
+assert.equal(context.resetText({resetsAt: null}, now), "");
+assert.equal(context.passedResetAt([{status: "ok", windows: [{resetsAt: at(-5)}]}], now - 60000, now), at(-5));
+assert.equal(context.passedResetAt([{status: "ok", windows: [{resetsAt: at(-5)}]}], now, now), 0, "already-fetched resets do not refresh again");
+assert.equal(context.passedResetAt([{status: "ok", accounts: [{status: "ok", windows: [{resetsAt: at(-1)}]}]}], 0, now), at(-1));
+assert.equal(context.passedResetAt([{status: "error", windows: [{resetsAt: at(-1)}]}], 0, now), 0);
+assert.equal(context.nextRefreshText(now + 9.5 * 60000, now), "Next refresh in 10m");
+assert.equal(context.nextRefreshText(now + 45000, now), "Next refresh in 45s");
+assert.equal(context.nextRefreshText(now - 1, now), "Refreshing soon");
+assert.equal(context.nextRefreshText(0, now), "");
+assert.equal(context.plural(1, "connected account"), "1 connected account");
+assert.equal(context.plural(3, "connected account"), "3 connected accounts");
+
+// Credits fill with what is left, like quota meters.
+const credits = {used: 12.5, limit: 50, remaining: 37.5, currency: "USD"};
+assert.equal(context.creditsPrimary(credits), "$37.50 remaining");
+assert.equal(context.creditsDetail(credits), "$12.50 of $50.00 used");
+assert.equal(context.creditsMeter(credits).fraction, 0.75);
+assert.equal(context.creditsMeter(credits).label, "Monthly limit · 75% left");
+// A prepaid wallet's balance is not the monthly cap.
+const wallet = {used: 50, limit: 200, remaining: 100, total: 150, currency: "USD"};
+assert.equal(context.creditsPrimary(wallet), "$100.00 balance");
+assert.equal(context.creditsDetail(wallet), "$50.00 of $200.00 charged this month · $150.00 funded");
+assert.equal(context.creditsMeter(wallet).label, "Monthly charge cap · 75% left");
+assert.equal(context.creditsPrimary({remaining: 17.5, currency: ""}), "17.50 credits remaining");
+assert.equal(context.creditsDetail({remaining: 17.5, currency: "", resetCreditsAvailable: 1}), "1 banked reset");
+assert.equal(context.creditsMeter({used: 80, limit: 50}).fraction, 0);
+assert.equal(context.creditsMeter({used: 1, limit: 0}), null);
+assert.equal(context.creditsPrimary({resetCreditsAvailable: 1}), "1 banked reset");
+assert.equal(context.creditsDetail({resetCreditsAvailable: 2}), "", "the reset count is not repeated under its own headline");
+assert.equal(context.formatAmount(null, "USD"), "—");
+assert.equal(context.formatAmount(7, "EUR"), "€7.00");
+
+// Broken providers keep a bar chip instead of disappearing.
+assert.equal(json(Array.from(context.barProviders([provider("claude", 72), provider("codex", null, "error"), provider("kimi", null)])
+  ).map((row) => row.id)), json(["claude", "codex"]));
+
+assert.equal(context.insecureRemoteUrl("http://fusebox.lan:8317"), true);
+assert.equal(context.insecureRemoteUrl("http://127.0.0.1:8317"), false);
+assert.equal(context.insecureRemoteUrl("http://localhost:8317/x"), false);
+assert.equal(context.insecureRemoteUrl("http://[::1]:8317"), false);
+assert.equal(context.insecureRemoteUrl("https://fusebox.example"), false);
+assert.equal(context.insecureRemoteUrl("http://127.example.com:8317"), true, "a DNS name starting with 127 is not loopback");
+assert.equal(context.insecureRemoteUrl("http://127.0.0.1@evil.example"), true, "user information is not the host");
+assert.equal(context.insecureRemoteUrl("http://[0:0:0:0:0:0:0:1]:8317"), false);
+console.log("UsageLogic.js presentation helpers: passed");
+
+// Stale readings, the next reset, and label wrapping.
+const freshAccount = {accountId: "a", status: "ok", windows: [{remaining: 50, resetsAt: at(600)}]};
+const staleAccount = {accountId: "b", status: "ok", stale: true, notice: "Last known reading · Timeout", windows: [{remaining: 90, resetsAt: at(60)}]};
+const pool = {id: "codex", status: "ok", windows: [{remaining: 90}], accounts: [freshAccount, staleAccount]};
+assert.equal(context.hasStaleReading(pool), true, "one stale account makes the provider stale");
+assert.equal(context.hasStaleReading({...pool, accounts: [freshAccount]}), false);
+assert.equal(context.anyStaleReading([provider("claude", 40), pool]), true);
+assert.equal(context.chipReadingStale(freshAccount, pool, false), false, "a fresh last-used account is current");
+assert.equal(context.chipReadingStale(staleAccount, pool, false), true);
+assert.equal(context.chipReadingStale(pool, pool, true), true, "the pool fallback is stale when any account is");
+assert.equal(context.staleExplanation(staleAccount, pool), "Last known reading · Timeout");
+assert.equal(context.staleExplanation({stale: true}, {}), "Last known reading; it may be out of date.");
+assert.equal(context.staleExplanation(pool, pool), "Last known reading · Timeout", "the pool fallback explains its stale account");
+assert.equal(context.nextResetAt([pool], now), at(60) * 1000);
+assert.equal(context.nextResetAt([{...pool, status: "error"}], now), 0);
+assert.equal(context.nextResetAt([], now), 0);
+assert.equal(context.limitLabel("Preview · 1 day limit"), "Preview\u00a0· 1\u00a0day limit");
+assert.equal(context.limitLabel(""), "Usage limit");
+assert.equal(context.insecureRemoteUrl("http://[::1"), true, "a malformed IPv6 host warns");
+assert.equal(context.sessionBadgeText({sessions: 1}), "1 session");
+console.log("UsageLogic.js stale readings and resets: passed");

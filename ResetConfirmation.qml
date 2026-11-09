@@ -1,13 +1,14 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 
 Column {
   id: root
   required property var backend
-  property color foreground: Color.foreground
-  property color background: Color.popups.background
+  property color foreground: Commons.Color.foreground
+  property color background: Commons.Color.popups.background
   property string fontFamily: Style.font.family
   signal closeRequested()
   spacing: Style.spacing.lg
@@ -49,7 +50,8 @@ Column {
   Text {
     width: parent.width
     visible: root.backend.state === "ready"
-    text: "Use 1 of " + root.backend.details.availableCount + " available resets. The recommended or soonest-expiring reset is selected first."
+    text: (root.backend.details.availableCount === 1 ? "Use the 1 available reset."
+      : "Use 1 of " + root.backend.details.availableCount + " available resets. The recommended or soonest-expiring reset is selected first.")
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

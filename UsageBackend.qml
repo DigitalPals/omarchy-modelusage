@@ -48,7 +48,7 @@ Item {
     var allowed = ["claude", "codex", "kimi"]
     var requested = UsageLogic.isListLike(value) ? value : allowed
     var result = []
-    for (var i = 0; i < allowed.length; i++) {
+    for (let i = 0; i < allowed.length; i++) {
       if (UsageLogic.contains(requested, allowed[i])) result.push(allowed[i])
     }
     return result
@@ -104,18 +104,18 @@ Item {
     } else if (fetchProcess.lastExit !== 0) {
       fetchError = "Model usage backend exited with status " + fetchProcess.lastExit
     } else {
-      var parsed = null
+      let parsed = null
       try { parsed = JSON.parse(fetchProcess.body) } catch (e) { parsed = null }
       if (!parsed || parsed.schemaVersion !== 1 || !UsageLogic.isListLike(parsed.providers)) {
         fetchError = "Model usage backend returned unreadable data"
       } else {
-        var backendError = String(parsed.backendError || "")
+        let backendError = String(parsed.backendError || "")
         if (backendError !== "") {
           fetchError = backendError
         } else {
           payload = usageSource === "proxy" ? UsageLogic.preserveProxyReadings(payload, parsed) : parsed
           fetchError = ""
-          var generated = new Date(String(parsed.generatedAt || "")).getTime()
+          let generated = new Date(String(parsed.generatedAt || "")).getTime()
           lastSuccessAt = isFinite(generated) ? generated : Date.now()
           refreshed()
         }

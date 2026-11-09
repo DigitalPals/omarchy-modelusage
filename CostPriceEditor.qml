@@ -2,13 +2,14 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
 Column {
   id: root
-  property color foreground: Color.foreground
-  property color urgent: Color.urgent
+  property color foreground: Commons.Color.foreground
+  property color urgent: Commons.Color.urgent
   property string fontFamily: Style.font.family
   property string loadError: ""
   property int draftGeneration: 0
@@ -22,9 +23,9 @@ Column {
     prices.clear()
     loadError = ""
     try {
-      var rows = UsageLogic.decodeCostPrices(raw)
-      for (var i = 0; i < rows.length; i++) {
-        var row = Object.assign({}, rows[i], { modelId: rows[i].model })
+      let rows = UsageLogic.decodeCostPrices(raw)
+      for (let i = 0; i < rows.length; i++) {
+        let row = Object.assign({}, rows[i], { modelId: rows[i].model })
         delete row.model
         prices.append(row)
       }
@@ -38,8 +39,8 @@ Column {
       throw new Error(loadError)
     }
     var rows = []
-    for (var i = 0; i < prices.count; i++) {
-      var row = prices.get(i)
+    for (let i = 0; i < prices.count; i++) {
+      let row = prices.get(i)
       rows.push(Object.assign({}, row, { model: row.modelId }))
     }
     try { return UsageLogic.encodeCostPrices(rows) }
@@ -52,8 +53,8 @@ Column {
   function findItem(item, name) {
     if (item.objectName === name) return item
     var children = item.children || []
-    for (var i = 0; i < children.length; i++) {
-      var result = findItem(children[i], name)
+    for (let i = 0; i < children.length; i++) {
+      let result = findItem(children[i], name)
       if (result) return result
     }
     return null
@@ -81,7 +82,7 @@ Column {
 
   Label {
     text: "Prices are USD per million tokens and override automatic rates."
-    opacity: 0.7
+    color: UsageLogic.dimColor(root.foreground)
     font.pixelSize: Style.font.caption
   }
   SettingsSection {
@@ -93,7 +94,7 @@ Column {
     Label {
       text: "Copy the exact model ID from Costs, including its provider and any [variant]. Overrides apply across all sources. Remove a row to restore automatic pricing. Blank cache prices use the input price; enter 0 for free tokens."
       font.pixelSize: Style.font.caption
-      opacity: 0.7
+      color: UsageLogic.dimColor(root.foreground)
     }
   }
   Label { visible: root.loadError !== ""; text: root.loadError; color: root.urgent }
@@ -184,7 +185,7 @@ Column {
   Label {
     text: prices.count === 0 ? "Automatic prices are in use. Unknown models remain unpriced."
       : "Blank cache prices use the input price. Enter 0 explicitly for free tokens."
-    opacity: 0.7
+    color: UsageLogic.dimColor(root.foreground)
     font.pixelSize: Style.font.caption
   }
   Ui.Button {

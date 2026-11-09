@@ -2,6 +2,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
+import "UsageLogic.js" as UsageLogic
 
 Item {
   id: root
@@ -10,8 +12,8 @@ Item {
   property var viewOptions: []
   property var providerOptions: []
   property string providerId: ""
-  property color foreground: Color.foreground
-  property color surface: Color.popups.background
+  property color foreground: Commons.Color.foreground
+  property color surface: Commons.Color.popups.background
   property string fontFamily: Style.font.family
   readonly property bool menuOpen: providerMenu.popup.visible
   readonly property bool providerVisible: viewMode === "limits" && providerOptions.length > 1
@@ -20,7 +22,7 @@ Item {
   signal providerRequested(string value)
   signal menuClosed()
 
-  function alpha(color, opacity) { return Qt.rgba(color.r, color.g, color.b, opacity) }
+  function alpha(color, opacity) { return UsageLogic.alpha(color, opacity) }
 
   function openProviderMenu() {
     if (providerVisible) providerMenu.popup.open()

@@ -14,13 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import model_usage_common as common
 
 
+def make_dir(path: Path, mode: int) -> None:
+    """Create a fixture directory with exactly ``mode``, whatever the umask."""
+    path.mkdir()
+    path.chmod(mode)
+
+
 class PrivateStateTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.outside = self.root / "outside"
-        self.outside.mkdir(mode=0o755)
+        make_dir(self.outside, 0o755)
         self.sentinel = self.outside / "cache.json"
         self.sentinel.write_text("untouched")
         self.sentinel.chmod(0o644)
@@ -33,7 +39,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_create_and_replace_private_state_without_changing_ancestors(self):
         parent = self.root / "parent"
-        parent.mkdir(mode=0o755)
+        make_dir(parent, 0o755)
         path = parent / "state" / "nested" / "cache.json"
         common.atomic_write_json(path, {"value": "first"})
         old_inode = path.stat().st_ino
@@ -48,7 +54,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_owned_readable_leaf_is_tightened_but_not_through_a_symlink(self):
         directory = self.root / "state"
-        directory.mkdir(mode=0o755)
+        make_dir(directory, 0o755)
         common.atomic_write_json(directory / "cache.json", {})
         self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
         directory = self.root / "alias"
@@ -61,12 +67,12 @@ class PrivateStateTests(unittest.TestCase):
         for depth in range(3):
             with self.subTest(depth=depth):
                 base = self.root / str(depth)
-                base.mkdir(mode=0o700)
+                make_dir(base, 0o700)
                 parts = ("config", "omarchy", "state")
                 directory = base
                 for part in parts[:depth]:
                     directory /= part
-                    directory.mkdir(mode=0o700)
+                    make_dir(directory, 0o700)
                 (directory / parts[depth]).symlink_to(self.outside, target_is_directory=True)
                 with self.assertRaises(OSError):
                     common.atomic_write_json(base.joinpath(*parts, "cache.json"), {"secret": "new"})
@@ -94,7 +100,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_foreign_owned_leaf_and_ancestor_are_rejected(self):
         directory = self.root / "foreign"
-        directory.mkdir(mode=0o755)
+        make_dir(directory, 0o755)
         inode = directory.stat().st_ino
         real_fstat = os.fstat
 
@@ -121,7 +127,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_directory_swap_after_open_cannot_redirect_creation_or_chmod(self):
         directory = self.root / "state"
-        directory.mkdir(mode=0o755)
+        make_dir(directory, 0o755)
         moved = self.root / "held"
         real_open = os.open
 
@@ -140,7 +146,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_swapped_ancestor_cannot_redirect_nested_directory_creation(self):
         parent = self.root / "parent"
-        parent.mkdir(mode=0o700)
+        make_dir(parent, 0o700)
         moved = self.root / "held"
         real_open = os.open
 
@@ -160,7 +166,7 @@ class PrivateStateTests(unittest.TestCase):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 directory = self.root / f"state-{fail}"
-                directory.mkdir(mode=0o700)
+                make_dir(directory, 0o700)
                 target = directory / "cache.json"
                 common.atomic_write_json(target, {"old": True})
                 moved = self.root / f"held-{fail}"
@@ -186,7 +192,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_destination_links_are_replaced_without_touching_the_referent(self):
         directory = self.root / "state"
-        directory.mkdir(mode=0o700)
+        make_dir(directory, 0o700)
         for kind in ("symlink", "hardlink"):
             with self.subTest(kind=kind):
                 target = directory / kind
@@ -202,7 +208,7 @@ class PrivateStateTests(unittest.TestCase):
 
     def test_temporary_symlink_collision_is_neither_followed_nor_removed(self):
         directory = self.root / "state"
-        directory.mkdir(mode=0o700)
+        make_dir(directory, 0o700)
         collision = directory / (".model-usage-" + "a" * 32 + ".tmp")
         collision.symlink_to(self.sentinel)
         with mock.patch.object(common.secrets, "token_hex", side_effect=["a" * 32, "b" * 32]):

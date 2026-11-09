@@ -3,11 +3,12 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import qs.Commons
+import qs.Commons as Commons
 
 Controls.AbstractButton {
   id: root
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   checkable: true
   implicitHeight: Math.max(Style.spacing.controlHeight, implicitContentHeight + topPadding + bottomPadding)
@@ -31,8 +32,8 @@ Controls.AbstractButton {
   background: Rectangle {
     radius: Style.space(4)
     color: root.hovered || root.visualFocus
-      ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+      ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
     border.width: root.visualFocus ? Style.spacing.hairline : 0
-    border.color: Color.accent
+    border.color: Commons.Color.accent
   }
 }

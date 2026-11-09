@@ -69,7 +69,7 @@ function accountLoad(account, activity) {
 
 function sessionBadgeText(load) {
   if (!load) return "Sessions unknown"
-  return load.sessions + (load.sessions === 1 ? " session" : " sessions")
+  return plural(load.sessions, "session")
 }
 
 function sessionDetails(load) {
@@ -81,6 +81,254 @@ function proxyName(implementation) {
   if (implementation === "rust") return "Fusebox"
   if (implementation === "go") return "CLIProxyAPI"
   return "Fusebox / CLIProxyAPI"
+}
+
+// ------------------------------------------------------------ Presentation
+
+// Secondary text keeps the theme foreground at reduced opacity. Qt.darker()
+// would make dark (light-theme) foregrounds darker still, inverting hierarchy.
+var DIM_OPACITY = 0.66
+
+function alpha(color, opacity) {
+  return Qt.rgba(color.r, color.g, color.b, opacity)
+}
+
+function dimColor(color) {
+  return alpha(color, DIM_OPACITY)
+}
+
+function plural(count, noun, nounPlural) {
+  return count + " " + (count === 1 ? noun : (nounPlural || noun + "s"))
+}
+
+function pad2(value) {
+  return (value < 10 ? "0" : "") + value
+}
+
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+// Local "HH:mm" for resets within a day, otherwise "MMM d, HH:mm".
+function clockText(epochSeconds, nowMs) {
+  var date = new Date(epochSeconds * 1000)
+  var time = pad2(date.getHours()) + ":" + pad2(date.getMinutes())
+  if (epochSeconds * 1000 - nowMs < 86400000) return time
+  return MONTHS[date.getMonth()] + " " + date.getDate() + ", " + time
+}
+
+// Precise countdown while the panel is open: days/hours, hours/minutes,
+// then minutes/seconds in the final hour.
+function countdown(seconds) {
+  seconds = Math.floor(Number(seconds))
+  if (!isFinite(seconds) || seconds <= 0) return ""
+  var days = Math.floor(seconds / 86400)
+  var hours = Math.floor((seconds % 86400) / 3600)
+  var minutes = Math.floor((seconds % 3600) / 60)
+  var secs = seconds % 60
+  if (days > 0) return days + "d " + hours + "h"
+  if (hours > 0) return hours + "h " + minutes + "m"
+  if (minutes > 0) return minutes + "m " + secs + "s"
+  return secs + "s"
+}
+
+function resetDue(window, nowMs) {
+  var at = Number(window && window.resetsAt)
+  return isFinite(at) && at > 0 && at * 1000 <= nowMs
+}
+
+// `refreshing` says whether a refresh is running, so a passed reset never
+// claims an update that is not happening.
+function resetText(window, nowMs, refreshing) {
+  var at = Number(window && window.resetsAt)
+  if (!isFinite(at) || at <= 0) return ""
+  if (at * 1000 <= nowMs) return refreshing ? "Reset due · updating" : "Reset due · awaiting a new reading"
+  return "Resets in " + countdown(Math.max(1, Math.ceil(at - nowMs / 1000))) + " · " + clockText(at, nowMs)
+}
+
+// Latest reset time that has passed since the reading was fetched, or 0.
+// The panel refreshes once per such reset rather than showing a stale meter.
+function passedResetAt(providers, fetchedAtMs, nowMs) {
+  var latest = 0
+  function visit(windows) {
+    var rows = listOrEmpty(windows)
+    for (var i = 0; i < rows.length; i++) {
+      var at = Number(rows[i] && rows[i].resetsAt)
+      if (isFinite(at) && at > 0 && at * 1000 > fetchedAtMs && at * 1000 <= nowMs) latest = Math.max(latest, at)
+    }
+  }
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || list[i].status !== "ok") continue
+    visit(list[i].windows)
+    var accounts = listOrEmpty(list[i].accounts)
+    for (var j = 0; j < accounts.length; j++)
+      if (accounts[j] && accounts[j].status === "ok") visit(accounts[j].windows)
+  }
+  return latest
+}
+
+function nextRefreshText(nextRefreshAtMs, nowMs) {
+  if (!(nextRefreshAtMs > 0)) return ""
+  var seconds = Math.max(0, Math.ceil((nextRefreshAtMs - nowMs) / 1000))
+  if (seconds <= 0) return "Refreshing soon"
+  if (seconds < 60) return "Next refresh in " + seconds + "s"
+  return "Next refresh in " + Math.ceil(seconds / 60) + "m"
+}
+
+function currencyPrefix(currency) {
+  var value = String(currency || "").toUpperCase()
+  if (value === "USD") return "$"
+  if (value === "EUR") return "€"
+  if (value === "GBP") return "£"
+  if (value === "CNY") return "¥"
+  return value === "" ? "" : value + " "
+}
+
+// Money always has cents, like Costs. Amounts without a currency are
+// provider credits and say so.
+function formatAmount(value, currency) {
+  if (value === null || value === undefined || value === "") return "—"
+  var amount = Number(value)
+  if (!isFinite(amount)) return "—"
+  if (String(currency || "") === "") {
+    var digits = Math.abs(amount - Math.round(amount)) < 0.001 ? 0 : 2
+    return amount.toFixed(digits) + (Math.abs(amount - 1) < 0.001 ? " credit" : " credits")
+  }
+  return currencyPrefix(currency) + amount.toFixed(2)
+}
+
+function present(value) {
+  return value !== null && value !== undefined
+}
+
+// A prepaid wallet (it reports a funded total) has a balance that is separate
+// from its monthly charge cap; other credits are what is left of the cap.
+function creditsWallet(credits) {
+  return !!credits && present(credits.total)
+}
+
+function creditsPrimary(credits) {
+  if (!credits) return ""
+  if (present(credits.remaining))
+    return formatAmount(credits.remaining, credits.currency) + (creditsWallet(credits) ? " balance" : " remaining")
+  if (credits.unlimited) return "Unlimited"
+  if (present(credits.used)) return formatAmount(credits.used, credits.currency) + " used"
+  if (present(credits.resetCreditsAvailable)) return plural(credits.resetCreditsAvailable, "banked reset")
+  return "Available"
+}
+
+function creditsDetail(credits) {
+  if (!credits) return ""
+  var parts = []
+  if (present(credits.used)) {
+    // The meter caption already names the limit; this line gives the amounts.
+    if (present(credits.limit))
+      parts.push(formatAmount(credits.used, credits.currency) + " of " + formatAmount(credits.limit, credits.currency)
+        + (creditsWallet(credits) ? " charged this month" : " used"))
+    else parts.push(formatAmount(credits.used, credits.currency) + " used this month")
+  }
+  if (credits.unlimited && present(credits.remaining)) parts.push("No monthly spending cap")
+  if (present(credits.total)) parts.push(formatAmount(credits.total, credits.currency) + " funded")
+  // Unless the headline already is the reset count.
+  if (present(credits.resetCreditsAvailable) && (present(credits.remaining) || credits.unlimited || present(credits.used)))
+    parts.push(plural(credits.resetCreditsAvailable, "banked reset"))
+  return parts.join(" · ")
+}
+
+// Credits meters fill with what is left of the monthly cap, like every quota meter.
+function creditsMeter(credits) {
+  if (!credits || !present(credits.used) || !present(credits.limit)) return null
+  var used = Number(credits.used), limit = Number(credits.limit)
+  if (!isFinite(used) || !isFinite(limit) || limit <= 0) return null
+  var remaining = clamp(100 - used / limit * 100, 0, 100)
+  var label = creditsWallet(credits) ? "Monthly charge cap" : "Monthly limit"
+  return { fraction: remaining / 100, remaining: remaining, label: label + " · " + Math.round(remaining) + "% left" }
+}
+
+// Limit names wrap in narrow cards. Keep a number with its unit ("1 day") and
+// break after a "·" separator rather than before it.
+function limitLabel(label) {
+  return String(label || "Usage limit").replace(/ · /g, "\u00a0· ").replace(/(\d) (?=\S)/g, "$1\u00a0")
+}
+
+// Whether a provider or any of its accounts holds a last-known reading.
+function hasStaleReading(provider) {
+  if (!provider) return false
+  if (provider.stale === true) return true
+  var accounts = listOrEmpty(provider.accounts)
+  for (var i = 0; i < accounts.length; i++)
+    if (accounts[i] && accounts[i].stale === true) return true
+  return false
+}
+
+function anyStaleReading(providers) {
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) if (hasStaleReading(list[i])) return true
+  return false
+}
+
+// A bar chip shows one reading: the last-used account's, or (pool fallback)
+// the provider summary, which is stale when any account behind it is.
+function chipReadingStale(reading, provider, usingPool) {
+  if (reading && reading.stale === true) return true
+  return usingPool ? hasStaleReading(provider) : !!provider && provider.stale === true
+}
+
+// Why a reading is last-known: the provider's own notice when it has one
+// (failed refresh, or an old Fusebox quota cache).
+function staleExplanation(reading, provider) {
+  var notice = String((reading && reading.stale && reading.notice) || (provider && provider.stale && provider.notice) || "")
+  var accounts = listOrEmpty(provider && provider.accounts)
+  for (var i = 0; notice === "" && i < accounts.length; i++)
+    if (accounts[i] && accounts[i].stale === true && accounts[i].notice) notice = String(accounts[i].notice)
+  return notice !== "" ? notice : "Last known reading; it may be out of date."
+}
+
+// Earliest reset still in the future, in ms, or 0.
+function nextResetAt(providers, nowMs) {
+  var earliest = 0
+  function visit(windows) {
+    var rows = listOrEmpty(windows)
+    for (var i = 0; i < rows.length; i++) {
+      var at = Number(rows[i] && rows[i].resetsAt) * 1000
+      if (isFinite(at) && at > nowMs && (earliest === 0 || at < earliest)) earliest = at
+    }
+  }
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || list[i].status !== "ok") continue
+    visit(list[i].windows)
+    var accounts = listOrEmpty(list[i].accounts)
+    for (var j = 0; j < accounts.length; j++)
+      if (accounts[j] && accounts[j].status === "ok") visit(accounts[j].windows)
+  }
+  return earliest
+}
+
+// Providers that earn a bar chip: a reading, or an error the user must see.
+function barProviders(providers) {
+  var result = []
+  var list = listOrEmpty(providers)
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i]) continue
+    if (minRemaining(list[i]) !== null || list[i].status === "error") result.push(list[i])
+  }
+  return result
+}
+
+// A credential sent in clear text to another machine deserves a warning.
+function insecureRemoteUrl(text) {
+  var match = /^http:\/\/([^\/?#\s]*)/i.exec(String(text || "").trim())
+  if (!match) return false
+  var authority = match[1]
+  var host = authority.slice(authority.lastIndexOf("@") + 1).toLowerCase()
+  // An unterminated IPv6 literal is not a loopback address: warn.
+  if (host.charAt(0) === "[" && host.indexOf("]") < 0) return true
+  host = host.charAt(0) === "[" ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0]
+  if (host === "localhost" || /\.localhost$/.test(host)) return false
+  var octets = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (octets && Number(octets[1]) <= 255 && Number(octets[2]) <= 255 && Number(octets[3]) <= 255) return false
+  if (/^\[(?:0{0,4}:){2,7}0{0,3}1\]$/.test(host) || host === "[::ffff:127.0.0.1]") return false
+  return host !== ""
 }
 
 // ------------------------------------------------------------ Connection settings
@@ -323,7 +571,7 @@ function accountResetLabel(account) {
   if (!supportsAccountReset(account)) return ""
   var count = account.credits && account.credits.resetCreditsAvailable
   if (typeof count !== "number" || !isFinite(count) || count < 0 || Math.floor(count) !== count) return ""
-  return count + " banked reset" + (count === 1 ? "" : "s")
+  return plural(count, "banked reset")
 }
 
 function shortDuration(seconds) {
@@ -346,8 +594,7 @@ function accountStatusText(item, nowMs) {
   if (item.at === null || item.at === undefined || !isFinite(at) || at <= 0) return text
   if (item.kind === "renewal") {
     var date = new Date(at * 1000)
-    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    return text + " " + months[date.getMonth()] + " " + date.getDate()
+    return text + " " + MONTHS[date.getMonth()] + " " + date.getDate()
       + (item.estimated === true ? " (estimated)" : "")
   }
   var remaining = at - Number(nowMs) / 1000
@@ -366,9 +613,25 @@ function accountStatusItems(account, nowMs) {
   return result
 }
 
-function accountWindows(account, expanded) {
-  var rows = listOrEmpty(account && account.windows)
-  if (expanded) return rows
+function windowRemaining(window) {
+  if (!window || window.remaining === null || window.remaining === undefined || window.remaining === "") return null
+  var value = Number(window.remaining)
+  return isFinite(value) ? value : null
+}
+
+// Severity of one limit window. Informational allowances never limit requests.
+function windowSeverity(window, warningThreshold, criticalThreshold) {
+  if (!window || window.informational === true) return "none"
+  var remaining = windowRemaining(window)
+  if (remaining === null) return "none"
+  var critical = clamp(criticalThreshold, 0, 100)
+  var warning = Math.max(critical, clamp(warningThreshold, 0, 100))
+  if (remaining <= critical) return "critical"
+  if (remaining <= warning) return "warning"
+  return "ok"
+}
+
+function primaryAccountWindows(rows) {
   var overall = [], weekly = [], monthly = []
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i]
@@ -383,6 +646,44 @@ function accountWindows(account, expanded) {
   if (monthly.length) return monthly
   // Plans without a weekly/monthly allowance still show their real main window.
   return firstItems(rows, 1)
+}
+
+// The compact account view shows the main weekly/monthly allowance. A shorter
+// window at warning or critical level that is tighter than that allowance is
+// what actually limits requests (e.g. a spent 5-hour limit), so it is shown
+// too, first and tightest first.
+function accountWindows(account, expanded, warningThreshold, criticalThreshold) {
+  var rows = listOrEmpty(account && account.windows)
+  if (expanded) return rows
+  var shown = primaryAccountWindows(rows)
+  if (warningThreshold === undefined || warningThreshold === null) return shown
+  var shownMinimum = 101
+  for (var i = 0; i < shown.length; i++) {
+    var value = windowRemaining(shown[i])
+    if (value !== null && shown[i].informational !== true) shownMinimum = Math.min(shownMinimum, value)
+  }
+  var binding = []
+  for (var j = 0; j < rows.length; j++) {
+    var row = rows[j]
+    if (contains(shown, row) || row.informational === true) continue
+    var remaining = windowRemaining(row)
+    var level = windowSeverity(row, warningThreshold, criticalThreshold)
+    if (remaining !== null && remaining < shownMinimum && (level === "warning" || level === "critical"))
+      binding.push(row)
+  }
+  binding.sort(function(a, b) { return windowRemaining(a) - windowRemaining(b) })
+  return binding.concat(Array.prototype.slice.call(shown))
+}
+
+// Whether "Additional limits" would reveal anything for these accounts.
+function hasAdditionalWindows(accounts, warningThreshold, criticalThreshold) {
+  var list = listOrEmpty(accounts)
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || list[i].status !== "ok") continue
+    if (accountWindows(list[i], false, warningThreshold, criticalThreshold).length
+        < listOrEmpty(list[i].windows).length) return true
+  }
+  return false
 }
 
 function errorTitle(provider) {

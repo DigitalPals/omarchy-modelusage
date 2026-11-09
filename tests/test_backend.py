@@ -283,6 +283,29 @@ class FailureAndIsolationTests(unittest.TestCase):
         self.assertNotIn("alsosecret", message)
         self.assertNotIn("json-secret", message)
 
+    def test_error_scrubbing_covers_generic_credential_names(self):
+        samples = {
+            "password=hunter2": "hunter2",
+            "token=abc123": "abc123",
+            "client_secret=shh-1": "shh-1",
+            "secret: shh-2": "shh-2",
+            "X-Api-Key: header-key": "header-key",
+            '{"session_id": "sess-1"}': "sess-1",
+            "Authorization: Basic dXNlcjpwYXNz": "dXNlcjpwYXNz",
+            "GET https://bob:url-pass@example.com/v0": "url-pass",
+            "clientSecret: camel-1": "camel-1",
+            '{"refreshToken": "camel-2"}': "camel-2",
+            "upstream said sk-ant-api03-abcdefghijklmnopqrstuv": "abcdefghijklmnopqrstuv",
+            "bad token ghp_abcdefghijklmnopqrstuvwxyz0123": "ghp_abcdefghijklmnopqrstuvwxyz0123",
+            "jwt eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2Q": "SflKxwRJSMeKKF2Q",
+        }
+        for raw, secret in samples.items():
+            with self.subTest(raw=raw):
+                self.assertNotIn(secret, usage.clean_message(raw))
+        # Ordinary wording is left readable.
+        self.assertEqual(usage.clean_message("Proxy key file must be private; monkey: 5"),
+                         "Proxy key file must be private; monkey: 5")
+
 
 class HistoryAndContractTests(unittest.TestCase):
     def test_history_tracks_the_binding_window_instead_of_an_idle_shorter_scope(self):

@@ -102,7 +102,7 @@ Item {
       state = result.credits.length > 0 ? "ready" : "error"
       if (state === "error") message = "No available resets were found for this account."
     } else {
-      var messages = {
+      const messages = {
         reset: "Banked reset applied. Refreshing account usage…",
         nothing_to_reset: "There is currently nothing to reset on this account.",
         no_credit: "This reset is no longer available. Refreshing account usage…",

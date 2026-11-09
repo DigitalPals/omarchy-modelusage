@@ -15,11 +15,35 @@ from typing import Any
 def clean_message(value: Any) -> str:
     """Return a short display-safe message with common credential forms removed."""
     text = str(value or "").replace("\n", " ").replace("\r", " ").strip()
-    text = re.sub(r"(?i)bearer\s+[a-z0-9._~+/=-]+", "Bearer [redacted]", text)
-    key = r"(?:access[_ -]?token|refresh[_ -]?token|api[_ -]?key|authorization)"
+    text = re.sub(r"(?i)\b(bearer|basic)\s+[a-z0-9._~+/=-]+", r"\1 [redacted]", text)
+    # Credentials embedded in URLs: scheme://user:password@host.
+    text = re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@]+@", r"\1[redacted]@", text)
+    # Any name ending in a credential word, e.g. token, client_secret, x-api-key,
+    # password, or session_id, followed by ":" or "=" and a value.
+    word = (
+        r"(?:access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|secret|password|passwd|pwd"
+        r"|api[_ -]?key|apikey|key|authorization|cookie|session[_ -]?id|credentials?)"
+    )
+    key = rf"\b(?:[a-z0-9]+[_-])*{word}"
     text = re.sub(
         rf"(?i)([\"']?{key}[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|\S+)",
         r"\1[redacted]",
+        text,
+    )
+    # camelCase names such as clientSecret or refreshToken (case-sensitive, so
+    # ordinary words like "monkey" are untouched).
+    camel = r"\b[a-z][a-zA-Z0-9]*(?:Token|Secret|Password|Passwd|Key|Credentials?|Cookie|SessionId)"
+    text = re.sub(
+        rf"([\"']?{camel}[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|\S+)",
+        r"\1[redacted]",
+        text,
+    )
+    # Bare tokens with well-known shapes: OpenAI/Anthropic-style keys, GitHub
+    # and Slack tokens, and JWTs.
+    text = re.sub(
+        r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+        r"|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+        "[redacted]",
         text,
     )
     return text[:300]

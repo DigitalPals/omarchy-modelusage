@@ -1,13 +1,14 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 Column {
   id: root
   property string title: ""
   property string summary: ""
   property alias expanded: disclosure.checked
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   default property alias content: body.data
   signal revealRequested(var item)

@@ -11,6 +11,15 @@
 
 ## Tested local runtime
 
+The QML CI job reproduces this runtime from the Arch Linux Archive snapshot of
+2026-09-13 (Qt 6.11.2, Quickshell 0.3.1) and the Omarchy commit above.
+
+Qt 6.12 adds a `Color` singleton to QtQuick that hides an unqualified `Color`
+from `qs.Commons`. The plugin therefore uses `Commons.Color`, as current
+Omarchy `quattro` does. Under Qt 6.12 with the older Omarchy commit above,
+Omarchy's own components still read the wrong singleton, so update Omarchy
+together with Qt.
+
 - Omarchy package: `4.0.3-1`
 - Qt Declarative / `qmllint`: `6.11.2`
 - Quickshell: `0.3.1-1` (Arch Linux package)

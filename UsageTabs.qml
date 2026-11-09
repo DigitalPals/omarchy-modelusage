@@ -3,13 +3,14 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import qs.Commons
+import qs.Commons as Commons
 
 Controls.TabBar {
   id: root
 
   property var options: []
   property string value: ""
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.bodySmall
   signal changed(string value)
@@ -17,7 +18,7 @@ Controls.TabBar {
   implicitHeight: Style.spacing.controlHeight + Style.spacing.sm
   spacing: Style.spacing.md
   currentIndex: {
-    for (var i = 0; i < options.length; i++)
+    for (let i = 0; i < options.length; i++)
       if (options[i].value === value) return i
     return -1
   }
@@ -47,7 +48,7 @@ Controls.TabBar {
 
       contentItem: Text {
         text: viewTab.text
-        color: viewTab.checked ? Color.accent : root.foreground
+        color: viewTab.checked ? Commons.Color.accent : root.foreground
         font.family: root.fontFamily
         font.pixelSize: root.fontSize
         // Reserve bold label widths so changing tabs doesn't move controls.
@@ -58,9 +59,9 @@ Controls.TabBar {
 
       background: Rectangle {
         color: viewTab.hovered || viewTab.visualFocus
-          ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+          ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
         border.width: viewTab.visualFocus ? Style.spacing.hairline : 0
-        border.color: Color.accent
+        border.color: Commons.Color.accent
 
         Rectangle {
           anchors.left: parent.left
@@ -68,7 +69,7 @@ Controls.TabBar {
           anchors.bottom: parent.bottom
           height: Style.space(2)
           visible: viewTab.checked
-          color: Color.accent
+          color: Commons.Color.accent
         }
       }
     }

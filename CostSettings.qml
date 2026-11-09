@@ -1,16 +1,18 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
+import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
 Column {
   id: root
-  property color foreground: Color.foreground
-  property color urgent: Color.urgent
-  property color surface: Color.popups.background
+  property color foreground: Commons.Color.foreground
+  property color urgent: Commons.Color.urgent
+  property color surface: Commons.Color.popups.background
   property string fontFamily: Style.font.family
   property var sources: []
   property string errorText: ""
@@ -31,6 +33,9 @@ Column {
   property string fuseboxConnection: "limits"
   property string limitsUrl: ""
   property string limitsKeyFile: ""
+  // Where the backends look when no key file is saved (scripts/proxy_connection.py).
+  readonly property string defaultKeyPath: Quickshell.env("CLIPROXY_API_KEY_FILE")
+    || (Quickshell.env("XDG_CONFIG_HOME") || "~/.config") + "/omarchy/model-usage/cliproxy.key"
   readonly property bool fuseboxUsesLimits: fuseboxConnection === "limits"
   property var pendingValues: null
   property var pendingKeys: ({})
@@ -55,7 +60,7 @@ Column {
   }
 
   function discardKey() {
-    for (var i = 0; i < servers.count; i++) servers.setProperty(i, "token", "")
+    for (let i = 0; i < servers.count; i++) servers.setProperty(i, "token", "")
     fuseboxKey = ""
     fuseboxCredential.reset()
     fuseboxTest.reset()
@@ -93,10 +98,10 @@ Column {
     localProviders = settings.costLocalProviders === undefined ? ["claude", "codex"] : settings.costLocalProviders
     prices.begin(String(settings.costPriceOverrides || "{}"))
     try {
-      var rows = JSON.parse(String(settings.costT3Servers || "[]"))
+      let rows = JSON.parse(String(settings.costT3Servers || "[]"))
       if (!Array.isArray(rows) || rows.length > 4) throw new Error()
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i]
+      for (let i = 0; i < rows.length; i++) {
+        let row = rows[i]
         if (!row || typeof row.id !== "string" || typeof row.url !== "string" || typeof row.name !== "string") throw new Error()
         servers.append({serverId: row.id, name: row.name, url: row.url,
           tokenFile: String(row.tokenFile || ""), token: "", included: row.enabled !== false})
@@ -109,7 +114,7 @@ Column {
   function toggleLocal(id) {
     var next = []
     var allowed = ["claude", "codex"]
-    for (var i = 0; i < allowed.length; i++)
+    for (let i = 0; i < allowed.length; i++)
       if (UsageLogic.contains(localProviders, allowed[i]) !== (allowed[i] === id)) next.push(allowed[i])
     localProviders = next
   }
@@ -123,8 +128,8 @@ Column {
   function findItem(item, name) {
     if (item.objectName === name) return item
     var children = item.children || []
-    for (var i = 0; i < children.length; i++) {
-      var result = findItem(children[i], name)
+    for (let i = 0; i < children.length; i++) {
+      let result = findItem(children[i], name)
       if (result) return result
     }
     return null
@@ -170,8 +175,8 @@ Column {
     try { values.costPriceOverrides = prices.serialize() }
     catch (e) { priceSection.expanded = true; errorText = String(e.message || e); return false }
     var rows = [], keys = ({}), previous = ({}), ids = ({})
-    for (var i = 0; i < servers.count; i++) {
-      var row = servers.get(i), url = row.url.trim(), name = row.name.trim(), token = row.token.trim()
+    for (let i = 0; i < servers.count; i++) {
+      let row = servers.get(i), url = row.url.trim(), name = row.name.trim(), token = row.token.trim()
       if (!/^[a-zA-Z0-9-]{1,64}$/.test(row.serverId) || ids[row.serverId]
           || name === "" || name.length > 80 || /[\x00-\x1f]/.test(name)
           || !/^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/.test(url)
@@ -194,7 +199,8 @@ Column {
     }
     values.costT3Servers = JSON.stringify(rows)
     var fuseboxAddress = fuseboxUrl.trim(), fuseboxToken = fuseboxUsesLimits ? "" : fuseboxKey.trim()
-    if (fuseboxEnabled && fuseboxUsesLimits && (limitsKeyFile === "" || !UsageLogic.validServerUrl(limitsUrl))) {
+    // An empty Limits key file means the default key path, exactly as Limits reads it.
+    if (fuseboxEnabled && fuseboxUsesLimits && !UsageLogic.validServerUrl(limitsUrl)) {
       errorText = "Set up the Fusebox connection in Limits settings first, or turn off Use the Limits connection."
       focusFusebox("costFuseboxUsesLimits")
       return false
@@ -248,8 +254,8 @@ Column {
         if (!response.paths) return
         var values = Object.assign({}, root.pendingValues)
         var rows = JSON.parse(values.costT3Servers)
-        for (var i = 0; i < rows.length; i++) {
-          var path = response.paths["t3Token_" + rows[i].id]
+        for (let i = 0; i < rows.length; i++) {
+          let path = response.paths["t3Token_" + rows[i].id]
           if (path) rows[i].tokenFile = path
         }
         values.costT3Servers = JSON.stringify(rows)
@@ -334,6 +340,7 @@ Column {
           Field { objectName: "t3Name-" + serverRow.index; text: serverRow.name; placeholderText: "Server name"; maximumLength: 80; onTextEdited: root.setServer(serverRow.index, "name", text); Accessible.name: "T3 server name" }
           Label { text: "Server URL" }
           Field { objectName: "t3Url-" + serverRow.index; text: serverRow.url; placeholderText: "https://t3.example.com"; maximumLength: 4096; onTextEdited: root.setServer(serverRow.index, "url", text); Accessible.name: "T3 server URL" }
+          Hint { visible: UsageLogic.insecureRemoteUrl(serverRow.url); color: root.urgent; text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted." }
           SettingsCredential {
             objectName: "t3Credential-" + serverRow.index
             editorObjectName: "t3Token-" + serverRow.index
@@ -396,13 +403,13 @@ Column {
     Hint {
       objectName: "costFuseboxLimitsStatus"
       visible: root.fuseboxUsesLimits
-      color: root.limitsKeyFile === "" ? root.urgent : root.foreground
       text: root.limitsKeyFile === ""
-        ? "Limits has no saved management key. Set up Fusebox in Limits settings, or turn this off to enter a different server."
+        ? "Reads " + root.limitsUrl + " with the default key file, as Limits does (" + root.defaultKeyPath + "). Test the connection to confirm it."
         : "Reads " + root.limitsUrl + " with the key saved in Limits."
     }
     Label { visible: !root.fuseboxUsesLimits; text: "Server URL" }
     Field { objectName: "costFuseboxUrl"; visible: !root.fuseboxUsesLimits; text: root.fuseboxUrl; placeholderText: root.limitsUrl || UsageLogic.DEFAULT_PROXY_URL; maximumLength: 4096; onTextEdited: root.setFusebox("fuseboxUrl", text); Accessible.name: "Fusebox server URL" }
+    Hint { visible: UsageLogic.insecureRemoteUrl(root.fuseboxUsesLimits ? root.limitsUrl : root.fuseboxUrl); color: root.urgent; text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted." }
     SettingsCredential {
       id: fuseboxCredential
       objectName: "costFuseboxCredential"
@@ -474,7 +481,7 @@ Column {
         text: root.sourceDetail(modelData)
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
-        color: modelData.status === "unavailable" || modelData.status === "failed" ? root.urgent : Qt.darker(root.foreground, 1.55)
+        color: modelData.status === "unavailable" || modelData.status === "failed" ? root.urgent : UsageLogic.dimColor(root.foreground)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         HoverHandler { id: sourceHover }
@@ -492,7 +499,7 @@ Column {
     onRevealRequested: function(item) { root.revealRequested(item) }
   }
   component Label: Text { width: parent.width; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; textFormat: Text.PlainText; wrapMode: Text.WordWrap }
-  component Hint: Label { opacity: 0.7; font.pixelSize: Style.font.caption }
+  component Hint: Label { color: UsageLogic.dimColor(root.foreground); font.pixelSize: Style.font.caption }
   component Field: SettingsField { width: parent.width; foreground: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; selectByMouse: true; onActiveFocusChanged: if (activeFocus) root.revealRequested(this) }
   component Toggle: Ui.ToggleSwitch {
     width: Style.space(82)

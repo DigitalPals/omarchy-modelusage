@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Omarchy-native segmented quota meter. Every segment is a single track item;
 // only the boundary fragment is overlaid, so the strip is not rendered twice.
@@ -10,7 +11,7 @@ Item {
   id: root
 
   property real value: 0
-  property color fillColor: Color.foreground
+  property color fillColor: Commons.Color.foreground
   property color trackColor: Qt.rgba(fillColor.r, fillColor.g, fillColor.b, 0.14)
   property int blockWidth: Math.max(2, Style.space(5))
   property int blockGap: Math.max(1, Style.space(2))

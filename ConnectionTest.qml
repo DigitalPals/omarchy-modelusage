@@ -2,7 +2,9 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
+import "UsageLogic.js" as UsageLogic
 
 // Tests a Fusebox / CLIProxyAPI connection from unsaved settings. A draft key
 // is written to the test process's stdin, never to its arguments.
@@ -12,14 +14,16 @@ Column {
   property string keyFile: ""
   property string key: ""
   property bool requireFusebox: false
-  property color foreground: Color.foreground
-  property color urgent: Color.urgent
+  property color foreground: Commons.Color.foreground
+  property color urgent: Commons.Color.urgent
   property string fontFamily: Style.font.family
   property string scriptPath: decodeURIComponent(String(Qt.resolvedUrl("scripts/proxy-test.py")).replace(/^file:\/\//, ""))
   // idle, testing, ok or failed; any edit to the tested values returns to idle.
   property string status: "idle"
   property string message: ""
   property string implementation: ""
+  // The draft request for the run being started. It is written to stdin once
+  // and cleared; a late stop notice from an earlier run never touches it.
   property var request: null
   readonly property bool testing: status === "testing"
   signal revealRequested(var item)
@@ -38,6 +42,7 @@ Column {
     request = { url: url.trim(), key: key, keyFile: keyFile, requireFusebox: requireFusebox }
     status = "testing"
     process.body = ""
+    exitGrace.stop()
     process.running = true
   }
   function settle(data) {
@@ -74,12 +79,17 @@ Column {
       }
     }
     stderr: SplitParser { splitMarker: "" }
-    onRunningChanged: if (!running) {
-      root.request = null
-      if (root.status === "testing") {
-        root.status = "failed"
-        root.message = "Could not run the connection test. Check that python3 is available."
-      }
+    // The process can report that it stopped before its last stdout line is
+    // delivered; give that line a moment before calling the run a failure.
+    onRunningChanged: if (!running && root.status === "testing") exitGrace.restart()
+  }
+
+  Timer {
+    id: exitGrace
+    interval: 500
+    onTriggered: if (root.status === "testing" && !process.running) {
+      root.status = "failed"
+      root.message = "Could not run the connection test. Check that python3 is available."
     }
   }
 
@@ -113,7 +123,7 @@ Column {
     width: parent.width
     visible: root.message !== ""
     text: (root.status === "ok" ? "✓ " : "") + root.message
-    color: root.status === "failed" ? root.urgent : Qt.darker(root.foreground, 1.5)
+    color: root.status === "failed" ? root.urgent : UsageLogic.dimColor(root.foreground)
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
     textFormat: Text.PlainText

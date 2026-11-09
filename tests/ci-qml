@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Run every check, including QML lint, the offscreen QML contracts and the
+# Wayland runtime contract, in a disposable Arch Linux container that already
+# has the pinned Quickshell/Qt packages and Omarchy shell source installed.
+# Usage (as root in that container): tests/ci-qml /path/to/omarchy
+set -euo pipefail
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+quattro_root=$(cd -- "${1:?usage: tests/ci-qml OMARCHY_SOURCE_DIR}" && pwd)
+user=${MODEL_USAGE_CI_USER:-tester}
+
+# Private-state checks assert real permission failures, which root bypasses.
+id "$user" >/dev/null 2>&1 || useradd -m "$user"
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+cp -a "$repo_root/." "$work/"
+chown -R "$user" "$work"
+
+# sway carries file capabilities that an unprivileged container cannot grant;
+# a plain copy runs without them, which a headless compositor does not need.
+install -m 0755 "$(command -v sway)" /usr/local/bin/sway-headless
+
+runtime=/tmp/model-usage-ci-runtime
+install -d -m 0700 -o "$user" "$runtime"
+# Paths travel as environment variables, never spliced into the shell script.
+XDG_RUNTIME_DIR=$runtime MODEL_USAGE_CI_WORK=$work OMARCHY_QUATTRO_PATH=$quattro_root \
+su "$user" -s /bin/bash -c '
+  set -euo pipefail
+  export HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+  printf "output HEADLESS-1 resolution 1920x1080\n" > "$XDG_RUNTIME_DIR/sway.conf"
+  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+    sway-headless -c "$XDG_RUNTIME_DIR/sway.conf" > "$XDG_RUNTIME_DIR/sway.log" 2>&1 &
+  sway_pid=$!
+  trap "kill $sway_pid 2>/dev/null || true" EXIT
+  for _ in $(seq 150); do [[ -S $XDG_RUNTIME_DIR/wayland-1 ]] && break; sleep 0.1; done
+  [[ -S $XDG_RUNTIME_DIR/wayland-1 ]] || { cat "$XDG_RUNTIME_DIR/sway.log"; exit 1; }
+  cd "$MODEL_USAGE_CI_WORK"
+  WAYLAND_DISPLAY=wayland-1 MODEL_USAGE_REQUIRE_QML=1 MODEL_USAGE_LIVE_TESTS=1 ./tests/run
+' -w XDG_RUNTIME_DIR,MODEL_USAGE_CI_WORK,OMARCHY_QUATTRO_PATH

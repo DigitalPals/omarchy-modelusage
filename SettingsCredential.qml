@@ -1,7 +1,9 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
+import "UsageLogic.js" as UsageLogic
 
 Column {
   id: root
@@ -10,7 +12,7 @@ Column {
   property bool changing: false
   property alias text: field.text
   property string editorObjectName: ""
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   signal edited(string value)
   signal revealRequested(var item)
@@ -29,7 +31,7 @@ Column {
       width: parent.width - changeButton.width
       anchors.verticalCenter: parent.verticalCenter
       text: root.label + " saved"
-      color: Qt.darker(root.foreground, 1.5)
+      color: UsageLogic.dimColor(root.foreground)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       wrapMode: Text.WordWrap

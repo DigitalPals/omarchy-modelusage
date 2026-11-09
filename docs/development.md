@@ -4,7 +4,9 @@
 
 ## Architecture
 
-- `Panel.qml` owns the injected bar widget, native popup, keyboard behavior, provider selection, error/credit/limit presentation, and namespaced IPC.
+- `Panel.qml` owns the injected bar widget, native popup, keyboard behavior, provider selection, panel layout, and namespaced IPC.
+- `AccountCard.qml`, `LimitCard.qml`, and `CreditsCard.qml` render one managed account, one limit window, and one credits balance. They take explicit properties (thresholds, colors, time) and emit signals; they do not reach into the panel.
+- `UsageLogic.js` also holds the presentation rules shared by those cards: window severity, compact account-window selection, reset and refresh wording, credits formatting, bar-chip selection, and the secondary-text color. Its node tests cover them without Quickshell.
 - `UsageBackend.qml` owns one bounded asynchronous Python process, coalesces duplicate refresh requests, applies the configured interval, and rejects malformed contract output.
 - `scripts/usage-fetch.py` performs parallel, failure-isolated provider collection and emits the versioned provider-neutral contract documented in [docs/backend-contract.md](backend-contract.md).
 - `scripts/proxy_connection.py` is the single Fusebox / CLIProxyAPI connection layer: URL normalization, private key files, redirect rejection, the management client, implementation detection, and the shared `--proxy-url`/`--proxy-key-file`/`--implementation` flags. Quota, activity, live, reset, Fusebox cost, and connection-test scripts all use it.
@@ -66,6 +68,14 @@ four-edge cycle:
 ```bash
 MODEL_USAGE_LIVE_TESTS=1 MODEL_USAGE_TEST_ALL_EDGES=1 ./tests/run
 ```
+
+CI runs two jobs. The portable job runs the Python/JavaScript suite on Python 3.10–3.14; GitHub's images have no Quickshell, so it skips QML. The `qml` job runs `tests/ci-qml` in an Arch Linux container pinned to the Arch Linux Archive date and Omarchy commit in [COMPATIBILITY.md](../COMPATIBILITY.md). It starts a headless sway compositor and runs `tests/run` with `MODEL_USAGE_REQUIRE_QML=1` and `MODEL_USAGE_LIVE_TESTS=1`, so qmllint, all QML contracts, and the Wayland runtime contract must pass; any skipped QML check fails the build. Run the same script locally in a disposable Arch container that has those packages and an Omarchy checkout:
+
+```bash
+tests/ci-qml /path/to/omarchy
+```
+
+Omarchy's `Color` singleton is always imported as `qs.Commons as Commons` and used as `Commons.Color`. Qt 6.12's QtQuick adds its own `Color` singleton, which hides an unqualified `Color`; current Omarchy uses the qualified form throughout.
 
 `qmllint` cannot resolve child properties of Omarchy's dynamic `QtObject` theme tokens, the injected `bar` object, or Quickshell's native `QProcess::ExitStatus` signal type from the supplied import tree. The harness disables those two warning categories, treats every other warning as a failure, and uses the live Quickshell contract as the authoritative compile/runtime check for the dynamic bindings.
 

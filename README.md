@@ -11,15 +11,15 @@ AI subscription limits, token activity, and estimated API costs in your Omarchy 
 <table>
   <tr>
     <th>Three Codex subscriptions · CLIProxyAPI</th>
-    <th>Costs · local CLI + remote T3 history</th>
+    <th>Costs · estimated API value</th>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/model-usage-panel.png" alt="Three separate Codex Pro 20× account cards with weekly quotas, reset times, and banked reset badges" width="420"></td>
+    <td valign="top"><img src="docs/model-usage-panel.png" alt="Three separate Codex Pro 20× account cards with weekly quotas, reset times, and banked reset counts" width="420"></td>
     <td valign="top"><img src="docs/model-usage-costs.png" alt="30-day API cost estimate with a daily chart, Claude and Codex totals, and expandable token and model details" width="420"></td>
   </tr>
 </table>
 
-Cropped captures of the running widget, September 2026. Account emails are hidden.
+Rendered from the test fixtures (synthetic data, not live accounts), November 2026. Account labels are numbered; the menu-bar capture is from September 2026.
 
 ## Highlights
 
@@ -72,7 +72,7 @@ Sign in to each provider you want to monitor, then open **Limits → gear** and 
 The plugin reads existing CLI credentials; sign-in and credential renewal remain with the CLI. CLI-owned environment overrides are honored; see the [configuration reference](docs/configuration.md#providers-and-authentication).
 
 <p align="center">
-  <img src="docs/model-usage-local-cli.png" alt="Local Claude Code mode with session, weekly and model-specific limits, extra usage allowance, and 24-hour quota history" width="420">
+  <img src="docs/model-usage-local-cli.png" alt="Local Claude Code mode with session, weekly and model-specific limits, extra usage remaining, and 24-hour quota history" width="420">
 </p>
 
 The current UI rendered with representative fixture data; this is a local CLI mode example, not a live account reading.
@@ -118,10 +118,10 @@ Full connection, credential, settings, reset-credit, and troubleshooting details
 
 ### Subscription limits and the menu bar
 
-Limits are provider-reported subscription allowances. Cards and bar chips show **percentage remaining**; quota-history bars record **percentage used**. Extra usage, credit balances, and banked reset counts appear only when the provider exposes them.
+Limits are provider-reported subscription allowances. Cards, bar chips, and extra-usage meters show **what remains**; the quota-history chart (**Quota used**) records **percentage used**. Extra usage, credit balances, and banked reset counts appear only when the provider exposes them. A provider whose reading fails keeps its bar chip as `!`, with the error in the tooltip; a last-known reading kept through a proxy outage shows as `90%?`. Both make the widget icon urgent. When a reset time passes while the panel is open, the reading refreshes once; until a new reading arrives the card says so instead of showing an old meter as current. Prepaid Kimi wallets show their **balance** separately from the monthly charge cap; credits without a currency are labeled as credits.
 
 - **Local mode** shows the signed-in account's reported session, weekly, model-specific, and other windows. Its bar percentage uses the most restrictive reported window.
-- **Proxy mode** shows each subscription separately. Cards default to overall weekly limits, then other weekly/monthly allowances or the first reported window. **Additional limits** reveals the other windows. Three subscriptions remain three readings: percentages are never added or averaged across accounts.
+- **Proxy mode** shows each subscription separately. Cards default to overall weekly limits, then other weekly/monthly allowances or the first reported window. A shorter window at warning or critical level that is tighter than that allowance, such as a spent 5-hour limit, is shown first. **Additional limits** (above the cards, `a`, shown only when there is more to see) reveals the other windows. Three subscriptions remain three readings: percentages are never added or averaged across accounts.
 - **Proxy bar selection:** native Rust activity or matching Go/Keeper activity selects the last-used account, whose most restrictive window supplies the percentage. Without matching activity, or with tied timestamps, the bar uses the best-capacity account and labels that fallback in its tooltip. This is the latest recorded request, not a prediction of which account the next request will use. Fusebox live activity uses one shared `/api/live` WebSocket per proxy connection; cached account inventory refreshes at most every 15 seconds during activity, every 60 seconds when idle. Go/Keeper and Rust with live disabled retain 15-second last-used polling; quota polling is separate. Rust activity reflects completed requests, including failures, and resets when the server restarts.
 - **Quota history** starts with successful widget readings and survives restarts. It is sampled allowance usage, not a reconstructed request log. Proxy history records the best-capacity pool summary, with separate storage per server and separate direct-CLI history. Failed readings are not recorded as zero.
 
@@ -144,7 +144,7 @@ All enabled cost sources contribute together, independently of the selected quot
 
 **Periods:** 24H is a rolling 24-hour window. 7D and 30D use calendar days including today in the widget's timezone. Only recorded, readable usage inside the selected period contributes. Scanning is on demand when Costs needs data or is refreshed; unchanged files reuse cached results and growing files resume from their last safe position.
 
-**Incomplete history:** unreadable, malformed, or oversized input can leave totals incomplete; source diagnostics appear under **Costs → gear → Last scan**. Offline T3 servers can contribute a labeled last usable snapshot for that period/timezone. Such snapshots miss new activity and may omit boundary hours. Unknown empty chart periods are shown as gaps, and session counts are omitted when they cannot be determined accurately.
+**Incomplete history:** unreadable, malformed, or oversized input can leave totals incomplete. Partial, offline-snapshot, or unavailable sources are named under the total; full diagnostics appear under **Costs → gear → Last scan**. Offline T3 servers can contribute a labeled last usable snapshot for that period/timezone. Such snapshots miss new activity and may omit boundary hours. Unknown empty chart periods are shown as gaps, and session counts are omitted when they cannot be determined accurately.
 
 ### How the estimate is calculated
 
@@ -177,8 +177,11 @@ Public prices refresh daily and are cached for offline use. **Refresh in Costs**
 | Switch tabs | `c` for Costs, `u` for Limits |
 | Refresh the current view | `r` or Enter |
 | Scroll | `j` / `k` or Down / Up |
+| Costs period / Limits history range | `[` / `]` |
+| Show every limit on each managed account | `a` or **Additional limits** |
 | Costs metric / token details / model breakdown | `m` / `d` / `b` |
-| Settings | Gear or `s` |
+| Settings for the current tab | Gear or `s` |
+| Show the keys that work in the current view | `?` or the **?** button |
 | Close / cancel draft | Escape |
 
 Menus use Up/Down and Enter. Tab/Shift+Tab navigates settings fields or neighboring bar panels through Omarchy's panel coordinator. Right click has no assigned action.
@@ -197,7 +200,7 @@ Also available: `open`, `close`, `toggle`, `next`, `configure`, and `configureCo
 
 ## Privacy and reliability
 
-Provider sign-ins stay with the CLI or proxy. Saved management keys and T3/Keeper credentials use private files, never widget settings or command-line secret values. **Applying a banked Codex reset is an explicit, account-specific action that spends a credit only after confirmation**; ordinary quota collection is read-only.
+Provider sign-ins stay with the CLI or proxy. Saved management keys and T3/Keeper credentials use private files, never widget settings or command-line secret values. Settings warn when a credential would travel over plain `http://` to another computer. **Applying a banked Codex reset is an explicit, account-specific action that spends a credit only after confirmation**; ordinary quota collection is read-only.
 
 Cost collectors read local transcript files but persist only accounting metadata and hashed identifiers—no prompts, responses, tool output, or credentials in usage caches. State is XDG-aware, with `0700` directories and `0600` files. HTTPS certificates are verified and provider redirects are rejected. Provider failures are isolated; bounded processes and input limits prevent unbounded scans, and stale/unavailable states expose missing data.
 

@@ -30,7 +30,7 @@ import t3_costs
 
 
 SCHEMA_VERSION = 1
-SCAN_CACHE_VERSION = 5  # Rebuild Codex records deduplicated without cumulative counters.
+SCAN_CACHE_VERSION = 6  # Rescan to count malformed usage lines, which make coverage partial.
 RATE_CACHE_VERSION = 2  # v1 discarded provider prefixes and could cache conflicting rates.
 PROVIDER_ORDER = ("claude", "codex", "kimi")
 PROVIDER_NAMES = {
@@ -162,6 +162,10 @@ class TranscriptCursor:
         self.resumed = False
         self.tail = False
         self.tail_count = 0
+        # Complete (newline-terminated) usage lines that are not valid JSON.
+        # A growing file's unterminated last line is not counted.
+        self.malformed = 0
+        self.base_malformed = 0
 
     def spend(self, count: int) -> None:
         self.budget[0] -= count
@@ -191,6 +195,7 @@ class TranscriptCursor:
                     start = offset
                     self.state.update(pos["state"])
                     self.base = entry["records"][:len(entry["records"]) - entry.get("tailCount", 0)]
+                    self.base_malformed = int(entry.get("malformed", 0))
                     self.resumed = True
             # Check the budget before reading a large changed file. A failed
             # guard uses the full-file budget, never the optimistic tail size.
@@ -223,6 +228,12 @@ class TranscriptCursor:
                 raise OSError("transcript changed during the scan")
             self.position = dict(offset=offset, guard=hashlib.sha256(guard).hexdigest(),
                                  device=self.stats.st_dev, inode=self.stats.st_ino, state=committed_state)
+
+
+def note_malformed(line: str, cursor: TranscriptCursor | None) -> None:
+    """Count a complete usage line that could not be parsed."""
+    if cursor is not None and line.endswith("\n"):
+        cursor.malformed += 1
 
 
 def append_record(records: list[UsageRecord], record: UsageRecord, cursor: TranscriptCursor | None) -> None:
@@ -374,6 +385,9 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
         tail_count = entry.get("tailCount", 0)
         if type(tail_count) is not int or not 0 <= tail_count <= len(rows):
             continue
+        malformed = entry.get("malformed", 0)
+        if type(malformed) is not int or not 0 <= malformed <= MAX_TRANSCRIPT_FILE_BYTES:
+            continue
         records: list[UsageRecord] = []
         corrupt = False
         for row in rows:
@@ -393,6 +407,7 @@ def load_scan_cache(path: Path) -> dict[str, dict[str, Any]]:
                 "records": records,
                 "position": position,
                 "tailCount": tail_count,
+                "malformed": malformed,
             }
             cached_records += len(records)
     return cache
@@ -418,6 +433,7 @@ def save_scan_cache(path: Path, cache: dict[str, dict[str, Any]]) -> None:
             "r": [serialize_record(record) for record in records],
             "position": entry.get("position"),
             "tailCount": entry.get("tailCount", 0),
+            "malformed": int(entry.get("malformed", 0)),
         }
         cached_records += len(records)
     atomic_write_json(path, {"schemaVersion": SCAN_CACHE_VERSION, "files": files})
@@ -467,6 +483,7 @@ def parse_claude_file(path: Path, retention_start_ms: int, cursor: TranscriptCur
             try:
                 record = record_from_claude(json.loads(line))
             except (json.JSONDecodeError, RecursionError):
+                note_malformed(line, cursor)
                 continue
             if record is None or record.timestamp_ms < retention_start_ms:
                 continue
@@ -505,6 +522,7 @@ def parse_codex_file(path: Path, retention_start_ms: int, cursor: TranscriptCurs
             try:
                 document = json.loads(line)
             except (json.JSONDecodeError, RecursionError):
+                note_malformed(line, cursor)
                 continue
             if not isinstance(document, dict) or not isinstance(document.get("payload"), dict):
                 continue
@@ -596,6 +614,7 @@ def parse_kimi_file(path: Path, retention_start_ms: int, cursor: TranscriptCurso
             try:
                 document = json.loads(line)
             except (json.JSONDecodeError, RecursionError):
+                note_malformed(line, cursor)
                 continue
             if not isinstance(document, dict) or not isinstance(document.get("message"), dict):
                 continue
@@ -762,6 +781,7 @@ def scan_transcripts(
         live_by_provider[provider] = live if discovery_complete else None
         source["skippedFiles"] += discovery_errors
         provider_record_count = 0
+        source_malformed = 0
         for path, stats, key in candidates:
             size = int(stats.st_size)
             modified = int(stats.st_mtime_ns)
@@ -777,8 +797,10 @@ def scan_transcripts(
                     and entry["position"]["inode"] == stats.st_ino))
             )
             cursor = None
+            malformed = 0
             if cache_hit:
                 parsed = [record for record in entry["records"] if record.timestamp_ms >= retention_start_ms]
+                malformed = int(entry.get("malformed", 0))
             else:
                 if entry is not None:
                     del cache[key]
@@ -810,6 +832,7 @@ def scan_transcripts(
                                 merged.append(record)
                                 tail_count += int(provisional)
                         cursor.tail_count = tail_count
+                        malformed = cursor.base_malformed + cursor.malformed
                         parsed = merged if len(merged) <= MAX_TRANSCRIPT_RECORDS_PER_FILE else None
             if parsed is None:
                 source["skippedFiles"] += 1
@@ -825,9 +848,11 @@ def scan_transcripts(
                     "records": parsed,
                     "position": cursor.position if cursor else None,
                     "tailCount": cursor.tail_count if cursor else 0,
+                    "malformed": malformed,
                 }
                 cache_changed = True
             source["scannedFiles"] += 1
+            source_malformed += malformed
             provider_record_count += len(parsed)
             records.extend(parsed)
 
@@ -839,6 +864,11 @@ def scan_transcripts(
                 "totals may be incomplete."
             )
             source["status"] = "partial" if source["scannedFiles"] > 0 else "failed"
+        if source_malformed > 0:
+            noun = "line was" if source_malformed == 1 else "lines were"
+            messages.append(f"{source_malformed} malformed usage {noun} skipped; totals may be incomplete.")
+            if source["status"] == "ok":
+                source["status"] = "partial"
         if provider == "kimi" and provider_record_count > 0 and source["status"] != "failed":
             source["status"] = "partial"
             messages.append(

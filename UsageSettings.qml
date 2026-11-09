@@ -3,15 +3,16 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
 Column {
   id: root
 
-  property color foreground: Color.foreground
-  property color urgent: Color.urgent
-  property color surface: Color.popups.background
+  property color foreground: Commons.Color.foreground
+  property color urgent: Commons.Color.urgent
+  property color surface: Commons.Color.popups.background
   property string fontFamily: Style.font.family
   property string accountDetails: ""
   property string errorText: ""
@@ -50,7 +51,7 @@ Column {
   ]
   readonly property var allProviderIds: {
     var ids = ["claude", "codex", "kimi"]
-    for (var i = 0; i < proxyProviders.length; i++)
+    for (let i = 0; i < proxyProviders.length; i++)
       if (!UsageLogic.contains(ids, proxyProviders[i].id)) ids.push(proxyProviders[i].id)
     return ids
   }
@@ -125,8 +126,8 @@ Column {
   function toggleProvider(key, id) {
     var selected = UsageLogic.listOrEmpty(draft[key])
     var result = []
-    for (var i = 0; i < allProviderIds.length; i++) {
-      var candidate = allProviderIds[i]
+    for (let i = 0; i < allProviderIds.length; i++) {
+      let candidate = allProviderIds[i]
       if (UsageLogic.contains(selected, candidate) !== (candidate === id)) result.push(candidate)
     }
     setValue(key, result)
@@ -157,10 +158,10 @@ Column {
       ["warningThreshold", "Warning threshold", 1, 100],
       ["criticalThreshold", "Critical threshold", 0, 100]
     ]
-    for (var i = 0; i < ranges.length; i++) {
-      var range = ranges[i]
-      var raw = String(next[range[0]]).trim()
-      var value = Number(raw)
+    for (let i = 0; i < ranges.length; i++) {
+      let range = ranges[i]
+      let raw = String(next[range[0]]).trim()
+      let value = Number(raw)
       if (raw === "" || !isFinite(value) || Math.floor(value) !== value
           || value < range[2] || value > range[3]) {
         return fail(range[1] + " must be a whole number from " + range[2] + " to " + range[3] + ".",
@@ -301,6 +302,12 @@ Column {
       settingKey: "proxyUrl"
       placeholderText: UsageLogic.DEFAULT_PROXY_URL
       Accessible.name: root.proxyName + " server URL"
+    }
+    Hint {
+      objectName: "proxyUrlInsecure"
+      visible: UsageLogic.insecureRemoteUrl(root.draft.proxyUrl)
+      color: root.urgent
+      text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted."
     }
     SettingsCredential {
       id: managementCredential
@@ -466,6 +473,11 @@ Column {
       placeholderText: "https://proxy.example.com/keeper"
       Accessible.name: "CPA Usage Keeper URL"
     }
+    Hint {
+      visible: !root.fuseboxProxy && UsageLogic.insecureRemoteUrl(root.draft.keeperUrl)
+      color: root.urgent
+      text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted."
+    }
     SettingsCredential {
       id: keeperCredential
       visible: !root.fuseboxProxy
@@ -552,7 +564,7 @@ Column {
   }
 
   component Hint: Label {
-    color: Qt.darker(root.foreground, 1.5)
+    color: UsageLogic.dimColor(root.foreground)
     font.pixelSize: Style.font.caption
   }
 

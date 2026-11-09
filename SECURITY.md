@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 1.1.1 and later on the 1.1.x line | Yes |
-| 1.1.0, 1.0.x, and earlier | No; update for hardened private-state writes |
+| 1.4.x | Yes |
+| 1.3.x and earlier | No; update to the latest release |
 
 ## Reporting a vulnerability
 
@@ -29,7 +29,13 @@ access and should never be run with `sudo`.
 
 Direct provider requests reject HTTP redirects and verify HTTPS certificates.
 Unexpected collector errors use fixed display messages rather than raw exception
-details, which can contain credential or account data.
+details, which can contain credential or account data. Provider and server error
+text that is shown is first stripped of Bearer/Basic values, URL user information,
+values following credential-like names in snake, kebab or camel case (for example
+`token`, `password`, `client_secret`, `clientSecret`, `api_key`, `authorization`,
+`cookie`), and bare tokens with well-known shapes (`sk-…`, `ghp_…`, `xoxb-…`, JWTs).
+This redaction is a best-effort safeguard for display, not a guarantee for
+arbitrary upstream text.
 
 Private state is stored below
 `${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/`. The directory uses mode

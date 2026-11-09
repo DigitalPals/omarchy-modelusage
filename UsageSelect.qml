@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 
 Controls.ComboBox {
@@ -12,8 +13,8 @@ Controls.ComboBox {
   property string value: ""
   property string label: ""
   property string compactLabel: ""
-  property color foreground: Color.foreground
-  property color surface: Color.popups.background
+  property color foreground: Commons.Color.foreground
+  property color surface: Commons.Color.popups.background
   property string fontFamily: Style.font.family
   property real popupMaximumWidth: parent ? parent.width : implicitWidth
   property bool alignPopupRight: false
@@ -35,7 +36,7 @@ Controls.ComboBox {
   textRole: "label"
   valueRole: "value"
   currentIndex: {
-    for (var i = 0; i < options.length; i++)
+    for (let i = 0; i < options.length; i++)
       if (options[i].value === value) return i
     return -1
   }
@@ -66,9 +67,9 @@ Controls.ComboBox {
   background: Rectangle {
     radius: Style.space(4)
     color: root.hovered || root.visualFocus || root.menuOpen
-      ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+      ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
     border.width: root.visualFocus ? Style.spacing.hairline : 0
-    border.color: Color.accent
+    border.color: Commons.Color.accent
   }
 
   popup: Controls.Popup {
@@ -132,7 +133,7 @@ Controls.ComboBox {
     Accessible.name: text
     contentItem: Text {
       text: optionDelegate.text
-      color: optionDelegate.modelData.value === root.value ? Color.accent : root.foreground
+      color: optionDelegate.modelData.value === root.value ? Commons.Color.accent : root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: optionDelegate.modelData.value === root.value
@@ -142,7 +143,7 @@ Controls.ComboBox {
     background: Rectangle {
       radius: Style.space(4)
       color: optionDelegate.highlighted
-        ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+        ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
     }
   }
 }

@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 
 ShellRoot {
   id: root
@@ -215,6 +216,9 @@ ShellRoot {
       proxyWidget.selectProviderId("codex")
       assertEqual(proxyWidget.proxyAccounts.length, 3, "all three Codex subscriptions are available together")
       assertEqual(proxyWidget.accountCards.count, 3, "three separate Codex account cards are rendered")
+      assertEqual(proxyWidget.contextText().split(" · ")[0], "3 connected accounts", "account count heads the overview")
+      assertTrue(namedChild(proxyWidget.accountCards.itemAt(0), "accountResetBadge").border.width === 0,
+        "an unavailable reset is plain text, not a button")
       assertTrue(proxyWidget.accountOverview, "proxy defaults to account overview")
       assertTrue(!proxyWidget.expandedAccountLimits, "weekly limits are the default")
       var cards = []
@@ -230,6 +234,7 @@ ShellRoot {
         assertTrue(badge !== null && badge.width > 0 && badge.height > 0, "reset badge has a visible size")
         assertEqual(label ? label.text : "", i + " banked reset" + (i === 1 ? "" : "s"), "each account shows its own banked resets including zero")
       }
+      assertTrue(proxyWidget.hasAdditionalLimits, "the account fixture has more limits to reveal")
       proxyWidget.expandedAccountLimits = true
       if (cards.length > 0) assertEqual(cards[0].windows.length, 4, "additional limits can be expanded")
       proxyWidget.selectProviderId("gemini")
@@ -242,25 +247,41 @@ ShellRoot {
       proxyWidget.settings = Object.assign({}, proxyWidget.settings,
         {barDisplayMode: "Percentages", barProviders: ["codex"]})
       proxyWidget.selectProviderId("codex")
-      proxyWidget.accountActivity.providers = [{id: "codex", status: "ok", accountId: "0", lastUsedAt: 123}]
+      proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ok", accountId: "0", lastUsedAt: 123}]
       var barLabel = namedChild(proxyWidget, "barAccountLabel")
       var barRemaining = namedChild(proxyWidget, "barAccountRemaining")
       assertTrue(barLabel === null, "bar contains no account name label")
       assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "Account 1", "tooltip respects hidden account emails")
       assertEqual(barRemaining ? barRemaining.text : "", "20%", "bar quota belongs to last-used account")
-      proxyWidget.accountActivity.providers = [{id: "codex", status: "ok", accountId: "1", lastUsedAt: 124}]
+      proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ok", accountId: "1", lastUsedAt: 124}]
       assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "Account 2", "tooltip follows account switches")
       assertEqual(barRemaining.text, "55%", "account switch updates quota together with label")
       proxyWidget.settings = Object.assign({}, proxyWidget.settings, {hideAccountEmails: false})
       assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "secret@example.invalid", "privacy setting can reveal account labels")
       assertEqual(proxyWidget.lastAccount(proxyWidget.provider).label, "codex-1@example.invalid", "tooltip reveals email only when requested")
       assertTrue(namedChild(proxyWidget, "barAccountLabel") === null, "emails stay out of the bar when privacy is disabled")
-      proxyWidget.accountActivity.providers = []
+      proxyWidget.accountActivity.legacyProviders = []
       assertEqual(barRemaining.text, "9%", "missing activity still shows the known pool quota")
       assertTrue(barRemaining.parent.parent.tooltipText.indexOf("most remaining capacity") >= 0,
         "fallback tooltip identifies the pool quota rather than claiming a last-used account")
-      proxyWidget.accountActivity.providers = [{id: "codex", status: "ambiguous", lastUsedAt: 125}]
+      proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ambiguous", lastUsedAt: 125}]
       assertEqual(barRemaining.text, "9%", "ambiguous activity still shows the known pool quota")
+      var freshPayload = proxyWidget.usageBackend.payload
+      var stalePayload = JSON.parse(JSON.stringify(freshPayload))
+      for (var p = 0; p < stalePayload.providers.length; p++) {
+        if (stalePayload.providers[p].id !== "codex") continue
+        stalePayload.providers[p].accounts[2].stale = true
+        stalePayload.providers[p].accounts[2].notice = "Last known reading · Proxy offline"
+      }
+      proxyWidget.usageBackend.payload = stalePayload
+      var staleRemaining = namedChild(proxyWidget, "barAccountRemaining")
+      assertEqual(staleRemaining ? staleRemaining.text : "", "9%?", "a pool reading with a last-known account is marked")
+      assertTrue(staleRemaining && staleRemaining.parent.parent.active, "a last-known reading activates its chip")
+      assertTrue(staleRemaining && staleRemaining.parent.parent.tooltipText.indexOf("Proxy offline") >= 0,
+        "the chip tooltip explains why the reading is last known")
+      assertTrue(proxyWidget.alarming, "one last-known account makes the icon urgent")
+      assertTrue(proxyWidget.footerLeft().indexOf("some readings are last known") >= 0, "the footer does not look fresh")
+      proxyWidget.usageBackend.payload = freshPayload
     }
     if (widget) {
       assertEqual(widget.moduleName, "digitalpals.model-usage", "moduleName injection")
@@ -294,6 +315,22 @@ ShellRoot {
       assertTrue(widget.opened, "provider chip opens the panel")
       widget.handleProviderChipPress("codex", Qt.LeftButton)
       assertTrue(!widget.opened, "selected provider chip toggles the panel closed")
+      widget.selectProviderId("claude")
+      widget.viewMode = "limits"
+      var historyView = widget.quotaHistory
+      assertTrue(historyView !== null && widget.historyAvailable, "Claude fixture has quota history")
+      if (historyView) {
+        historyView.rangeRequested("d7")
+        assertEqual(historyView.mode, "d7", "a range tab click updates the chart")
+        widget.stepRange(-1)
+        assertEqual(historyView.mode, "h24", "the keyboard range still drives the chart after a click")
+      }
+      var limitKeys = widget.shortcutRows().map(function(row) { return row.action })
+      assertTrue(limitKeys.indexOf("history range") >= 0 && limitKeys.indexOf("provider") >= 0, "Limits legend lists its keys")
+      widget.viewMode = "costs"
+      var costKeys = widget.shortcutRows().map(function(row) { return row.action })
+      assertTrue(costKeys.indexOf("provider") < 0 && costKeys.indexOf("period") >= 0, "Costs legend lists only keys that work there")
+      widget.viewMode = "limits"
       assertEqual(widget.windowSeverity({ remaining: 9 }), "critical", "critical quota state")
       assertEqual(widget.windowSeverity({ remaining: 20 }), "warning", "warning quota state")
       assertTrue(widget.errorBody({ message: "Expired", errorKind: "expired", authCommand: "kimi login" }).indexOf("kimi login") >= 0,
@@ -306,6 +343,10 @@ ShellRoot {
       assertEqual(widget.viewMode, "cost-settings", "navigation does not override cost settings")
       widget.leaveSettings()
       assertEqual(widget.viewMode, "costs", "leaving settings restores Costs")
+      widget.showViewSettings()
+      assertEqual(widget.viewMode, "cost-settings", "the settings key opens settings for the current view")
+      widget.leaveSettings()
+      assertEqual(widget.footerRight(), "", "Costs has no quota refresh countdown")
       widget.showLimits()
       assertEqual(widget.viewMode, "limits", "Limits IPC/view helper restores quota view")
       widget.close()
@@ -321,16 +362,16 @@ ShellRoot {
         if (fakeBar.vertical) assertEqual(widget.percentageMode, false, positions[i] + " falls back to icon mode")
       }
 
-      Color.foreground = "#171717"
-      Color.background = "#fafafa"
-      Color.accent = "#7c3aed"
-      Color.urgent = "#dc2626"
+      Commons.Color.foreground = "#171717"
+      Commons.Color.background = "#fafafa"
+      Commons.Color.accent = "#7c3aed"
+      Commons.Color.urgent = "#dc2626"
       Style.fontBaseSize = 16
       Style.spacingScale = 1.35
       assertTrue(finite(widget.implicitWidth), "light/scaled theme implicitWidth is finite")
-      Color.foreground = "#f4f4f5"
-      Color.background = "#09090b"
-      Color.accent = "#22d3ee"
+      Commons.Color.foreground = "#f4f4f5"
+      Commons.Color.background = "#09090b"
+      Commons.Color.accent = "#22d3ee"
       Style.fontBaseSize = 11
       Style.spacingScale = 0.85
       assertTrue(finite(widget.implicitHeight), "dark/compact theme implicitHeight is finite")

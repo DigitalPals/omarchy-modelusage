@@ -10,14 +10,14 @@ Item {
   required property string keyFile
   property var providers: []
   property var accounts: []
-  property string state: "reconnecting"
+  property string connectionState: "reconnecting"
   property string message: "Connecting to live account activity…"
   property double lastSuccessAt: 0
   property bool stopped: false
 
   function unknown() {
     accounts = []
-    state = "reconnecting"
+    connectionState = "reconnecting"
     message = "Reconnecting to live account activity…"
   }
   function stop() {
@@ -42,18 +42,18 @@ Item {
     if (process.body.length > 1048576) { fail(); return }
     var newline
     while ((newline = process.body.indexOf("\n")) >= 0) {
-      var line = process.body.slice(0, newline)
+      let line = process.body.slice(0, newline)
       process.body = process.body.slice(newline + 1)
-      var parsed
+      let parsed
       try { parsed = JSON.parse(line) } catch (e) { fail(); return }
       if (!UsageLogic.validLivePayload(parsed)) { fail(); return }
       watchdog.restart()
       if (parsed.heartbeat === true) continue
       providers = parsed.providers
       accounts = parsed.accounts
-      state = parsed.state
+      connectionState = parsed.state
       message = parsed.message
-      if (state === "live") lastSuccessAt = Date.now()
+      if (connectionState === "live") lastSuccessAt = Date.now()
     }
   }
   function fail() { unknown(); process.running = false; restart.restart() }

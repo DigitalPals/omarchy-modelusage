@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Refresh the reading when a reset time passes even while the panel is closed, so the menu bar does not keep a spent limit until the next scheduled refresh.
+- Treat one last-known account as a stale reading: the pool chip shows `?`, the icon turns urgent, and the tooltip uses the provider's own explanation (a failed refresh or an old Fusebox quota cache). The footer adds “some readings are last known” instead of looking fresh during an outage.
+- Mark a cost source partial when complete transcript lines with usage are malformed, and say how many were skipped; a growing file's unfinished last line is still read again later. Note a partial estimate neutrally whenever some responses are unpriced.
+- Redact camelCase credential names (`clientSecret`, `refreshToken`) and bare tokens with well-known shapes (`sk-…`, `ghp_…`, `xoxb-…`, JWTs) from displayed errors.
+- Show the actual default key path, including `XDG_CONFIG_HOME` and `CLIPROXY_API_KEY_FILE`, in Costs settings; keep a number with its unit and a `·` with the preceding word when limit names wrap; keep `a` working while additional limits are expanded.
+- Refresh the README panel screenshots, rendered from the test fixtures.
+- Show a warning-level or spent shorter window, such as a used-up 5-hour limit, first on compact account cards when it is tighter than the weekly allowance. **Additional limits** sits above the cards, toggles with `a`, and appears only when it reveals more.
+- Wrap long limit names instead of cutting off the part that tells similar limits apart.
+- Keep failed providers in the menu bar as a `!` chip with the error in the tooltip, and mark last-known readings kept through a proxy outage as `90%?`. Both count as urgent in icon mode, so an expired sign-in or offline proxy is visible without opening the panel.
+- Fill extra-usage and credit meters with what is left, like every quota meter (“Monthly limit · 75% left”). Show a prepaid Kimi wallet's balance separately from its monthly charge cap, give money two decimals everywhere, and label currency-less amounts as credits. Codex reset credits read as banked resets, as on account cards.
+- Name partial, offline-snapshot, and unavailable cost sources under the Costs total; show the chart peak; put the empty state above the chart and hide empty sections.
+- Render secondary text as the theme foreground at reduced opacity, so light themes keep the same hierarchy as dark ones.
+- Refresh once when a reset time passes, instead of showing “Resets in now”, and say “awaiting a new reading” rather than “updating” when no refresh is running; show “Next refresh in 10m” instead of a countdown that read like a clock time; read full footer errors in a tooltip; show each loading message once.
+- Make `s` open the settings for the current tab, add `[`/`]` for the Costs period and Limits history range, and add a `?` legend that lists only the keys that work in the current view. Label quota history as per-hour/per-day peaks and write Costs chart dates like Limits (“Nov 12”). Use the same underline tabs for every range control and the card-corner setting for Costs surfaces too.
+- Show an unavailable banked reset as plain text rather than a disabled-looking button; fix “1 connected accounts” and “Use 1 of 1 available resets”.
+- Allow Fusebox costs through the Limits connection when Limits uses the default key file.
+- Warn in settings when a key or token would be sent over plain `http://` to another computer (numeric loopback and `localhost` only are exempt), and redact generic secret names (`password`, `token`, `client_secret`, URL credentials) from displayed errors.
+- Qualify Omarchy's `Color` singleton as `Commons.Color`, matching current Omarchy: Qt 6.12's QtQuick adds its own `Color` singleton, which otherwise hides Omarchy's palette.
+- Move the account, limit and credit cards out of `Panel.qml` into their own components, and move formatting, severity and window selection into the node-tested `UsageLogic.js`.
+- Run qmllint, every QML contract and the headless Wayland runtime contract in CI on the pinned Qt/Quickshell/Omarchy stack (`tests/ci-qml`); `MODEL_USAGE_REQUIRE_QML=1` turns skipped QML checks into failures. Fix the live runtime test for the read-only activity providers and make private-state tests independent of the umask.
+
 - Reuse the Limits connection for Fusebox costs by default: enabling **Include Fusebox usage** no longer needs the URL and key a second time. Costs settings saved with their own URL keep it, and **Use the Limits connection** can be turned off for a different server.
 - Add **Test connection** to Limits and Costs settings. It names the detected implementation and counts accounts and providers, or explains a rejected key, an unreachable server, or a URL without a management API, all before saving. Unsaved keys are passed privately, never as process arguments.
 - Probe Fusebox's account API first and pass the detected implementation to later refreshes, activity, live and reset processes, so Fusebox refreshes no longer start with a failed CLIProxyAPI request. A server replaced behind the same URL is still detected.

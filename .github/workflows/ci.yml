@@ -34,3 +34,29 @@ jobs:
         run: bash -n tests/run
       - name: Run portable tests
         run: ./tests/run
+
+  # The portable job cannot load QML: GitHub's images have no Quickshell or
+  # Omarchy shell. This job pins both to the validated release stack, so QML
+  # lint and every QML contract run (and a skipped check fails the build).
+  qml:
+    name: QML lint and runtime contracts
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    env:
+      # Arch Linux Archive date with Qt 6.11.2 and Quickshell 0.3.1; see COMPATIBILITY.md.
+      ARCH_SNAPSHOT: "2026/09/13"
+      OMARCHY_COMMIT: 2c247e390e357ae0fee3f8565b0c816adb705e6a
+    steps:
+      - name: Install pinned Quickshell, Qt and tools
+        run: |
+          echo "Server = https://archive.archlinux.org/repos/${ARCH_SNAPSHOT}/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm --needed git quickshell qt6-declarative qt6-svg qt6-wayland \
+            python python-websockets nodejs ripgrep jq sway ttf-jetbrains-mono-nerd
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned Omarchy shell
+        run: |
+          git init -q /opt/omarchy
+          git -C /opt/omarchy fetch -q --depth 1 https://github.com/basecamp/omarchy.git "$OMARCHY_COMMIT"
+          git -C /opt/omarchy checkout -q FETCH_HEAD
+      - name: Run all checks, including QML and the headless Wayland contract
+        run: tests/ci-qml /opt/omarchy

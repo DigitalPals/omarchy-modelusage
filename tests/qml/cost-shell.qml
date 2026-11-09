@@ -94,7 +94,9 @@ ShellRoot {
         root.check(!root.find(root.overview, "costTokenDetails").visible, "cost overview starts without token details")
         root.check(root.find(root.overview, "costModel-0") === null, "collapsed models are not instantiated")
         root.check(root.find(root.overview, "costSummaryValue").text === "$1,234.56", "currency has readable thousands separators")
-        root.check(!root.find(root.overview, "costPricingNotice").visible, "high pricing coverage does not warn")
+        root.check(!root.overview.lowPricingCoverage
+          && root.overview.pricingNotice().indexOf("Partial estimate · 99%") === 0,
+          "high pricing coverage is noted neutrally, not as a warning")
         root.check(root.overview.providerMetaText(root.overview.providers[0]).indexOf("99%") >= 0,
           "small gaps remain available in details without rounding up to complete coverage")
         var originalOverview = root.overview.payload
@@ -102,12 +104,14 @@ ShellRoot {
         boundaryOverview.totals.pricedRecords = 900
         boundaryOverview.totals.unpricedRecords = 100
         root.overview.payload = boundaryOverview
-        root.check(!root.find(root.overview, "costPricingNotice").visible, "exactly 90 percent does not warn")
+        root.check(!root.overview.lowPricingCoverage
+          && root.overview.pricingNotice().indexOf("Partial estimate") === 0, "exactly 90 percent does not warn")
         boundaryOverview = JSON.parse(JSON.stringify(boundaryOverview))
         boundaryOverview.totals.pricedRecords = 899
         boundaryOverview.totals.unpricedRecords = 101
         root.overview.payload = boundaryOverview
-        root.check(root.find(root.overview, "costPricingNotice").visible, "coverage below 90 percent warns")
+        root.check(root.overview.lowPricingCoverage
+          && root.overview.pricingNotice().indexOf("Incomplete estimate") === 0, "coverage below 90 percent warns")
         boundaryOverview = JSON.parse(JSON.stringify(boundaryOverview))
         boundaryOverview.totals.pricedRecords = 0
         boundaryOverview.totals.unpricedRecords = 1000
@@ -221,8 +225,11 @@ ShellRoot {
           && root.saved.costFuseboxConnection === "custom", "Fusebox settings round trip; blank key keeps the saved file")
         root.form.begin({costFuseboxEnabled: true})
         root.check(root.form.fuseboxUsesLimits, "new Fusebox costs default to the Limits connection")
+        root.check(root.form.submit() && root.saved.costFuseboxConnection === "limits",
+          "the Limits connection without a saved key uses the default key file, as Limits does")
+        root.form.begin({costFuseboxEnabled: true, proxyUrl: "not a url"})
         root.check(!root.form.submit() && root.form.fuseboxExpanded
-          && root.form.errorText.indexOf("Limits settings") >= 0, "the Limits connection needs a saved key")
+          && root.form.errorText.indexOf("Limits settings") >= 0, "the Limits connection needs a valid Limits URL")
         root.form.begin({costFuseboxEnabled: true, proxyUrl: "https://limits.example", proxyKeyFile: "/private/limits.key"})
         root.form.fuseboxExpanded = true
         root.check(root.find(root.form, "costFuseboxUsesLimits").visible
