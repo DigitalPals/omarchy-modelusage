@@ -164,7 +164,7 @@ class ManagementKeyTests(unittest.TestCase):
             self.assertEqual(list(held.iterdir()), [])
             self.assertEqual(sentinel.read_text(), "untouched")
 
-    def test_four_t3_and_fusebox_credentials_commit_or_roll_back_together(self):
+    def test_both_settings_tabs_commit_or_roll_back_together(self):
         for decision in ("commit", "abort"):
             with self.subTest(decision=decision), tempfile.TemporaryDirectory() as config:
                 process = subprocess.Popen(
@@ -172,8 +172,11 @@ class ManagementKeyTests(unittest.TestCase):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                     env={**os.environ, "XDG_CONFIG_HOME": config})
                 self.addCleanup(self.stop, process)
+                # One Save covers both tabs: proxy, Keeper, four T3 tokens and a Costs Fusebox.
                 keys = {"t3Token_server-" + str(i): "t3-secret-" + str(i) for i in range(4)}
                 keys["costFuseboxKeyFile"] = "fusebox-cost-secret"
+                keys["proxyKeyFile"] = "proxy-secret"
+                keys["keeperPasswordFile"] = "keeper-secret"
                 process.stdin.write(json.dumps({"keys": keys, "previousPaths": {}}) + "\n")
                 process.stdin.flush()
                 response = process.stdout.readline()
@@ -186,6 +189,15 @@ class ManagementKeyTests(unittest.TestCase):
                 process.communicate(decision + "\n", timeout=3)
                 for path in paths.values():
                     self.assertEqual(Path(path).exists(), decision == "commit")
+
+    def test_more_credentials_than_both_tabs_hold_are_refused(self):
+        with tempfile.TemporaryDirectory() as config:
+            keys = {"t3Token_server-" + str(i): "t3-secret-" + str(i) for i in range(6)}
+            keys.update(proxyKeyFile="proxy-secret", keeperPasswordFile="keeper-secret")
+            process = subprocess.run([sys.executable, "-u", str(HELPER)], input=json.dumps({"keys": keys}) + "\n",
+                                     capture_output=True, text=True, timeout=5, env={**os.environ, "XDG_CONFIG_HOME": config})
+            self.assertEqual((process.returncode, process.stdout), (1, ""))
+            self.assertFalse((Path(config) / "omarchy").exists())
 
 
 if __name__ == "__main__":

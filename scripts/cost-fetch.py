@@ -1411,7 +1411,7 @@ def build_payload(
     now_ms: int | None = None, zone_name: str | None = None,
     rates_override=None, force_rates: bool = False, price_overrides: str = "{}",
     t3_servers: str = "[]",
-    fusebox: dict[str, str] | None = None,
+    fusebox: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     overrides = parse_price_overrides(price_overrides)
@@ -1460,7 +1460,7 @@ def build_payload(
             try:
                 summary, state, error = future.result()
             except (ValueError, OSError):
-                summary, state, error = None, "unavailable", "Check this server’s connection and credential in Costs settings."
+                summary, state, error = None, "unavailable", "Check this server’s connection and credential in the Costs tab of settings."
             if summary is None:
                 sources.append({"id": server["id"], "name": server["name"], "kind": "t3",
                     "status": "unavailable", "included": False, "updatedAt": None, "message": error})
@@ -1499,7 +1499,8 @@ def build_payload(
                                 if state == "stale" else "Includes all readable sessions on this T3 host, including non-T3 sessions."),
                     "records": records, "sessions": remote["sessions"] if state != "stale" else None})
         if fusebox_future is not None:
-            fusebox_available = collect_fusebox(fusebox_future, start, stamp, candidates, sources)
+            fusebox_available = collect_fusebox(fusebox_future, start, stamp, candidates, sources,
+                                                 optional=bool(fusebox.get("optional")))
 
     # Fusebox and transcripts can record the same CLI requests, and transcripts
     # carry no Fusebox response identity. One explicit source family is used.
@@ -1507,11 +1508,11 @@ def build_payload(
                                 for c in candidates)
     for candidate in candidates:
         if fusebox_available and overlap == "fusebox" and candidate["kind"] in ("local", "t3"):
-            candidate["excluded"] = ("replaced", "Fusebox replaces transcript history in Costs settings, "
-                                     "so requests it already recorded are not counted twice.")
+            candidate["excluded"] = ("replaced", "Fusebox supplies costs, so this computer's copy of the "
+                                     "requests it already recorded is not counted twice.")
         elif (overlap == "transcripts" and transcripts_available and candidate["kind"] == "fusebox"
               and candidate["provider"] in ("claude", "codex")):
-            candidate["excluded"] = ("excluded", "Transcripts supply Claude and OpenAI history in Costs settings, "
+            candidate["excluded"] = ("excluded", "This computer supplies Claude and OpenAI history, "
                                      "so Fusebox's copy of the same requests is not counted.")
 
     # Prefer a complete fresh source, then partial fresh, then a stale snapshot.
@@ -1575,22 +1576,33 @@ def build_payload(
     result["totals"]["historyStatus"] = "recorded" if included_sources else "unavailable"
     if fusebox_available:
         pricing = {**pricing, "fusebox": fusebox_available}
-    return {"schemaVersion": SCHEMA_VERSION, "source": "transcripts", "sources": sources,
+    # Which family supplied the totals: Fusebox, transcripts, or both (Fusebox adding its other providers).
+    kinds = {s["kind"] for s in sources if s["included"]}
+    source = ("mixed" if "fusebox" in kinds and kinds - {"fusebox"} else "fusebox" if "fusebox" in kinds else "transcripts")
+    return {"schemaVersion": SCHEMA_VERSION, "source": source, "sources": sources,
         "generatedAt": iso_timestamp(stamp / 1000), "coverage": coverage,
         "pricing": {**pricing, "basis": "currentBaseRates", "customModels": len(overrides)},
         "scanDurationMs": int((time.monotonic() - started) * 1000), **result}
 
 
 def collect_fusebox(future, start: int, stamp: int, candidates: list[dict[str, Any]],
-                    sources: list[dict[str, Any]]) -> dict[str, str] | None:
-    """Add one candidate per provider bucket; return Fusebox pricing when readable."""
+                    sources: list[dict[str, Any]], optional: bool = False) -> dict[str, str] | None:
+    """Add one candidate per provider bucket; return Fusebox pricing when readable.
+
+    `optional` marks the Limits server, which may be CLIProxyAPI or an older
+    Fusebox: a server without usage history is then expected, not a failure."""
     try:
         summary, state, error = future.result()
     except (ValueError, OSError):
-        summary, state, error = None, "unavailable", "Check the Fusebox connection and key in Costs settings."
+        summary, state, error = None, "unavailable", "Check the Fusebox connection and key in settings."
     if summary is None:
-        sources.append({"id": "fusebox", "name": "Fusebox", "kind": "fusebox", "status": "unavailable",
-                        "included": False, "updatedAt": None, "message": error})
+        if state == "missing" and optional:
+            sources.append({"id": "fusebox", "name": "Fusebox", "kind": "fusebox", "status": "missing",
+                            "included": False, "updatedAt": None,
+                            "message": "The Limits server keeps no Fusebox usage history, so costs come from this computer."})
+        else:
+            sources.append({"id": "fusebox", "name": "Fusebox", "kind": "fusebox", "status": "unavailable",
+                            "included": False, "updatedAt": None, "message": error})
         return None
     status = "stale" if state == "stale" else summary["status"]
     notes = list(summary["notes"])
@@ -1636,6 +1648,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fusebox-url", default="", help="Fusebox server URL; empty disables the Fusebox source")
     parser.add_argument("--fusebox-key-file", default="")
     parser.add_argument("--fusebox-overlap", default="fusebox", choices=("fusebox", "transcripts"))
+    parser.add_argument("--fusebox-optional", action="store_true",
+                        help="The server is the Limits connection; no usage history there is not an error")
     args = parser.parse_args(argv)
     try:
         payload = build_payload(
@@ -1647,7 +1661,8 @@ def main(argv: list[str] | None = None) -> int:
             force_rates=args.refresh_prices,
             price_overrides=args.price_overrides,
             t3_servers=args.t3_servers,
-            fusebox=({"url": args.fusebox_url, "keyFile": args.fusebox_key_file, "overlap": args.fusebox_overlap}
+            fusebox=({"url": args.fusebox_url, "keyFile": args.fusebox_key_file, "overlap": args.fusebox_overlap,
+                      "optional": args.fusebox_optional}
                      if args.fusebox_url.strip() else None),
         )
     except Exception as exc:

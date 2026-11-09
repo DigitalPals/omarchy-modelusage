@@ -68,6 +68,8 @@ class FuseboxServer:
                 owner.requests.append((parts.path, query, self.headers.get("Authorization")))
                 if owner.mode == "unauthorized":
                     return self.reply(401, {"error": "unauthorized"})
+                if owner.mode == "missing":  # CLIProxyAPI or a Fusebox without usage history.
+                    return self.reply(404, {"error": "not found"})
                 if owner.mode == "redirect":
                     self.send_response(302)
                     self.send_header("Location", "http://127.0.0.1:9/elsewhere")
@@ -122,8 +124,9 @@ class FuseboxCostTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def build(self, days=7, overlap="fusebox", url=None, **extra):
-        config = {"url": url or self.server.url + "/management.html", "keyFile": str(self.key), "overlap": overlap}
+    def build(self, days=7, overlap="fusebox", url=None, optional=False, **extra):
+        config = {"url": url or self.server.url + "/management.html", "keyFile": str(self.key), "overlap": overlap,
+                  "optional": optional}
         return costs.build_payload(["claude", "codex"], days, 5, self.root / "state", now_ms=NOW,
                                    zone_name="UTC", rates_override=RATES, fusebox=config, **extra)
 
@@ -155,6 +158,7 @@ class FuseboxCostTests(unittest.TestCase):
             self.assertFalse(sources[local]["included"])
         self.assertTrue(all(sources[f"fusebox-{p}"]["included"] for p in ("claude", "codex", "meta")))
         self.assertEqual(payload["pricing"]["fusebox"], {"version": "t3-test", "basis": "Published API rates"})
+        self.assertEqual(payload["source"], "fusebox")
         self.assertEqual(payload["periods"][-1]["historyStatus"], "recorded")
         self.assertNotIn("private-account", json.dumps(payload))
         self.assertNotIn(KEY, json.dumps(payload))
@@ -185,6 +189,7 @@ class FuseboxCostTests(unittest.TestCase):
         self.assertEqual(providers["meta"]["records"], 3)
         statuses = {row["id"]: row["status"] for row in payload["coverage"]}
         self.assertEqual(statuses["claude"], "ok")
+        self.assertEqual(payload["source"], "mixed")
 
     def test_transcript_mode_without_readable_transcripts_keeps_all_fusebox_history(self):
         with mock.patch.object(costs, "scan_transcripts", return_value=([], [])):
@@ -199,7 +204,22 @@ class FuseboxCostTests(unittest.TestCase):
         self.assertEqual(sources["fusebox"]["status"], "unavailable")
         self.assertIn("rejected the management key", sources["fusebox"]["message"])
         self.assertTrue(sources["local-claude"]["included"])
+        self.assertEqual(payload["source"], "transcripts")
         self.assertNotIn(KEY, json.dumps(payload))
+
+    def test_limits_server_without_usage_history_is_expected_not_a_failure(self):
+        self.server.mode = "missing"
+        # The Limits connection may be CLIProxyAPI or an older Fusebox.
+        quiet = self.sources(self.build(optional=True))
+        self.assertEqual(quiet["fusebox"]["status"], "missing")
+        self.assertFalse(quiet["fusebox"]["included"])
+        self.assertIn("keeps no Fusebox usage history", quiet["fusebox"]["message"])
+        self.assertTrue(quiet["local-claude"]["included"])
+        # A server chosen for Costs must have it.
+        chosen = self.sources(self.build())
+        self.assertEqual(chosen["fusebox"]["status"], "unavailable")
+        self.assertIn("keeps no Fusebox usage history", chosen["fusebox"]["message"])
+        self.assertTrue(chosen["local-claude"]["included"])
 
     def test_offline_server_reuses_private_snapshot_labelled_stale(self):
         fresh = self.build()
@@ -296,7 +316,7 @@ class FuseboxCostTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), mock.patch.object(costs, "load_rates", return_value=RATES):
             costs.main(["--days", "7", "--state-dir", str(self.root / "cli"), "--time-zone", "UTC",
                         "--fusebox-url", self.server.url, "--fusebox-key-file", str(self.key),
-                        "--fusebox-overlap", "transcripts"])
+                        "--fusebox-overlap", "transcripts", "--fusebox-optional"])
         payload = json.loads(output.getvalue())
         self.assertNotIn("backendError", payload)
         self.assertEqual(self.sources(payload)["fusebox-claude"]["status"], "excluded")

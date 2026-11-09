@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
 from model_usage_common import ProviderFailure
+import fusebox_costs
 import proxy_connection as connection
 
 MAX_REQUEST_BYTES = 65536
@@ -40,7 +42,12 @@ def describe(implementation: str, entries: list[dict]) -> tuple[str, list[dict]]
 
 
 def run(request: dict, timeout: float = 10) -> dict:
+    """Test the account API; on Fusebox, also the usage history Costs reads.
+
+    `requireFusebox` (a separate Costs server) fails without usage history;
+    for the Limits connection it is reported beside a passing result."""
     result = {"schemaVersion": 1, "ok": False, "implementation": "", "providers": [], "accounts": 0, "message": ""}
+    started = time.monotonic()
     try:
         url = request.get("url")
         if not isinstance(url, str) or not url.strip():
@@ -61,6 +68,13 @@ def run(request: dict, timeout: float = 10) -> dict:
             return result
         result["message"], result["providers"] = describe(client.implementation, entries)
         result["accounts"] = len(entries)
+        if client.implementation == "rust":
+            # The panel stops waiting after 15 seconds; keep both checks inside that.
+            usage_ok, usage_message = fusebox_costs.probe(url, key, max(1.0, min(5.0, 13 - (time.monotonic() - started))))
+            if request.get("requireFusebox") is True and not usage_ok:
+                result["message"] = usage_message
+                return result
+            result["usage"] = {"ok": usage_ok, "message": usage_message}
         result["ok"] = True
     except ProviderFailure as exc:
         detail = getattr(exc, "detail", "")

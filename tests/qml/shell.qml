@@ -90,6 +90,7 @@ ShellRoot {
     widget.settings = Object.assign({}, original, { unrelatedPreference: "keep" })
     widget.showSettings()
     assertTrue(widget.configuring, "settings opens from the panel")
+    assertEqual(widget.settingsView.tab, "limits", "settings open at the current view's tab")
     var form = widget.settingsForm
     assertEqual(form.refreshMinutes, "60", "refresh interval is presented in minutes")
     assertTrue(!form.alertsExpanded && !form.activityExpanded, "optional settings start collapsed")
@@ -106,17 +107,17 @@ ShellRoot {
     form.setValue("usageSource", "proxy")
     assertTrue(form.proxyMode, "proxy source reveals connection fields")
     form.setValue("proxyUrl", "https://user:secret@proxy.test")
-    assertTrue(!form.submit(), "URL credentials cannot be saved")
+    assertTrue(!widget.settingsView.submit(), "URL credentials cannot be saved")
     form.setValue("proxyUrl", "https://proxy.test/prefix/management.html")
     form.managementKey = "invalid\nkey"
-    assertTrue(!form.submit(), "multiline management keys cannot be saved")
+    assertTrue(!widget.settingsView.submit(), "multiline management keys cannot be saved")
     form.managementKey = "synthetic-secret"
     form.setValue("refreshIntervalSec", "")
-    assertTrue(!form.submit(), "empty numeric input cannot be saved")
+    assertTrue(!widget.settingsView.submit(), "empty numeric input cannot be saved")
     assertTrue(form.alertsExpanded, "invalid interval reveals the collapsed alert settings")
     form.setValue("refreshIntervalSec", "900")
     form.setValue("criticalThreshold", "80")
-    assertTrue(!form.submit(), "inverted thresholds cannot be saved")
+    assertTrue(!widget.settingsView.submit(), "inverted thresholds cannot be saved")
     assertEqual(mockShell.saveCount, 0, "invalid and cancelled edits never reach persistence")
     form.cancelRequested()
     assertEqual(form.managementKey, "", "Cancel clears the entered key")
@@ -125,12 +126,12 @@ ShellRoot {
     form.toggleProvider("barProviders", "codex")
     mockShell.rejectSave = true
     form.setValue("hideAccountEmails", true)
-    form.submit()
+    widget.settingsView.submit()
     assertTrue(widget.configuring, "failed persistence keeps the form open")
-    assertTrue(form.errorText !== "", "failed persistence is explained")
+    assertTrue(widget.settingsView.errorText !== "", "failed persistence is explained")
     assertEqual(widget.percentageProviders.length, 3, "failed persistence does not change live settings")
     mockShell.rejectSave = false
-    form.submit()
+    widget.settingsView.submit()
     assertTrue(!widget.configuring, "Save returns to the previous view")
     assertTrue(widget.hideAccountEmails, "saving privacy setting updates the view")
     assertEqual(mockShell.savedSettings.hideAccountEmails, true, "privacy preference is persisted")
@@ -143,12 +144,12 @@ ShellRoot {
     widget.showSettings()
     assertEqual(form.draft.barProviders.join(","), "claude,kimi", "reopening reads persisted selection")
     form.setValue("barProviders", [])
-    form.submit()
+    widget.settingsView.submit()
     assertTrue(!widget.percentageMode, "hiding every chip retains the widget icon")
 
     widget.showSettings()
     form.setValue("enabledProviders", [])
-    form.submit()
+    widget.settingsView.submit()
     assertEqual(widget.providers.length, 0, "disabling monitoring removes popup providers immediately")
     widget.showSettings()
     assertTrue(widget.configuring, "settings remains accessible with no providers")
@@ -413,11 +414,15 @@ ShellRoot {
       widget.showCosts()
       assertEqual(widget.viewMode, "costs", "Costs IPC/view helper selects the isolated tab")
       widget.showCostSettings()
-      assertEqual(widget.viewMode, "cost-settings", "navigation does not override cost settings")
+      assertTrue(widget.viewMode === "settings" && widget.settingsView.tab === "costs",
+        "the Costs settings open at the Costs tab")
       widget.leaveSettings()
       assertEqual(widget.viewMode, "costs", "leaving settings restores Costs")
       widget.showViewSettings()
-      assertEqual(widget.viewMode, "cost-settings", "the settings key opens settings for the current view")
+      assertTrue(widget.viewMode === "settings" && widget.settingsView.tab === "costs",
+        "the settings key opens the current view's tab")
+      widget.settingsView.selectTab("limits")
+      assertTrue(widget.settingsForm.visible && !widget.costSettingsForm.visible, "switching tabs stays in settings")
       widget.leaveSettings()
       assertEqual(widget.footerRight(), "", "Costs has no quota refresh countdown")
       widget.showLimits()
@@ -522,7 +527,7 @@ ShellRoot {
     widget.settingsForm.managementKey = "qml-synthetic-management-key"
     widget.settingsForm.setValue("keeperUrl", "https://keeper.example/keeper")
     widget.settingsForm.keeperPassword = "qml-synthetic-keeper-password"
-    widget.settingsForm.submit()
+    widget.settingsView.submit()
     keySavePhase = 0
     waitForKeySave.restart()
   }
@@ -680,11 +685,11 @@ ShellRoot {
     property int attempts: 0
     onTriggered: {
       attempts++
-      if (root.widget.settingsForm.saving && attempts < 300) return
+      if (root.widget.settingsView.saving && attempts < 300) return
       stop()
       var form = root.widget.settingsForm
       if (root.keySavePhase === 0) {
-        root.assertTrue(!root.widget.configuring, "key save completes and returns to usage: " + form.errorText)
+        root.assertTrue(!root.widget.configuring, "key save completes and returns to usage: " + root.widget.settingsView.errorText)
         root.assertEqual(form.managementKey, "", "successful save clears the key field")
         root.assertEqual(form.keeperPassword, "", "successful save clears the Keeper password field")
         root.assertTrue(String(mockShell.savedSettings.proxyKeyFile).indexOf("/management-keys/key-") > 0,
@@ -703,18 +708,18 @@ ShellRoot {
         root.assertEqual(form.managementKey, "", "saved key is never loaded into the editor")
         root.assertTrue(!form.connectionExpanded, "saved proxy connection starts collapsed")
         var savedPath = root.widget.settings.proxyKeyFile
-        form.submit()
+        root.widget.settingsView.submit()
         root.assertEqual(root.widget.settings.proxyKeyFile, savedPath, "blank key preserves saved credentials")
         root.widget.showSettings()
         form.managementKey = "replacement-that-must-be-rolled-back"
         form.keeperPassword = "keeper-replacement-that-must-be-rolled-back"
         mockShell.rejectSave = true
-        form.submit()
+        root.widget.settingsView.submit()
         root.keySavePhase = 1
         attempts = 0
         restart()
       } else {
-        root.assertTrue(root.widget.configuring && form.errorText !== "", "failed config save retains an error")
+        root.assertTrue(root.widget.configuring && root.widget.settingsView.errorText !== "", "failed config save retains an error")
         mockShell.rejectSave = false
         form.cancelRequested()
         root.widget.settings = root.beforeKeySettings

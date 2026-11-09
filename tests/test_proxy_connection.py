@@ -70,7 +70,7 @@ class SharedConnectionTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"CLIPROXY_API_KEY_FILE": str(Path(directory) / "missing")}):
                 with self.assertRaises(fusebox_costs.FuseboxError) as error:
                     fusebox_costs.read_key("")
-                self.assertIn("Enter it in Limits or Costs settings", str(error.exception))
+                self.assertIn("Enter it in settings", str(error.exception))
 
     def test_legacy_flag_names_remain_accepted(self):
         import argparse
@@ -84,14 +84,34 @@ class SharedConnectionTests(unittest.TestCase):
 
 class ConnectionProbeTests(unittest.TestCase):
     def test_fusebox_draft_key_is_tested_without_being_printed(self):
-        with fusebox_server() as (url, requests):
+        with fusebox_server(usage_state="healthy") as (url, requests):
             result, output = probe({"url": url + "/management.html", "key": "test-management-key"})
         self.assertTrue(result["ok"])
         self.assertEqual(result["implementation"], "rust")
         self.assertEqual(result["accounts"], 4)
         self.assertRegex(result["message"], r"^Connected to Fusebox · 4 accounts across \d+ providers\.$")
-        self.assertEqual(requests, [("GET", "/api/accounts")])
+        self.assertEqual(result["usage"], {"ok": True, "message": "Usage history available for Costs."})
+        self.assertEqual(requests, [("GET", "/api/accounts"), ("GET", "/api/usage/status")])
         self.assertNotIn("test-management-key", output)
+
+    def test_fusebox_usage_history_is_checked_for_costs(self):
+        for state, text in ((None, "keeps no Fusebox usage history"), ("disabled", "turned off in Fusebox"),
+                            ("stopped", "stopped recording")):
+            with self.subTest(state=state), fusebox_server(usage_state=state) as (url, _):
+                limits, _ = probe({"url": url, "key": "test-management-key"})
+                costs, _ = probe({"url": url, "key": "test-management-key", "requireFusebox": True})
+            # Limits still work; the usage line explains what Costs will miss.
+            self.assertTrue(limits["ok"])
+            self.assertFalse(limits["usage"]["ok"])
+            self.assertIn(text, limits["usage"]["message"])
+            # A separate Costs server without usage history fails the test.
+            self.assertFalse(costs["ok"])
+            self.assertIn(text, costs["message"])
+            self.assertNotIn("usage", costs)
+        with fusebox_server(usage_state="degraded") as (url, _):
+            degraded, _ = probe({"url": url, "key": "test-management-key", "requireFusebox": True})
+        self.assertTrue(degraded["ok"] and degraded["usage"]["ok"])
+        self.assertIn("recording problems", degraded["usage"]["message"])
 
     def test_saved_key_file_and_go_detection(self):
         with tempfile.TemporaryDirectory() as directory, go_server() as (url, calls):

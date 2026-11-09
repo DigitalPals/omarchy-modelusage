@@ -1,10 +1,12 @@
 import QtQuick
 import Quickshell
 
-// Limits settings against a synthetic local Fusebox: renamed settings, the
-// real connection test process, and settings gated by the detected server.
+// The Limits tab against a synthetic local Fusebox: renamed settings, the
+// real connection test process, settings gated by the detected server, and
+// one Save across both tabs.
 ShellRoot {
   id: root
+  property var view: null
   property var form: null
   property var saved: null
   property var connectionTest: null
@@ -26,20 +28,22 @@ ShellRoot {
   function shown(name) {
     var item = find(form, name)
     check(item !== null, "item exists: " + name)
-    for (var node = item; node && node !== form; node = node.parent)
+    for (var node = item; node && node !== view; node = node.parent)
       if (!node.visible) return false
     return true
   }
 
   Component.onCompleted: {
     check(serverUrl !== "", "synthetic Fusebox URL is set")
-    var component = Qt.createComponent(Quickshell.env("MODEL_USAGE_REPO_URL") + "/UsageSettings.qml")
+    var component = Qt.createComponent(Quickshell.env("MODEL_USAGE_REPO_URL") + "/SettingsView.qml")
     check(component.status === Component.Ready, component.errorString())
-    form = component.createObject(root, { width: 420 })
-    check(form !== null, component.errorString())
-    form.saveRequested.connect(function(values) { root.saved = values })
-    form.begin({ usageSource: "cliproxy", cliproxyUrl: serverUrl, cliproxyKeyFile: "",
-      costKeeperUrl: "https://keeper.example", costKeeperPasswordFile: "/private/keeper" })
+    view = component.createObject(root, { width: 420 })
+    check(view !== null, component.errorString())
+    form = view.limitsForm
+    view.saveRequested.connect(function(values) { root.saved = values })
+    view.begin({ usageSource: "cliproxy", cliproxyUrl: serverUrl, cliproxyKeyFile: "",
+      costKeeperUrl: "https://keeper.example", costKeeperPasswordFile: "/private/keeper" }, "limits")
+    check(view.tab === "limits" && form.visible && !view.costForm.visible, "the Limits tab opens")
     check(form.draft.usageSource === "proxy" && form.proxyMode, "renamed proxy source is read")
     check(form.draft.proxyUrl === serverUrl && form.draft.keeperUrl === "https://keeper.example"
       && form.draft.keeperPasswordFile === "/private/keeper", "renamed connection settings are read")
@@ -65,6 +69,10 @@ ShellRoot {
         root.check(root.connectionTest.message.indexOf("Connected to Fusebox · 4 accounts") === 0, root.connectionTest.message)
         root.check(root.form.knownImplementation === "rust" && root.form.proxyName === "Fusebox", "the test detects Fusebox")
         root.check(!root.shown("keeperUrlField") && root.shown("liveAccountActivityToggle"), "Fusebox hides Keeper settings")
+        root.check(root.connectionTest.usageOk && root.connectionTest.usageMessage === "Usage history available for Costs."
+          && root.find(root.form, "connectionTestUsage").visible, "the test reports Fusebox usage history for Costs")
+        root.check(root.view.costForm.usesFusebox && root.view.costForm.limitsUrl === root.serverUrl,
+          "the Costs tab follows the tested, unsaved Fusebox connection")
         root.form.managementKey = "synthetic-wrong-key"
         root.check(root.connectionTest.status === "idle" && root.form.knownImplementation === "",
           "editing the key discards the earlier result")
@@ -85,14 +93,22 @@ ShellRoot {
         root.form.proxyImplementation = "rust"
         // Hidden Keeper fields keep their saved values and are not validated.
         root.form.setValue("keeperUrl", "not a URL")
-        root.check(root.form.submit() && root.saved !== null, "save succeeds: " + root.form.errorText)
+        // Edits on one tab survive switching to the other; Save writes both.
+        root.view.selectTab("costs")
+        root.view.costForm.chooseHistory("local")
+        root.view.selectTab("limits")
+        root.check(root.view.costForm.historySource === "local" && root.view.costForm.touched, "Costs edits survive tab switches")
+        root.check(root.view.submit() && root.saved !== null, "save succeeds: " + root.view.errorText)
+        root.check(root.saved.costHistorySource === "local" && root.saved.costPriceOverrides === "{}",
+          "one Save includes the Costs tab")
         root.check(root.saved.usageSource === "proxy" && root.saved.proxyUrl === root.serverUrl
           && root.saved.keeperPasswordFile === "/private/keeper"
           && root.saved.cliproxyUrl === undefined && root.saved.costKeeperUrl === undefined,
           "settings save under their current names")
         root.form.proxyImplementation = "go"
-        root.check(!root.form.submit() && root.form.errorText.indexOf("Keeper") >= 0,
-          "visible Keeper settings are validated")
+        root.view.selectTab("costs")
+        root.check(!root.view.submit() && root.view.errorText.indexOf("Keeper") >= 0 && root.view.tab === "limits",
+          "visible Keeper settings are validated, and their tab opens")
         console.log("Settings QML contract: passed")
         Qt.quit()
       }

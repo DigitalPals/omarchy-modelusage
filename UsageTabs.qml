@@ -10,6 +10,9 @@ Controls.TabBar {
 
   property var options: []
   property string value: ""
+  // Values whose tab shows a dot (unsaved edits). The options themselves stay
+  // fixed: replacing them rebuilds the buttons and can move the current tab.
+  property var marked: []
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.bodySmall
@@ -44,10 +47,10 @@ Controls.TabBar {
       rightPadding: Style.spacing.md
       topPadding: Style.spacing.sm
       bottomPadding: Style.spacing.md
-      Accessible.name: text
+      Accessible.name: text + (root.marked.indexOf(modelData.value) >= 0 ? ", unsaved changes" : "")
 
       contentItem: Text {
-        text: viewTab.text
+        text: viewTab.text + (root.marked.indexOf(viewTab.modelData.value) >= 0 ? " •" : "")
         color: viewTab.checked ? Commons.Color.accent : root.foreground
         font.family: root.fontFamily
         font.pixelSize: root.fontSize

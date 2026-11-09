@@ -204,22 +204,72 @@ same(context.proxyConnection(legacy), { url: "https://proxy.test", keyFile: "/k"
 same(context.proxyConnection({}), { url: "http://127.0.0.1:8317", keyFile: "" });
 assert.equal(context.setting(legacy, "keeperUrl", ""), "https://keeper.test");
 assert.equal(context.setting({ keeperUrl: "new", costKeeperUrl: "old" }, "keeperUrl", ""), "new");
-// Costs inherits the Limits connection unless an older Costs URL exists or another server is chosen.
+// Costs follow Limits: its Fusebox supplies history unless Costs chooses this
+// computer or a different server. An older Costs URL stays a separate server.
 same(context.fuseboxCostConnection(legacy),
-  { enabled: true, mode: "limits", url: "https://proxy.test", keyFile: "/k", overlap: "fusebox" });
+  { source: "auto", mode: "limits", url: "https://proxy.test", keyFile: "/k", available: true,
+    enabled: true, overlap: "fusebox", optional: true });
+same(context.fuseboxCostConnection({ usageSource: "proxy", proxyUrl: "https://a.test" }, "rust"),
+  { source: "auto", mode: "limits", url: "https://a.test", keyFile: "", available: true,
+    enabled: true, overlap: "fusebox", optional: true }, "a fresh Fusebox Limits connection supplies costs");
+assert.equal(context.fuseboxCostConnection({ usageSource: "proxy" }, "go").enabled, false, "CLIProxyAPI keeps no usage history");
+assert.equal(context.fuseboxCostConnection({ usageSource: "direct", proxyUrl: "https://a.test" }).enabled, false,
+  "local Limits have no Fusebox");
+assert.equal(context.fuseboxCostConnection({ usageSource: "proxy", costHistorySource: "local" }).enabled, false);
+same(context.fuseboxCostConnection({ usageSource: "proxy", costHistorySource: "mixed" }, "rust"),
+  { source: "mixed", mode: "limits", url: "http://127.0.0.1:8317", keyFile: "", available: true,
+    enabled: true, overlap: "transcripts", optional: true });
 same(context.fuseboxCostConnection({ proxyUrl: "https://a.test", costFuseboxUrl: "https://b.test", costFuseboxKeyFile: "/b" }),
-  { enabled: false, mode: "custom", url: "https://b.test", keyFile: "/b", overlap: "fusebox" });
+  { source: "auto", mode: "custom", url: "https://b.test", keyFile: "/b", available: true,
+    enabled: true, overlap: "fusebox", optional: false }, "a different Costs server works without a Fusebox in Limits");
 assert.equal(context.fuseboxCostConnection({ costFuseboxConnection: "limits", costFuseboxUrl: "https://b.test" }).url,
   "http://127.0.0.1:8317");
+// The old switch: on keeps Fusebox (and its overlap choice); off was the
+// untouched default too, so it follows Limits. A different server saved
+// while switched off stays unused.
+assert.equal(context.costHistorySource({ costFuseboxEnabled: true }), "auto");
+assert.equal(context.costHistorySource({ costFuseboxEnabled: true, costFuseboxOverlap: "transcripts" }), "mixed");
+assert.equal(context.costHistorySource({ costFuseboxEnabled: false, costFuseboxOverlap: "transcripts" }), "auto");
+assert.equal(context.costHistorySource({ costHistorySource: "local", costFuseboxEnabled: true }), "local");
+assert.equal(context.costHistorySource({ costHistorySource: "bogus" }), "auto");
+assert.equal(context.fuseboxCostMode({ costFuseboxEnabled: false, costFuseboxUrl: "https://b.test" }), "limits");
+assert.equal(context.fuseboxCostMode({ costFuseboxEnabled: true, costFuseboxUrl: "https://b.test" }), "custom");
+assert.equal(context.fuseboxCostMode({ costHistorySource: "auto", costFuseboxEnabled: false,
+  costFuseboxConnection: "custom" }), "custom", "a migrated choice is not second-guessed");
 const migrated = context.migrateSettings(legacy);
-same(Object.keys(migrated).filter((key) => /^cliproxy|^costKeeper/.test(key)), [], "legacy keys are removed");
+same(Object.keys(migrated).filter((key) => /^cliproxy|^costKeeper|^costFuseboxEnabled|^costFuseboxOverlap/.test(key)), [],
+  "legacy keys are removed");
 assert.equal(migrated.usageSource, "proxy");
 assert.equal(migrated.proxyUrl, " https://proxy.test ");
 assert.equal(migrated.keeperPasswordFile, "/p");
 assert.equal(migrated.costFuseboxConnection, "limits");
+assert.equal(migrated.costHistorySource, "auto");
 assert.equal(context.migrateSettings({ proxyUrl: "new", cliproxyUrl: "old" }).proxyUrl, "new");
 assert.equal(context.migrateSettings({ costFuseboxUrl: "https://b.test" }).costFuseboxConnection, "custom");
-same(context.migrateSettings({}), { costFuseboxConnection: "limits" });
+same(context.migrateSettings({ costFuseboxEnabled: false, costFuseboxOverlap: "transcripts", costFuseboxUrl: "https://b.test" }),
+  { costFuseboxUrl: "https://b.test", costFuseboxConnection: "limits", costHistorySource: "auto" });
+same(context.migrateSettings({}), { costFuseboxConnection: "limits", costHistorySource: "auto" });
+// The line under the Costs total and the notice for a failed Fusebox read.
+assert.equal(context.urlHost("https://user:pw@fusebox.home.lan:8318/x"), "fusebox.home.lan:8318");
+assert.equal(context.urlHost("not a url"), "");
+const fuseboxRow = { id: "fusebox-claude", kind: "fusebox", status: "ok", included: true };
+const localRow = { id: "local-claude", kind: "local", status: "ok", included: true };
+const t3Row = { id: "home-codex", kind: "t3", status: "ok", included: true };
+assert.equal(context.costSourceSummary([fuseboxRow, { ...localRow, status: "replaced", included: false }], "f.lan"),
+  "From Fusebox · f.lan");
+assert.equal(context.costSourceSummary([fuseboxRow, localRow], "f.lan"), "From this computer and Fusebox · f.lan");
+assert.equal(context.costSourceSummary([localRow, t3Row], ""), "From this computer and T3 servers");
+assert.equal(context.costSourceSummary([localRow], ""), "From this computer");
+assert.equal(context.costSourceSummary([t3Row], ""), "From T3 servers");
+assert.equal(context.costSourceSummary([], ""), "");
+assert.equal(context.fuseboxFailure([fuseboxRow, localRow]), null);
+same(context.fuseboxFailure([{ id: "fusebox", kind: "fusebox", status: "unavailable", included: false,
+  message: "Fusebox usage request timed out." }, localRow]),
+  { title: "Fusebox usage unavailable · showing this computer's history instead", detail: "Fusebox usage request timed out." });
+assert.equal(context.fuseboxFailure([{ id: "fusebox", kind: "fusebox", status: "unavailable", included: false }]).title,
+  "Fusebox usage unavailable");
+assert.equal(context.fuseboxFailure([{ id: "fusebox", kind: "fusebox", status: "missing", included: false }]), null,
+  "a Limits server without usage history is not a failure");
 same(context.proxyArgs("https://p.test", "/k", "rust"),
   ["--proxy-url", "https://p.test", "--proxy-key-file", "/k", "--implementation", "rust"]);
 same(context.proxyArgs("", "", ""), ["--proxy-url", "http://127.0.0.1:8317"]);

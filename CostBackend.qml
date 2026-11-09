@@ -9,6 +9,8 @@ Item {
   visible: false
 
   property var settings: ({})
+  // The Limits server's detected implementation: CLIProxyAPI keeps no usage history.
+  property string proxyImplementation: ""
   property int periodDays: 30
   property var payload: ({
     schemaVersion: 1,
@@ -39,15 +41,18 @@ Item {
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
   readonly property string priceOverrides: String(setting("costPriceOverrides", "{}"))
   readonly property string t3Servers: String(setting("costT3Servers", "[]"))
-  // Fusebox history uses the Limits connection unless Costs names another server.
-  readonly property var fusebox: UsageLogic.fuseboxCostConnection(settings)
+  // Costs follow Limits: its Fusebox supplies history unless Costs names
+  // another server or chooses this computer's transcripts.
+  readonly property var fusebox: UsageLogic.fuseboxCostConnection(settings, proxyImplementation)
   readonly property string fuseboxUrl: fusebox.url
   readonly property string fuseboxKeyFile: fusebox.keyFile
   readonly property bool fuseboxEnabled: fusebox.enabled && fuseboxUrl !== ""
   // Fusebox and transcripts can contain the same CLI requests; one family supplies them.
   readonly property string fuseboxOverlap: fusebox.overlap
+  readonly property bool fuseboxOptional: fusebox.optional
+  readonly property string fuseboxHost: fuseboxEnabled ? UsageLogic.urlHost(fuseboxUrl) : ""
   readonly property string connectionId: JSON.stringify([enabledProviderIds, t3Servers,
-    fuseboxEnabled ? [fuseboxUrl, fuseboxKeyFile, fuseboxOverlap] : null])
+    fuseboxEnabled ? [fuseboxUrl, fuseboxKeyFile, fuseboxOverlap, fuseboxOptional] : null])
 
   signal refreshed()
 
@@ -123,6 +128,7 @@ Item {
     ]
     if (fuseboxEnabled) command.push("--fusebox-url", fuseboxUrl,
       "--fusebox-key-file", fuseboxKeyFile, "--fusebox-overlap", fuseboxOverlap)
+    if (fuseboxEnabled && fuseboxOptional) command.push("--fusebox-optional")
     if (pendingPriceRefresh) command.push("--refresh-prices")
     pendingPriceRefresh = false
     fetchProcess.command = command

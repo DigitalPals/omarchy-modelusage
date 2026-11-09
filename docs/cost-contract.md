@@ -5,13 +5,23 @@ history selected by `--providers claude,codex` with enabled servers in
 `--t3-servers`. The latter is a JSON array of at most four objects:
 `{"id":"home","name":"Home T3","url":"https://t3.example","tokenFile":"/private/token","enabled":true}`.
 `costLocalProviders` and `costT3Servers` are independent of quota settings.
-Legacy `costSource` and `costLocalBackfill` settings are ignored. Keeper is used
+Fusebox history is added with `--fusebox-url`, `--fusebox-key-file` and
+`--fusebox-overlap` (`fusebox` or `transcripts`). The widget passes them per
+`costHistorySource`: `auto` and `mixed` read the Limits Fusebox (unless Limits
+reads local CLIs or a detected CLIProxyAPI) or a `custom` Costs server, with
+overlap `fusebox` and `transcripts` respectively; `local` passes none.
+`--fusebox-optional` marks the Limits server: a 404 for its usage API means a
+server without usage history, reported as a `missing` Fusebox source rather
+than `unavailable`. Legacy `costSource` and `costLocalBackfill` settings are
+ignored; the earlier `costFuseboxEnabled` and `costFuseboxOverlap` are migrated
+to `costHistorySource`. Keeper is used
 only by quota account activity, through `scripts/keeper_client.py`.
 
 `CostBackend.qml` scans on demand, retains same-source results on process failure,
 and clears results when the selected folders or server configuration changes.
-Responses from an earlier source configuration are discarded. `source` is always
-`transcripts`. There are no provider/app filters in the view.
+Responses from an earlier source configuration are discarded. `source` names the
+family that supplied the totals: `fusebox`, `transcripts`, or `mixed` (transcripts
+plus Fusebox's other providers). There are no provider/app filters in the view.
 
 ## T3 boundary and deduplication
 
@@ -71,7 +81,7 @@ session counts. Stale source sessions, and model/period cells with remote data,
 use `null` where accurate unique counts cannot be derived. `remoteRecords`
 tracks included remote responses. `historyStatus` is `recorded` or `unavailable`;
 missing totals render as a dash and unknown empty chart periods as outlined gaps.
-Source diagnostics remain available under Last scan in Costs settings; the main page omits the per-source status list.
+Source diagnostics remain available under Last scan in the Costs tab of settings; the main page omits the per-source status list. It shows one source line built from included source kinds, and a failed Fusebox read gets its own notice with the source's message.
 
 The dollar fields are API-equivalent estimates, not subscription charges. Nullable `costUsd` and `cacheSavingsUsd` distinguish unknown pricing from a real zero. Empty periods use `0`; periods containing only unpriced activity use `null`.
 
@@ -136,7 +146,7 @@ The combined collector uses exact custom model rates, then the public model rate
 
 Public lookup keeps full lowercase provider-qualified IDs and canonical bare names. A bare alias is added only when no canonical entry exists and all qualified entries agree on all four rates. Unknown provider prefixes do not fall back to another provider's price. Bracketed model variants use the base model's rates; current base prices do not account for historical rates, context thresholds, or priority/flex/batch tiers. The UI labels this limitation. Negative, non-finite, or incomplete input/output rates are rejected; missing cache rates use the input rate.
 
-The `costPriceOverrides` widget setting is a JSON string edited through Costs settings fields. The collector accepts that string as `--price-overrides`:
+The `costPriceOverrides` widget setting is a JSON string edited through the Custom prices fields in the Costs tab of settings. The collector accepts that string as `--price-overrides`:
 
 ```json
 {

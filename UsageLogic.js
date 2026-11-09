@@ -361,24 +361,54 @@ function proxyConnection(settings) {
   }
 }
 
+// Where Costs takes its history from. "auto" uses Fusebox whenever one is
+// available, the Limits server or a different one chosen for Costs, and this
+// computer's transcripts otherwise. "local" is transcripts only; "mixed" is
+// transcripts for Claude and OpenAI plus the providers only Fusebox records.
+var COST_HISTORY_SOURCES = ["auto", "local", "mixed"]
+
+function costHistorySource(settings) {
+  var value = setting(settings, "costHistorySource", "")
+  if (COST_HISTORY_SOURCES.indexOf(value) >= 0) return value
+  // Before tabbed settings a separate switch turned Fusebox costs on. Off was
+  // also the untouched default, so it carries no intent: follow Limits.
+  if (setting(settings, "costFuseboxEnabled", false) === true)
+    return setting(settings, "costFuseboxOverlap", "fusebox") === "transcripts" ? "mixed" : "auto"
+  return "auto"
+}
+
 // Costs reads Fusebox through the Limits connection unless a different
 // server was chosen. Older settings with their own Costs URL stay separate.
 function fuseboxCostMode(settings) {
   var value = setting(settings, "costFuseboxConnection", "")
-  if (value === "limits" || value === "custom") return value
-  return String(setting(settings, "costFuseboxUrl", "")).trim() !== "" ? "custom" : "limits"
+  if (value !== "limits" && value !== "custom")
+    value = String(setting(settings, "costFuseboxUrl", "")).trim() !== "" ? "custom" : "limits"
+  // A different server saved while Fusebox costs were switched off stays unused.
+  if (value === "custom" && setting(settings, "costFuseboxEnabled", null) === false
+      && COST_HISTORY_SOURCES.indexOf(setting(settings, "costHistorySource", "")) < 0) return "limits"
+  return value
 }
 
-function fuseboxCostConnection(settings) {
+// `implementation` is the Limits server's detected implementation, if known.
+function fuseboxCostConnection(settings, implementation) {
   var mode = fuseboxCostMode(settings)
   var limits = proxyConnection(settings)
   var custom = mode === "custom"
+  var source = costHistorySource(settings)
+  var url = custom ? String(setting(settings, "costFuseboxUrl", "")).trim() : limits.url
+  // The Limits server can be Fusebox unless Limits reads local CLIs or a detected CLIProxyAPI.
+  var available = custom ? url !== "" : usageSource(settings) === "proxy" && implementation !== "go"
   return {
-    enabled: setting(settings, "costFuseboxEnabled", false) === true,
+    source: source,
     mode: mode,
-    url: custom ? String(setting(settings, "costFuseboxUrl", "")).trim() : limits.url,
+    url: url,
     keyFile: custom ? String(setting(settings, "costFuseboxKeyFile", "")).trim() : limits.keyFile,
-    overlap: setting(settings, "costFuseboxOverlap", "fusebox") === "transcripts" ? "transcripts" : "fusebox"
+    available: available,
+    enabled: available && source !== "local",
+    overlap: source === "mixed" ? "transcripts" : "fusebox",
+    // An undetected Limits server may be CLIProxyAPI or an older Fusebox; no
+    // usage history there is expected, not a failure. A Costs server must have it.
+    optional: !custom
   }
 }
 
@@ -393,7 +423,51 @@ function migrateSettings(entry) {
   }
   if (result.usageSource !== undefined) result.usageSource = usageSource(result)
   result.costFuseboxConnection = fuseboxCostMode(result)
+  result.costHistorySource = costHistorySource(result)
+  delete result.costFuseboxEnabled
+  delete result.costFuseboxOverlap
   return result
+}
+
+// "https://fusebox.home.lan:8318/x" -> "fusebox.home.lan:8318"; never credentials.
+function urlHost(text) {
+  var match = /^https?:\/\/([^\/?#\s]+)/i.exec(String(text || "").trim())
+  if (!match) return ""
+  var authority = match[1]
+  return authority.slice(authority.lastIndexOf("@") + 1)
+}
+
+// The line under the Costs total naming where the history came from.
+function costSourceSummary(sources, fuseboxHost) {
+  var rows = listOrEmpty(sources)
+  var included = {}
+  for (var i = 0; i < rows.length; i++)
+    if (rows[i] && rows[i].included) included[rows[i].kind] = true
+  var host = String(fuseboxHost || "") !== "" ? " · " + fuseboxHost : ""
+  if (included.fusebox && (included.local || included.t3)) return "From this computer and Fusebox" + host
+  if (included.fusebox) return "From Fusebox" + host
+  if (included.local && included.t3) return "From this computer and T3 servers"
+  if (included.local) return "From this computer"
+  if (included.t3) return "From T3 servers"
+  return ""
+}
+
+// A Fusebox read that failed: why, and what the total shows instead.
+function fuseboxFailure(sources) {
+  var rows = listOrEmpty(sources)
+  var failed = null
+  var fallback = false
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    if (!row) continue
+    if (row.kind === "fusebox" && (row.status === "unavailable" || row.status === "failed")) failed = failed || row
+    else if (row.included && row.kind !== "fusebox") fallback = true
+  }
+  if (!failed) return null
+  return {
+    title: "Fusebox usage unavailable" + (fallback ? " · showing this computer's history instead" : ""),
+    detail: String(failed.message || "")
+  }
 }
 
 // Command-line arguments shared by every proxy script.

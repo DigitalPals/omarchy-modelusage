@@ -26,7 +26,7 @@ class ProjectContractTests(unittest.TestCase):
             "warningThreshold", "criticalThreshold", "liveAccountActivity",
             "usageSource", "proxyUrl", "proxyKeyFile", "hideAccountEmails", "squareUsageCards", "costPriceOverrides",
             "costLocalProviders", "keeperUrl", "keeperPasswordFile", "costT3Servers",
-            "costFuseboxEnabled", "costFuseboxConnection", "costFuseboxUrl", "costFuseboxKeyFile", "costFuseboxOverlap",
+            "costHistorySource", "costFuseboxConnection", "costFuseboxUrl", "costFuseboxKeyFile",
         })
 
     def test_packaged_paths_and_assets_are_self_contained(self):
@@ -38,8 +38,8 @@ class ProjectContractTests(unittest.TestCase):
         self.assertTrue((ROOT / "scripts" / "model_usage_common.py").is_file())
         self.assertIn('Qt.resolvedUrl("assets/', panel)
         for name in (
-            "claude.svg", "codex.svg", "codex-light.svg", "kimi.svg",
-            "claude-bar.svg", "codex-bar.svg", "kimi-bar.svg",
+            "claude.svg", "codex.svg", "codex-light.svg", "kimi.svg", "meta.svg",
+            "claude-bar.svg", "codex-bar.svg", "kimi-bar.svg", "meta-bar.svg",
         ):
             self.assertTrue((ROOT / "assets" / name).is_file(), name)
         all_source = (

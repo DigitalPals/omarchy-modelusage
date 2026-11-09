@@ -68,9 +68,13 @@ Estimated model costs use the public [`model_prices_and_context_window.json`](ht
 
 Current Kimi credential locations, endpoint shapes, fixed-point wallet units, and profile fields were checked against `MoonshotAI/kimi-cli` at commit `d723cc47ee43e5ca3c3c4ec2473f205d44acede2`. The `wire.jsonl` location, recursive subagent event envelope, and `StatusUpdate.token_usage` fields used by the Costs tab were checked again at commit `cbc15c076d17f70fec9f89c90c0502e68657f505`. Kimi CLI is distributed under the MIT license (Copyright (c) 2026 Moonshot AI). No Kimi CLI source or artwork is redistributed. `assets/kimi.svg` is an original, minimal tool glyph created for this plugin.
 
+## Muse
+
+`assets/meta.svg` is the Muse icon from [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Muse_icon.svg) (source: muse.ai), marked there as public domain and trademarked by Meta Platforms, Inc. The display-p3 `style` overrides were removed for Qt's SVG renderer; the path and sRGB gradient stops are unchanged. `assets/meta-bar.svg` is the same path as a white silhouette for the menu bar.
+
 ## Provider marks
 
-Claude, Anthropic, OpenAI, Codex, Kimi, and Moonshot AI names and marks are the property of their respective owners. Their inclusion identifies compatible services and does not imply affiliation or endorsement.
+Claude, Anthropic, OpenAI, Codex, Kimi, Moonshot AI, Muse, and Meta names and marks are the property of their respective owners. Their inclusion identifies compatible services and does not imply affiliation or endorsement.
 
 ## OmaProxy
 

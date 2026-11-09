@@ -3,9 +3,12 @@ import Quickshell
 
 ShellRoot {
   id: root
+  // SettingsView with its Costs tab: Save collects both tabs.
+  property var settings: null
   property var form: null
   property var backend: null
   property var openingBackend: null
+  property var fuseboxBackend: null
   property int openingResponses: 0
   property var view: null
   property var overview: null
@@ -34,6 +37,14 @@ ShellRoot {
     }
     return null
   }
+  function begin(values) { settings.begin(values, "costs") }
+  function shown(name) {
+    var item = find(form, name)
+    check(item !== null, "item exists: " + name)
+    for (var node = item; node && node !== settings; node = node.parent)
+      if (!node.visible) return false
+    return true
+  }
   function edit(name, text) {
     var field = find(form, name)
     check(field !== null, "price field exists: " + name)
@@ -42,9 +53,10 @@ ShellRoot {
   }
 
   Component.onCompleted: {
-    form = create("CostSettings.qml", { width: 420 })
-    form.saveRequested.connect(function(values) { root.saved = values })
-    form.begin({costPriceOverrides: custom})
+    settings = create("SettingsView.qml", { width: 420 })
+    form = settings.costForm
+    settings.saveRequested.connect(function(values) { root.saved = values })
+    begin({costPriceOverrides: custom})
     view = create("UsageCosts.qml", {width: 420, payload: {
       source: "transcripts", generatedAt: "2030-01-15T12:00:00Z",
       totals: {records: 0, totalTokens: 0, costUsd: 0, historyStatus: "unavailable"},
@@ -71,6 +83,10 @@ ShellRoot {
     openingBackend.ensureLoaded()
     openingBackend.ensureLoaded()
     openingBackend.ensureLoaded()
+    // Limits on an undetected proxy: Costs try it as Fusebox, quietly.
+    fuseboxBackend = create("CostBackend.qml", {settings: {costLocalProviders: ["claude"], usageSource: "proxy",
+      proxyUrl: "https://fusebox.example", proxyKeyFile: "/private/fusebox.key"}})
+    fuseboxBackend.ensureLoaded()
     backend.refreshed.connect(function() {
       root.responses++
       if (root.responses === 1) root.check(!backend.payload.testRequest.force, "automatic scan respects rate TTL")
@@ -131,16 +147,42 @@ ShellRoot {
         root.check(root.find(root.view, "costSummaryValue").text === "—", "missing history is not a zero estimate")
         root.check(root.find(root.view, "costHistoryGap-0").visible, "missing chart history is marked")
         root.check(root.find(root.view, "costSource-remote") === null, "source diagnostics are absent from Costs")
+        var originalView = root.view.payload
+        var fallback = JSON.parse(JSON.stringify(originalView))
+        fallback.sources = [
+          {id: "fusebox", name: "Fusebox", kind: "fusebox", status: "unavailable", included: false,
+            message: "Fusebox usage request timed out."},
+          {id: "local-claude", name: "Local Claude", kind: "local", status: "ok", included: true}]
+        root.view.payload = fallback
+        root.check(root.find(root.view, "costFuseboxFailure").visible
+          && root.view.fuseboxFailure.title.indexOf("showing this computer's history instead") > 0
+          && root.view.fuseboxFailure.detail === "Fusebox usage request timed out.",
+          "a failed Fusebox read says why and what is shown instead")
+        root.check(root.view.sourceNotice().indexOf("Fusebox") < 0, "the failure is not repeated in the source notice")
+        root.check(root.find(root.view, "costSourceLink").text === "From this computer ›", "the source line names this computer")
+        fallback = JSON.parse(JSON.stringify(fallback))
+        fallback.sources = [{id: "fusebox-claude", name: "Fusebox · Claude Code", kind: "fusebox", status: "ok", included: true},
+          {id: "local-claude", name: "Local Claude", kind: "local", status: "replaced", included: false}]
+        root.view.fuseboxHost = "fusebox.home.lan"
+        root.view.payload = fallback
+        root.check(!root.find(root.view, "costFuseboxFailure").visible
+          && root.find(root.view, "costSourceLink").text === "From Fusebox · fusebox.home.lan ›", "the source line names the server")
+        var opened = false
+        root.view.sourceSettingsRequested.connect(function() { opened = true })
+        root.find(root.view, "costSourceLink").clicked()
+        root.check(opened, "the source line opens the Costs settings")
+        root.view.fuseboxHost = ""
+        root.view.payload = originalView
         root.form.sources = root.view.payload.sources
         root.check(root.find(root.view, "costClient-t3") === null, "app filters are removed")
         root.check(root.form.priceEditor.serialize() === root.custom, "saved prices round-trip through QML model roles")
         root.edit("costRate-0-outputCostPerMillionTokens", "12")
         root.check(JSON.parse(root.form.priceEditor.serialize())["vendor/Example[1m]"].outputCostPerMillionTokens === 12,
           "editing a field updates its model role")
-        root.form.submit()
+        root.settings.submit()
         root.check(JSON.parse(root.saved.costPriceOverrides)["vendor/Example[1m]"].outputCostPerMillionTokens === 12,
           "Save includes the edited custom price")
-        root.form.begin({costPriceOverrides: root.custom})
+        root.begin({costPriceOverrides: root.custom})
         root.check(root.form.priceEditor.serialize() === root.custom, "reopening discards unsaved draft prices")
         root.form.priceEditor.addPrice()
         root.phase++
@@ -151,17 +193,17 @@ ShellRoot {
         root.overview.modelsExpanded = false
         root.check(root.find(root.overview, "costModel-9") === null, "collapsing releases model rows")
         root.check(root.find(root.form, "costSource-remote").text.indexOf("Unavailable") >= 0, "source diagnostics are available in Costs settings")
-        root.check(!root.form.submit(), "blank added rows block Save")
+        root.check(!root.settings.submit(), "blank added rows block Save")
         root.edit("costModel-1", "free-model")
         root.edit("costRate-1-inputCostPerMillionTokens", "0")
         root.edit("costRate-1-outputCostPerMillionTokens", "0")
-        root.check(root.form.submit(), "explicit zero prices can be saved")
+        root.check(root.settings.submit(), "explicit zero prices can be saved")
         root.check(JSON.parse(root.saved.costPriceOverrides)["free-model"].outputCostPerMillionTokens === 0,
           "zero survives settings serialization")
-        root.form.begin({costPriceOverrides: "invalid"})
-        root.check(!root.form.submit(), "invalid existing prices cannot be silently replaced")
+        root.begin({costPriceOverrides: "invalid"})
+        root.check(!root.settings.submit(), "invalid existing prices cannot be silently replaced")
         root.form.priceEditor.begin("{}")
-        root.check(root.form.submit() && root.saved.costPriceOverrides === "{}", "removing prices restores automatic pricing")
+        root.check(root.settings.submit() && root.saved.costPriceOverrides === "{}", "removing prices restores automatic pricing")
         root.phase++
       } else if (root.phase === 2 && root.responses >= 2 && !root.backend.loading) {
         root.check(root.openingResponses === 1 && !root.openingBackend.loading,
@@ -179,8 +221,8 @@ ShellRoot {
         root.phase++
       } else if (root.phase === 4 && root.backend.fetchError !== "" && !root.backend.loading) {
         root.check(!root.backend.payload.generatedAt, "source change clears old totals even on failure")
-        root.form.begin({costLocalProviders: [], costT3Servers: '[{"id":"first","name":"Remote","url":"https://first.example","tokenFile":"","enabled":true}]'})
-        root.check(root.form.submit(), "T3 settings save")
+        root.begin({costLocalProviders: [], costT3Servers: '[{"id":"first","name":"Remote","url":"https://first.example","tokenFile":"","enabled":true}]'})
+        root.check(root.settings.submit(), "T3 settings save")
         root.check(root.saved.costLocalProviders.length === 0 && JSON.parse(root.saved.costT3Servers)[0].enabled, "remote-only setting round trips and is included")
         root.backend.settings = root.saved
         root.phase++
@@ -189,64 +231,97 @@ ShellRoot {
         root.phase++
       } else if (root.phase === 6 && !root.backend.loading && root.backend.payload.generatedAt) {
         root.check(JSON.parse(root.backend.payload.testRequest.servers)[0].url === "https://second.example", "in-flight old server response is discarded")
-        root.form.begin({})
+        root.begin({})
         root.form.addServer()
         root.phase++
       } else if (root.phase === 7) {
         root.check(root.form.remoteExpanded && root.find(root.form, "t3Details-0").expanded,
           "adding a server opens the section and its connection editor")
         root.form.remoteExpanded = false
-        root.check(!root.form.submit(), "new server needs a valid URL")
+        root.check(!root.settings.submit(), "new server needs a valid URL")
         root.check(root.form.remoteExpanded, "invalid server expands the hidden section")
         root.edit("t3Url-0", "https://t3.example")
         root.edit("t3Token-0", "synthetic-t3-token")
         root.saved = null
-        root.form.saveRequested.connect(function(values) { root.form.finishSave(true) })
-        root.check(root.form.submit(), "private token staging starts")
+        root.settings.saveRequested.connect(function(values) { root.settings.finishSave(true) })
+        root.check(root.settings.submit(), "private token staging starts")
         root.phase++
-      } else if (root.phase === 8 && root.saved && !root.form.saving) {
+      } else if (root.phase === 8 && root.saved && !root.settings.saving) {
         var remote = JSON.parse(root.saved.costT3Servers)[0]
         root.check(remote.enabled && remote.tokenFile.indexOf("/management-keys/key-") >= 0, "token stored as private file reference")
         root.check(JSON.stringify(root.saved).indexOf("synthetic-t3-token") < 0, "raw token never enters widget settings")
-        root.form.begin(root.saved)
+        root.begin(root.saved)
         root.check(!root.form.remoteExpanded, "saved server starts summarized")
         root.check(root.find(root.form, "t3Credential-0").saved, "saved token has an explicit configured state")
         root.check(!root.find(root.form, "t3Token-0").visible, "saved token does not show an empty editor")
-        root.check(root.form.submit(), "blank token preserves saved credential")
+        root.check(root.settings.submit(), "blank token preserves saved credential")
         root.check(JSON.parse(root.saved.costT3Servers)[0].tokenFile === remote.tokenFile, "saved token path round trips")
-        root.form.begin({costFuseboxEnabled: true, costFuseboxUrl: "https://fusebox.example"})
-        root.check(!root.form.submit() && root.form.fuseboxExpanded, "enabled Fusebox needs a management key")
-        root.form.begin({costFuseboxEnabled: true, costFuseboxUrl: "https://fusebox.example",
+        var request = root.fuseboxBackend.payload.testRequest
+        root.check(request && JSON.stringify(request.fusebox) === '["https://fusebox.example","/private/fusebox.key","fusebox"]'
+          && request.fuseboxOptional === true && root.fuseboxBackend.fuseboxHost === "fusebox.example",
+          "Costs read the Limits Fusebox with its key, quietly when it has no usage history")
+        root.fuseboxBackend.proxyImplementation = "go"
+        root.check(!root.fuseboxBackend.fuseboxEnabled, "a detected CLIProxyAPI is not asked for usage history")
+        root.fuseboxBackend.settings = {costLocalProviders: ["claude"], usageSource: "proxy", costHistorySource: "local"}
+        root.fuseboxBackend.proxyImplementation = "rust"
+        root.check(!root.fuseboxBackend.fuseboxEnabled, "choosing this computer leaves Fusebox out")
+        // A different Fusebox server for Costs needs its own key.
+        root.begin({costFuseboxConnection: "custom", costFuseboxUrl: "https://fusebox.example"})
+        root.settings.selectTab("limits")
+        root.check(!root.settings.submit() && root.form.fuseboxExpanded && root.settings.tab === "costs",
+          "a problem on the Costs tab opens it, with the server section expanded")
+        // Settings saved with the old Fusebox switch keep their server and overlap choice.
+        root.begin({costFuseboxEnabled: true, costFuseboxUrl: "https://fusebox.example",
           costFuseboxKeyFile: "/private/fusebox.key", costFuseboxOverlap: "transcripts"})
         root.check(root.find(root.form, "costFuseboxCredential").saved, "saved Fusebox key has a configured state")
-        root.check(root.form.submit() && root.saved.costFuseboxEnabled === true
+        root.check(root.form.customFusebox && root.form.historySource === "mixed" && root.form.fuseboxAvailable,
+          "the old switch and overlap carry over")
+        root.check(root.shown("costHistoryControl") && root.shown("costFuseboxOtherProviders"),
+          "a different server offers the choice even with local Limits")
+        root.check(root.settings.submit() && root.saved.costHistorySource === "mixed"
           && root.saved.costFuseboxKeyFile === "/private/fusebox.key"
-          && root.saved.costFuseboxOverlap === "transcripts"
-          && root.saved.costFuseboxConnection === "custom", "Fusebox settings round trip; blank key keeps the saved file")
-        root.form.begin({costFuseboxEnabled: true})
-        root.check(root.form.fuseboxUsesLimits, "new Fusebox costs default to the Limits connection")
-        root.check(root.form.submit() && root.saved.costFuseboxConnection === "limits",
-          "the Limits connection without a saved key uses the default key file, as Limits does")
-        root.form.begin({costFuseboxEnabled: true, proxyUrl: "not a url"})
-        root.check(!root.form.submit() && root.form.fuseboxExpanded
-          && root.form.errorText.indexOf("Limits settings") >= 0, "the Limits connection needs a valid Limits URL")
-        root.form.begin({costFuseboxEnabled: true, proxyUrl: "https://limits.example", proxyKeyFile: "/private/limits.key"})
-        root.form.fuseboxExpanded = true
-        root.check(root.find(root.form, "costFuseboxUsesLimits").visible
-          && !root.find(root.form, "costFuseboxUrl").visible
-          && !root.find(root.form, "costFuseboxCredential").visible, "the Limits connection needs no URL or key")
-        root.check(root.find(root.form, "costFuseboxConnectionTest").url === "https://limits.example"
-          && root.find(root.form, "costFuseboxConnectionTest").keyFile === "/private/limits.key",
-          "the connection test uses the Limits server and key")
-        root.check(root.form.submit() && root.saved.costFuseboxConnection === "limits"
-          && root.saved.costFuseboxEnabled === true, "Fusebox costs save with the Limits connection")
-        root.form.begin({costFuseboxEnabled: true, cliproxyUrl: "https://legacy.example", cliproxyKeyFile: "/private/legacy.key"})
-        root.check(root.form.limitsKeyFile === "/private/legacy.key" && root.form.submit(),
+          && root.saved.costFuseboxConnection === "custom"
+          && root.saved.costFuseboxEnabled === undefined && root.saved.costFuseboxOverlap === undefined,
+          "Fusebox settings round trip under their new names; blank key keeps the saved file")
+        // The old switch left off (also the old default) follows Limits.
+        root.begin({costFuseboxEnabled: false, usageSource: "proxy", proxyUrl: "https://limits.example",
+          proxyKeyFile: "/private/limits.key"})
+        root.check(!root.form.customFusebox && root.form.limitsFusebox && root.form.usesFusebox,
+          "a Fusebox Limits connection supplies costs without a switch")
+        root.check(root.find(root.form, "costHistoryDescription").text.indexOf("limits.example") >= 0,
+          "the description names the server")
+        root.check(root.shown("costInactiveNotice") && !root.shown("costFuseboxOtherProviders"),
+          "this computer's settings are marked unused while Fusebox supplies costs")
+        root.check(root.settings.submit() && root.saved.costHistorySource === "auto"
+          && root.saved.costFuseboxConnection === "limits", "following Limits saves as auto")
+        root.find(root.form, "costHistoryControl").changed("local")
+        root.check(root.form.historySource === "local" && !root.shown("costInactiveNotice")
+          && root.shown("costFuseboxOtherProviders"), "choosing this computer offers Fusebox's other providers")
+        root.find(root.form, "costFuseboxOtherProviders").toggled()
+        root.check(root.form.historySource === "mixed" && root.settings.submit()
+          && root.saved.costHistorySource === "mixed", "the extra providers save as mixed")
+        root.find(root.form, "costHistoryControl").changed("fusebox")
+        root.check(root.form.historySource === "auto", "choosing Fusebox returns to following Limits")
+        // The Costs tab reads the unsaved Limits draft.
+        root.settings.limitsForm.setValue("usageSource", "direct")
+        root.check(!root.form.fuseboxAvailable && !root.shown("costHistoryControl")
+          && root.find(root.form, "costHistoryDescription").text.indexOf("no Fusebox server") >= 0,
+          "local Limits leave nothing to choose")
+        root.check(root.settings.limitsForm.touched
+          && root.find(root.settings, "settingsTabs").marked.indexOf("limits") >= 0, "a tab with unsaved edits is marked")
+        root.settings.limitsForm.setValue("usageSource", "proxy")
+        root.settings.limitsForm.proxyImplementation = "go"
+        root.check(!root.form.fuseboxAvailable
+          && root.find(root.form, "costHistoryDescription").text.indexOf("CLIProxyAPI keeps no usage history") === 0,
+          "CLIProxyAPI Limits explain why costs are local")
+        root.settings.limitsForm.proxyImplementation = ""
+        root.begin({usageSource: "cliproxy", cliproxyUrl: "https://legacy.example", cliproxyKeyFile: "/private/legacy.key"})
+        root.check(root.form.limitsUrl === "https://legacy.example" && root.form.usesFusebox && root.settings.submit(),
           "renamed Limits settings are still read")
         root.form.setFuseboxConnection("custom")
         root.check(root.form.fuseboxUrl === "https://legacy.example", "a different server starts from the Limits URL")
-        root.form.begin({costFuseboxUrl: "https://user:secret@fusebox.example"})
-        root.check(!root.form.submit(), "Fusebox URL credentials cannot be saved")
+        root.begin({costFuseboxUrl: "https://user:secret@fusebox.example"})
+        root.check(!root.settings.submit(), "Fusebox URL credentials cannot be saved")
         console.log("Cost QML contract: passed")
         Qt.quit()
       }

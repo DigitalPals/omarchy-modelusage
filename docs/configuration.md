@@ -16,11 +16,11 @@ Environment overrides owned by the CLIs are honored: `CLAUDE_CONFIG_DIR`, `CODEX
 
 ### Fusebox and CLIProxyAPI
 
-Open the Model Usage popup and click the **gear icon** in its upper-right corner. Select **Fusebox / CLIProxyAPI** under **Quota source** to discover all providers and accounts managed by [Fusebox](https://github.com/DigitalPals/Fusebox) or [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). The implementation is detected automatically with the same management key, and the source is then labelled **Fusebox** or **CLIProxyAPI**. Local CLI sign-ins are not needed for this source. The default `direct` source retains the existing behavior.
+Open the Model Usage popup and click the **gear icon** in its upper-right corner. Select **Fusebox / CLIProxyAPI** under **Read limits from** to discover all providers and accounts managed by [Fusebox](https://github.com/DigitalPals/Fusebox) or [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). The implementation is detected automatically with the same management key, and the source is then labelled **Fusebox** or **CLIProxyAPI**. Local CLI sign-ins are not needed for this source. The default `direct` source retains the existing behavior.
 
 Set the **server URL** (default `http://127.0.0.1:8317`). Dashboard URLs ending in `/management.html`, management API URLs ending in `/v0/management` or `/v0/management/auth-files`, and reverse-proxy path prefixes are accepted. HTTPS certificates are verified; redirects are rejected.
 
-Enter the server's **Management API key** in the masked settings field. Use the plaintext key accepted by the management panel, not a client API key or a bcrypt hash from the server configuration. Click **Test connection** to check the URL and key before saving: the result names the detected implementation and counts its accounts and providers, or explains a rejected key, an unreachable server, or a URL with no management API. The test reads only the account list, and an unsaved key is passed to it privately, never as a process argument. Click **Save** to apply your configuration. The widget stores the key automatically in a private file with permissions `0600`; you do not need to create or choose a file. Leave the field blank to keep your existing key. The saved key is never loaded back into the form, and Cancel discards an entered key.
+Enter the server's **Management API key** in the masked settings field. Use the plaintext key accepted by the management panel, not a client API key or a bcrypt hash from the server configuration. Click **Test connection** to check the URL and key before saving: the result names the detected implementation and counts its accounts and providers, or explains a rejected key, an unreachable server, or a URL with no management API. On Fusebox a second line says whether its usage history is available for Costs, or why not (turned off, stopped, or an older Fusebox). An unsaved key is passed to the test privately, never as a process argument. Click **Save** to apply your configuration. The widget stores the key automatically in a private file with permissions `0600`; you do not need to create or choose a file. Leave the field blank to keep your existing key. The saved key is never loaded back into the form, and Cancel discards an entered key.
 
 Once the implementation is known (from a test or the last refresh), settings show only what that server uses: Fusebox hides the CPA Usage Keeper fields, and CLIProxyAPI hides the live activity switch.
 
@@ -53,13 +53,14 @@ Failed refreshes preserve the last known reading in memory, marked `90%?` on the
 
 **Hide account emails** is enabled by default in widget settings. Account cards and menubar tooltips use numbered labels (Account 1, Account 2, …), and account identities are omitted from the settings details. Turn it off and Save to show usernames/email addresses. This is a display preference; quota collection continues normally.
 
-Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. Costs sources are configured using the gear on Costs; Fusebox costs reuse this connection by default.
+Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. Costs read Fusebox's usage history through this connection unless the Costs tab chooses otherwise.
 
 ### Local and remote cost history
 
-Open **Costs → gear** to configure sources and prices. Local **Codex CLI** and
-**Claude Code CLI** history are enabled by default, independently of the quota
-providers. Enable or disable either source in Costs settings.
+Open **Costs → gear** (the Costs tab of settings) to configure sources and
+prices. When Limits reads a Fusebox server, Costs use its history instead; see
+below. Otherwise local **Codex CLI** and **Claude Code CLI** history are enabled
+by default, independently of the quota providers.
 
 Choose **Add T3 server**, enter a name, its HTTP(S) base URL, and its connection
 token, then **Save**. Up to four enabled servers are included automatically in
@@ -75,7 +76,7 @@ history is available through a configured server. Identical transcript folders
 reported by local and remote sources, or multiple T3 servers, are counted once.
 Copies on different machines cannot reliably be identified as the same history.
 
-The **Last scan** section in Costs settings shows included, partial, missing, duplicate, or unavailable history.
+The **Last scan** section in the Costs tab shows included, partial, missing, duplicate, or unavailable history, with the reason for anything not included.
 When a T3 server is offline, its last usable snapshot for that period and timezone
 is retained with a timestamp. Stale snapshots can miss new activity and boundary
 hours; empty unknown chart periods are marked as unavailable. Session counts are
@@ -84,14 +85,18 @@ filter is needed: all enabled cost sources contribute together.
 
 ### Fusebox cost history
 
-**Costs → gear → Fusebox** adds Fusebox's usage database
-(`/api/usage/dashboard` and `/api/usage/observations?view=combined`) with the
-management API key. **Use the Limits connection** is on by default: enable
-**Include Fusebox usage** and Save, and Costs reads the server and key saved in
-Limits, following later changes there. Turn it off to enter a different server
-and key; the URL starts from the Limits URL. **Test connection** confirms that
-the server is Fusebox, since CLIProxyAPI records no usage history. Installations
-that saved their own Costs URL in 1.4 keep that separate server. 7D/30D read daily totals by model (one unfiltered read
+Costs follow Limits. When Limits reads a Fusebox server, Costs read its usage
+database (`/api/usage/dashboard` and `/api/usage/observations?view=combined`)
+with the same management key, following later changes there; nothing needs to
+be switched on. Until the server is detected, a server without usage history
+(CLIProxyAPI or an older Fusebox) is skipped quietly and Costs use this
+computer's history. A detected CLIProxyAPI is not asked, since it records no
+usage history.
+
+In the Costs tab, **Different Fusebox server** enters another server and key;
+the URL starts from the Limits URL, and **Test connection** must find usage
+history there. Installations that saved their own Costs URL in 1.4 keep that
+separate server. 7D/30D read daily totals by model (one unfiltered read
 plus one per provider; mismatched totals mark the source partial). 24H pages
 through individual responses, 500 per page and at most 40 pages; reaching the
 cap marks it partial. Fusebox's own estimates are used as reported. Custom
@@ -100,17 +105,19 @@ and `openai` history join the Claude and Codex buckets; other providers (Meta,
 Antigravity, Grok, …) get their own buckets. Account, client, and request IDs
 are discarded.
 
-Transcripts carry no Fusebox response ID, so overlap is an explicit choice
-(`costFuseboxOverlap`):
+Transcripts carry no Fusebox response ID, so **Cost history from** chooses
+one family (`costHistorySource`):
 
-- **`fusebox`** (default, **Use Fusebox instead of transcripts**): while Fusebox
-  is readable or has a saved snapshot, local and T3 sources are left out and
-  shown as **Replaced by Fusebox**. If Fusebox is unreadable with no snapshot,
-  transcripts are used and Fusebox shows **Unavailable** with the reason.
-- **`transcripts`**: Fusebox's Claude/OpenAI history is left out as
-  **Not counted · transcripts used** whenever a transcript source is readable;
-  its other providers are added. Requests a CLI sends through Fusebox to
-  another provider's model can still appear in both.
+- **Fusebox** (`auto`, the default): while Fusebox is readable or has a saved
+  snapshot, local and T3 sources are left out and shown as **Replaced by
+  Fusebox**. If Fusebox is unreadable with no snapshot, this computer's history
+  is used, and the Costs view says so under the total with the reason.
+- **This computer** (`local`): local and T3 history only; Fusebox is not read.
+- **This computer** with **Add providers only Fusebox records** (`mixed`):
+  Fusebox's Claude/OpenAI history is left out as **Not counted · this computer
+  used** whenever a transcript source is readable; its other providers are
+  added. Requests a CLI sends through Fusebox to another provider's model can
+  still appear in both.
 
 Fusebox's count of imported entries without a response ID is shown in its
 source message. An offline server's last snapshot (up to 32 days) is reused and
@@ -133,7 +140,7 @@ ${XDG_STATE_HOME:-~/.local/state}/omarchy/model-usage/cost-model-rates.json
 
 ## Settings
 
-Open the popup and click the **gear icon** beside Refresh to configure Model Usage. The Limits gear configures quotas and appearance; the Costs gear configures history sources and model prices. Both remain available when no providers are enabled. The fixed footer keeps **Cancel** and **Save changes** visible while scrolling. Saving writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
+Open the popup and click the **gear icon** beside Refresh (or press `s`) to configure Model Usage. Settings open at the current view's tab: **Limits** configures quotas and appearance; **Costs** configures history sources and model prices. Edits on both tabs survive switching tabs, a dot marks a tab with unsaved edits, and one Save applies both; if something on the other tab needs attention, Save opens that tab and focuses the field. Settings remain available when no providers are enabled. The fixed footer keeps **Cancel** and **Save changes** visible while scrolling. Saving writes your changes to the widget's entry in `~/.config/omarchy/shell.json` and applies them immediately; **Cancel** or Escape discards the draft.
 
 Under **Limits → gear → Display**, **Square usage cards** is enabled by default for account, limit, credit, and error cards. Turn it off to follow the theme's corners. Click **Save changes** to apply it.
 
@@ -141,9 +148,9 @@ In local CLI mode, each provider has two controls: **Monitor** enables quota che
 
 In CLIProxyAPI mode, all discovered providers are monitored automatically; the provider list controls their menu-bar visibility. The Monitor column is hidden in this mode. Choosing **Widget icon** hides the menu-bar provider controls while preserving your selections.
 
-Quota source and menu-bar display use compact dropdowns. Configured connections, optional last-used account tracking, refresh and alerts, and diagnostics sit in expandable sections. Refresh intervals are entered in minutes (1–60). Saved credentials show a **Change** action; blank replacements retain the existing secret, which is never loaded into the form. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
+**Read limits from** and menu-bar display use compact dropdowns. Configured connections, optional last-used account tracking, refresh and alerts, and diagnostics sit in expandable sections. Refresh intervals are entered in minutes (1–60). Saved credentials show a **Change** action; blank replacements retain the existing secret, which is never loaded into the form. Non-secret settings are also declared in `manifest.json` and can be changed using `omarchy bar set`.
 
-Costs settings keeps local history switches visible and collapses **Remote T3 servers**, **Custom prices**, and **Last scan**. Adding a server or price opens and focuses its editor; validation opens the relevant section and focuses the field needing attention.
+The Costs tab starts with **Cost history from**. While Fusebox supplies costs, this computer's switches and T3 servers are dimmed under **Not used while Fusebox supplies costs**. **Different Fusebox server**, **T3 Code servers**, **Custom prices**, and **Last scan** are collapsed. Adding a server or price opens and focuses its editor; validation opens the relevant section and focuses the field needing attention.
 
 In **Costs → gear → Custom prices**, add the exact model ID and its input/output prices in **USD per million tokens**. Model IDs in the Costs breakdown are selectable for copying. Matching preserves case, provider prefixes, and bracketed variants. Cache-read and cache-write prices are optional; blank fields use the input price, while `0` explicitly means free. Save applies the prices immediately to recorded activity, including offline or otherwise unknown models. Remove a price row and Save to restore automatic pricing. Cancel discards edits.
 
@@ -163,17 +170,22 @@ In **Costs → gear → Custom prices**, add the exact model ID and its input/ou
 | `costPriceOverrides` | `"{}"` | JSON string managed by Custom model prices; exact IDs mapped to USD-per-million rates |
 | `costLocalProviders` | `["claude", "codex"]` | Local cost sources, independent of quota providers |
 | `keeperUrl` | empty | Optional CPA Usage Keeper URL for CLIProxyAPI last-used account activity |
-| `costT3Servers` | `"[]"` | T3 server configurations managed in Costs settings; credentials are private file references |
-| `costFuseboxEnabled` | `false` | Include Fusebox usage history in Costs |
+| `costT3Servers` | `"[]"` | T3 server configurations managed in the Costs tab; credentials are private file references |
+| `costHistorySource` | `"auto"` | `auto`: Fusebox when Limits uses one (or a different server is set), else this computer; `local`: this computer and T3 only; `mixed`: this computer plus Fusebox's other providers |
 | `costFuseboxConnection` | `limits` | `limits` reads Fusebox costs with the Limits server and key; `custom` uses the two settings below |
 | `costFuseboxUrl` | empty | Fusebox server URL for Costs when `costFuseboxConnection` is `custom` |
 | `costFuseboxKeyFile` | empty | Private Fusebox management key file for Costs |
-| `costFuseboxOverlap` | `"fusebox"` | `fusebox` replaces transcripts while readable; `transcripts` keeps transcripts for Claude/OpenAI |
 | `keeperPasswordFile` | empty | Private Keeper password for CLIProxyAPI account activity |
 
 Settings renamed after 1.4 are still read: `usageSource: cliproxy`, `cliproxyUrl`,
 `cliproxyKeyFile`, `costKeeperUrl`, and `costKeeperPasswordFile`. The next Save
-in either settings form writes the current names and removes the old ones.
+writes the current names and removes the old ones.
+
+The former `costFuseboxEnabled` switch and `costFuseboxOverlap` are replaced by
+`costHistorySource`. A saved switch that was on keeps Fusebox (`auto`, or `mixed`
+when overlap was `transcripts`). A switch that was off, which was also the
+untouched default, now follows Limits (`auto`); a different Costs server saved
+while the switch was off stays unused. The next Save removes the old keys.
 Scripts that run `omarchy bar set` with an old name should switch to the new name;
 once a current name is saved it takes precedence.
 
@@ -197,7 +209,7 @@ New installations use `Percentages`: one compact provider-logo chip per provider
 
 **Kimi does not appear.** Confirm `kimi login` has created `~/.kimi-code/credentials/kimi-code.json`, or set `KIMI_CODE_HOME` to the CLI's actual data directory.
 
-**Fusebox / CLIProxyAPI reports configuration required.** Open **Limits → gear → Connection details** and click **Test connection** to see whether the URL, the key, or remote management access is the problem. If using a manually configured key file, check its path and permissions. "No Fusebox or CLIProxyAPI management API was found" means neither API answered at that URL: check the path prefix and that the management API is enabled. For an expired managed provider sign-in, sign in again through CLIProxyAPI and refresh the widget.
+**Fusebox / CLIProxyAPI reports configuration required.** Open **Limits → gear → Connection** and click **Test connection** to see whether the URL, the key, or remote management access is the problem. If using a manually configured key file, check its path and permissions. "No Fusebox or CLIProxyAPI management API was found" means neither API answered at that URL: check the path prefix and that the management API is enabled. For an expired managed provider sign-in, sign in again through CLIProxyAPI and refresh the widget.
 
 **History is empty.** History begins after the first successful limit fetch. Errors are not recorded as zero usage.
 
@@ -205,7 +217,7 @@ New installations use `Percentages`: one compact provider-logo chip per provider
 
 **The first Costs scan is slower.** A cold scan streams recent transcript files. Later scans reuse unchanged files and read only the appended bytes of growing sessions. Replaced, shortened, or detected rewritten files restart from the beginning. The first scan after this upgrade rebuilds old scan and price caches; stale flattened prices are never reused.
 
-**T3 is unavailable.** Open **Costs → gear → Last scan** and hover the source status for details. Check its base URL, connection token, and usage contract version. A saved snapshot is labeled with its last update time; no snapshot means unavailable history, not zero usage.
+**T3 is unavailable.** Open **Costs → gear → Last scan**; each source not included says why. Check its base URL, connection token, and usage contract version. A saved snapshot is labeled with its last update time; no snapshot means unavailable history, not zero usage.
 
 **The backend cannot start.** Python 3.10 or newer must be available as `python3`. The backend uses only the Python standard library.
 

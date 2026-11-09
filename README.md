@@ -57,11 +57,11 @@ omarchy plugin disable omarchy.agents
 
 ## Connect your sources
 
-Quota monitoring and cost history have **independent settings**. A proxy subscription can supply Limits while local CLI and T3 transcripts supply Costs.
+One settings page has a **Limits** tab and a **Costs** tab. Costs follow Limits: when Limits reads a Fusebox server, Costs use its usage history automatically; otherwise they use this computer's CLI history. The Costs tab can choose this computer instead, or a different Fusebox server.
 
 ### Local CLI limits
 
-Sign in to each provider you want to monitor, then open **Limits → gear** and choose **Local CLIs** as the quota source. Enable its **Monitor** switch and save. **Menu bar** controls percentage-chip visibility separately.
+Sign in to each provider you want to monitor, then open **Limits → gear** and choose **This computer's CLIs** under **Read limits from**. Enable its **Monitor** switch and save. **Menu bar** controls percentage-chip visibility separately.
 
 | Provider | Sign in | Quota source |
 |---|---|---|
@@ -79,12 +79,12 @@ The current UI rendered with representative fixture data; this is a local CLI mo
 
 ### Fusebox and CLIProxyAPI limits
 
-1. Open **Limits → gear** and select **Fusebox** (or **Fusebox / CLIProxyAPI** before detection) under **Quota source**. The Go implementation appears as **CLIProxyAPI**.
+1. Open **Limits → gear** and select **Fusebox** (or **Fusebox / CLIProxyAPI** before detection) under **Read limits from**. The Go implementation appears as **CLIProxyAPI**.
 2. Enter the server URL, such as `http://127.0.0.1:8317`, and its **Management API key**.
-3. Optionally click **Test connection** to confirm the server, key, and account count before saving.
+3. Optionally click **Test connection** to confirm the server, key, and account count before saving. On Fusebox it also checks the usage history that Costs read.
 4. Save. All managed providers and accounts are discovered automatically; local CLI sign-ins are unnecessary.
 
-The **Fusebox on GitHub** link in Limits settings opens [the project repository](https://github.com/DigitalPals/Fusebox).
+The **Fusebox on GitHub** link in the Limits tab of settings opens [the project repository](https://github.com/DigitalPals/Fusebox).
 
 Use the plaintext management key accepted by the proxy dashboard, not a client API key or the server's bcrypt hash. The masked field saves it to a private file; leaving a replacement blank preserves the saved key. Server URLs, `/management.html` URLs, management API URLs, and reverse-proxy prefixes are accepted. Remote servers must permit remote management access.
 
@@ -102,11 +102,13 @@ Other discovered providers display an unsupported-quota notice; paused and faile
 
 ### Cost history
 
-Open **Costs → gear**. Local **Codex CLI** and **Claude Code CLI** history are enabled by default. Choose **Add T3 server** to enter a name, HTTP(S) base URL, and connection token; up to four enabled servers contribute together. T3 usage contract **4 or 5** is required. Blank token replacements preserve saved credentials.
+Costs need no setup. With Limits on Fusebox, Costs show **everything sent through that Fusebox, from any computer**, priced by Fusebox's own estimates; unpriced requests stay unpriced. Otherwise Costs show this computer's **Codex CLI** and **Claude Code CLI** history. The line under the total names the source; click it to open the Costs tab.
 
-**Fusebox** adds Fusebox's own priced history. Open **Costs → gear → Fusebox**, enable **Include Fusebox usage**, and Save: by default Costs reuses the Fusebox server and key from Limits. Turn off **Use the Limits connection** to read a different Fusebox server with its own privately saved key. Fusebox estimates are used as reported; unpriced requests stay unpriced.
+CLIs routed through Fusebox also write transcripts, and those carry no Fusebox request IDs, so the same request could count twice. That is why Costs use one or the other. In **Costs → gear**, **Cost history from** chooses **Fusebox** (the default) or **This computer**; with **This computer**, **Add providers only Fusebox records** adds Muse, Grok and other providers this computer has no history for. To include sessions that bypass Fusebox, turn on Fusebox's Claude Code/Codex history import, which deduplicates by response ID. **Different Fusebox server** reads another server with its own privately saved key.
 
-CLIs routed through Fusebox also write transcripts, and those carry no Fusebox request IDs, so the same request could count twice. By default **Use Fusebox instead of transcripts** leaves local and T3 history out while Fusebox is readable. To include sessions that bypass Fusebox, turn on Fusebox's Claude Code/Codex history import, which deduplicates by response ID. Turn the option off to keep transcripts for Claude and OpenAI and add only Fusebox's other providers.
+Choose **Add T3 server** to enter a name, HTTP(S) base URL, and connection token; up to four enabled servers contribute together with this computer's history. T3 usage contract **4 or 5** is required. Blank token replacements preserve saved credentials.
+
+If Fusebox cannot be read, Costs say so under the total, with the reason, and show this computer's history instead.
 
 24H uses individual responses (up to 20,000); 7D/30D use daily totals. **Last scan** marks replaced or excluded sources.
 
@@ -185,7 +187,7 @@ Public prices refresh daily and are cached for offline use. **Refresh in Costs**
 
 Menus use Up/Down and Enter. Tab/Shift+Tab navigates settings fields or neighboring bar panels through Omarchy's panel coordinator. Right click has no assigned action.
 
-The **Limits gear** configures quotas, bar display, privacy, card corners, refresh interval (1–60 minutes), and warning thresholds. The **Costs gear** configures history sources and prices. Both have explicit Save/Cancel, and remain accessible without connected providers. Percentage mode is the default; vertical bars or an empty chip selection use the widget icon.
+The gear opens one settings page at the current view's tab. **Limits** configures quotas, bar display, privacy, card corners, refresh interval (1–60 minutes), and warning thresholds; **Costs** configures history sources and prices. Edits on both tabs are kept while switching (a dot marks a tab with unsaved edits), and one Save/Cancel applies to both. Settings remain accessible without connected providers. Percentage mode is the default; vertical bars or an empty chip selection use the widget icon.
 
 Namespaced IPC is available for keybindings and scripts:
 
@@ -195,7 +197,7 @@ omarchy-shell digitalpals.model-usage costs
 omarchy-shell digitalpals.model-usage refresh
 ```
 
-Also available: `open`, `close`, `toggle`, `next`, `configure`, and `configureCosts`. For all setting keys and terminal configuration examples, see [settings](docs/configuration.md#settings).
+Also available: `open`, `close`, `toggle`, `next`, `configure` (settings at the Limits tab), and `configureCosts` (at the Costs tab). For all setting keys and terminal configuration examples, see [settings](docs/configuration.md#settings).
 
 ## Privacy and reliability
 

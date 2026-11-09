@@ -26,7 +26,7 @@ def account(**overrides):
 
 
 @contextmanager
-def proxy_server(document=None, legacy_status=401, native_status=200):
+def proxy_server(document=None, legacy_status=401, native_status=200, usage_state=None):
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -41,6 +41,8 @@ def proxy_server(document=None, legacy_status=401, native_status=200):
                 status, payload = legacy_status, {"error": "unsupported"}
             elif self.path == "/api/accounts":
                 status, payload = native_status, document if document is not None else fixture("cliproxy-rust-accounts.json")
+            elif self.path == "/api/usage/status" and usage_state is not None:
+                status, payload = 200, {"health": {"state": usage_state}, "imports": [], "collectors": []}
             else:
                 status, payload = 404, {}
             self.send_response(status)

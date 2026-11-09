@@ -7,7 +7,8 @@ import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
 // Tests a Fusebox / CLIProxyAPI connection from unsaved settings. A draft key
-// is written to the test process's stdin, never to its arguments.
+// is written to the test process's stdin, never to its arguments. On Fusebox
+// a second line says whether Costs can read its usage history.
 Column {
   id: root
   property string url: ""
@@ -22,6 +23,9 @@ Column {
   property string status: "idle"
   property string message: ""
   property string implementation: ""
+  // Fusebox usage history, reported beside the account result; empty elsewhere.
+  property string usageMessage: ""
+  property bool usageOk: false
   // The draft request for the run being started. It is written to stdin once
   // and cleared; a late stop notice from an earlier run never touches it.
   property var request: null
@@ -35,6 +39,8 @@ Column {
     status = "idle"
     message = ""
     implementation = ""
+    usageMessage = ""
+    usageOk = false
   }
   function test() {
     if (testing || url.trim() === "") return
@@ -56,6 +62,9 @@ Column {
     implementation = result.implementation === "go" || result.implementation === "rust" ? result.implementation : ""
     status = result.ok === true ? "ok" : "failed"
     message = result.message.slice(0, 300)
+    var usage = result.usage
+    usageOk = !!usage && usage.ok === true
+    usageMessage = usage && typeof usage.message === "string" ? usage.message.slice(0, 300) : ""
   }
   onUrlChanged: reset()
   onKeyFileChanged: reset()
@@ -124,6 +133,18 @@ Column {
     visible: root.message !== ""
     text: (root.status === "ok" ? "✓ " : "") + root.message
     color: root.status === "failed" ? root.urgent : UsageLogic.dimColor(root.foreground)
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    textFormat: Text.PlainText
+    wrapMode: Text.WordWrap
+  }
+
+  Text {
+    objectName: "connectionTestUsage"
+    width: parent.width
+    visible: root.usageMessage !== ""
+    text: (root.usageOk ? "✓ " : "⚠ ") + root.usageMessage
+    color: root.usageOk ? UsageLogic.dimColor(root.foreground) : root.urgent
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
     textFormat: Text.PlainText

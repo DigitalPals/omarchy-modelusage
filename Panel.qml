@@ -36,10 +36,10 @@ Ui.Panel {
   property string historyMode: "h24"
   property string viewMode: "limits"
   property string settingsReturnView: "limits"
-  readonly property bool configuring: viewMode === "settings" || viewMode === "cost-settings"
-  readonly property var activeSettingsForm: viewMode === "cost-settings" ? costConfigForm : configForm
-  property alias costSettingsForm: costConfigForm
-  property alias settingsForm: configForm
+  readonly property bool configuring: viewMode === "settings"
+  property alias settingsView: settingsView
+  readonly property var settingsForm: settingsView.limitsForm
+  readonly property var costSettingsForm: settingsView.costForm
   property alias resetAction: resetBackend
   property double nowMs: Date.now()
   // Account facts show minutes; change once a minute rather than every tick.
@@ -174,7 +174,7 @@ Ui.Panel {
     open()
   }
 
-  // Settings for the current view, like the gear button.
+  // Settings at the current view's tab, like the gear button.
   function showViewSettings() {
     if (viewMode === "costs") showCostSettings()
     else showSettings()
@@ -218,24 +218,23 @@ Ui.Panel {
     return rows
   }
 
-  function showSettings() {
+  // One settings page with a Limits and a Costs tab.
+  function showSettings(tab) {
     if (!configuring) settingsReturnView = viewMode
-    configForm.begin(settings)
+    settingsView.begin(settings, tab === "costs" ? "costs" : "limits")
     viewMode = "settings"
+    if (panelFlick) panelFlick.contentY = 0
     open()
-    Qt.callLater(function() { configForm.focusFirst() })
+    Qt.callLater(function() { settingsView.focusFirst() })
   }
 
   function showCostSettings() {
+    showSettings("costs")
     settingsReturnView = "costs"
-    costConfigForm.begin(settings)
-    viewMode = "cost-settings"
-    open()
-    Qt.callLater(function() { costConfigForm.focusFirst() })
   }
 
   function leaveSettings() {
-    activeSettingsForm.discardKey()
+    settingsView.discardKey()
     viewMode = settingsReturnView
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -251,13 +250,13 @@ Ui.Panel {
     if (changed) {
       if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function"
           || !bar.shell.updateEntryInline(moduleName, entry)) {
-        activeSettingsForm.errorText = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
-        activeSettingsForm.finishSave(false)
+        settingsView.transactionError = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
+        settingsView.finishSave(false)
         return false
       }
       settings = entry
     }
-    activeSettingsForm.finishSave(true)
+    settingsView.finishSave(true)
     leaveSettings()
     return true
   }
@@ -346,7 +345,7 @@ Ui.Panel {
 
   function iconUrl(provider) {
     if (!provider) return ""
-    if (!UsageLogic.contains(["claude", "codex", "kimi"], provider.id)) return ""
+    if (!UsageLogic.contains(["claude", "codex", "kimi", "meta"], provider.id)) return ""
     if (provider.id === "codex") {
       return Qt.resolvedUrl(colorLuminance(surface) >= 0.5
         ? "assets/codex-light.svg" : "assets/codex.svg")
@@ -356,7 +355,7 @@ Ui.Panel {
 
   function barIconUrl(provider) {
     if (!provider) return ""
-    if (!UsageLogic.contains(["claude", "codex", "kimi"], provider.id)) return ""
+    if (!UsageLogic.contains(["claude", "codex", "kimi", "meta"], provider.id)) return ""
     return Qt.resolvedUrl("assets/" + provider.id + "-bar.svg")
   }
 
@@ -425,7 +424,7 @@ Ui.Panel {
     if (panelFlick) panelFlick.contentY = 0
     Qt.callLater(function() {
       if (resetBackend.active) resetForm.focusFirst()
-      else if (root.configuring) activeSettingsForm.focusFirst()
+      else if (root.configuring) settingsView.focusFirst()
       else keyCatcher.forceActiveFocus()
     })
   } else {
@@ -436,8 +435,7 @@ Ui.Panel {
 
   onViewModeChanged: {
     if (costsView) costsView.closeMenu()
-    if (viewMode !== "settings") configForm.discardKey()
-    if (viewMode !== "cost-settings") costConfigForm.discardKey()
+    if (viewMode !== "settings") settingsView.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
   }
@@ -470,6 +468,7 @@ Ui.Panel {
   CostBackend {
     id: costBackend
     settings: root.settings
+    proxyImplementation: backend.proxyImplementation
   }
 
   // Every row reports its natural name width here; every card then uses the
@@ -699,7 +698,7 @@ Ui.Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: resetBackend.active ? resetForm : root.configuring ? root.activeSettingsForm : keyCatcher
+    focusTarget: resetBackend.active ? resetForm : root.configuring ? settingsView : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight
       : contentColumn.implicitHeight + (root.configuring ? settingsActions.implicitHeight + Style.spacing.lg : 0))
@@ -748,9 +747,9 @@ Ui.Panel {
         foreground: root.foreground
         urgent: root.urgent
         fontFamily: root.fontFamily
-        errorText: root.configuring ? root.activeSettingsForm.errorText : ""
-        saving: root.configuring && root.activeSettingsForm.saving
-        onSaveRequested: root.activeSettingsForm.submit()
+        errorText: root.configuring ? settingsView.errorText : ""
+        saving: root.configuring && settingsView.saving
+        onSaveRequested: settingsView.submit()
         onCancelRequested: root.leaveSettings()
       }
 
@@ -836,11 +835,11 @@ Ui.Panel {
                 Ui.PanelActionButton {
                   objectName: root.viewMode === "costs" ? "costSettingsButton" : "usageSettingsButton"
                   iconText: "󰒓"
-                  tooltipText: root.viewMode === "costs" ? "Cost sources and prices" : "Model Usage settings"
+                  tooltipText: "Settings (s)"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.body
-                  onClicked: root.viewMode === "costs" ? root.showCostSettings() : root.showSettings()
+                  onClicked: root.showViewSettings()
                 }
 
                 Ui.PanelActionButton {
@@ -947,9 +946,10 @@ Ui.Panel {
             }
           }
 
-          UsageSettings {
-            id: configForm
-            visible: root.viewMode === "settings"
+          SettingsView {
+            id: settingsView
+            objectName: "settingsView"
+            visible: root.configuring
             width: parent.width
             foreground: root.foreground
             urgent: root.urgent
@@ -958,22 +958,7 @@ Ui.Panel {
             accountDetails: root.accountDiagnostics()
             proxyProviders: root.proxyMode ? backend.providers : []
             proxyImplementation: backend.proxyImplementation
-            onSaveRequested: function(values) { root.saveSettings(values) }
-            onCancelRequested: root.leaveSettings()
-            onRevealRequested: function(item) {
-              settingsRevealTimer.item = item
-              settingsRevealTimer.restart()
-            }
-          }
-          CostSettings {
-            id: costConfigForm
             sources: costBackend.payload ? UsageLogic.listOrEmpty(costBackend.payload.sources) : []
-            visible: root.viewMode === "cost-settings"
-            width: parent.width
-            foreground: root.foreground
-            urgent: root.urgent
-            surface: root.surface
-            fontFamily: root.fontFamily
             onSaveRequested: function(values) { root.saveSettings(values) }
             onCancelRequested: root.leaveSettings()
             onRevealRequested: function(item) {
@@ -1071,7 +1056,9 @@ Ui.Panel {
             surface: root.surface
             fontFamily: root.fontFamily
             cardRadius: root.usageCardRadius
+            fuseboxHost: costBackend.fuseboxHost
             onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
+            onSourceSettingsRequested: root.showCostSettings()
             onMenuClosed: Qt.callLater(function() {
               if (root.opened && !root.configuring && !resetBackend.active)
                 keyCatcher.forceActiveFocus()

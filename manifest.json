@@ -47,11 +47,10 @@
         "codex"
       ],
       "costT3Servers": "[]",
-      "costFuseboxEnabled": false,
+      "costHistorySource": "auto",
       "costFuseboxConnection": "limits",
       "costFuseboxUrl": "",
       "costFuseboxKeyFile": "",
-      "costFuseboxOverlap": "fusebox",
       "liveAccountActivity": true
     },
     "schema": [
@@ -191,7 +190,7 @@
         "type": "string",
         "label": "Custom model prices",
         "defaultValue": "{}",
-        "description": "Managed by Custom model prices in Costs settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
+        "description": "Managed by Custom prices in the Costs tab of settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
       },
       {
         "key": "keeperUrl",
@@ -231,14 +230,19 @@
         "type": "string",
         "label": "T3 Code cost servers",
         "defaultValue": "[]",
-        "description": "Managed by Costs settings. Remote servers with private token file references."
+        "description": "Managed in the Costs tab of settings. Remote servers with private token file references."
       },
       {
-        "key": "costFuseboxEnabled",
-        "type": "boolean",
-        "label": "Fusebox cost history",
-        "defaultValue": false,
-        "description": "Include Fusebox's own API-price estimates in Costs. Configured in Costs settings, separately from Limits."
+        "key": "costHistorySource",
+        "type": "enum",
+        "label": "Cost history from",
+        "defaultValue": "auto",
+        "options": [
+          "auto",
+          "local",
+          "mixed"
+        ],
+        "description": "auto: Fusebox when Limits uses one (or a different Fusebox is set for Costs), otherwise this computer's transcripts. local: this computer's transcripts and T3 servers only. mixed: transcripts supply Claude and OpenAI; Fusebox adds its other providers."
       },
       {
         "key": "costFuseboxConnection",
@@ -249,7 +253,7 @@
           "limits",
           "custom"
         ],
-        "description": "limits: read Fusebox history with the Limits server and key. custom: use costFuseboxUrl and costFuseboxKeyFile."
+        "description": "limits: read Fusebox history with the Limits server and key. custom: a different Fusebox for Costs, at costFuseboxUrl with costFuseboxKeyFile."
       },
       {
         "key": "costFuseboxUrl",
@@ -263,18 +267,7 @@
         "type": "string",
         "label": "Fusebox cost key file",
         "defaultValue": "",
-        "description": "Private Fusebox key file for Costs when costFuseboxConnection is custom. Managed by Costs settings."
-      },
-      {
-        "key": "costFuseboxOverlap",
-        "type": "enum",
-        "label": "Fusebox and transcript overlap",
-        "defaultValue": "fusebox",
-        "options": [
-          "fusebox",
-          "transcripts"
-        ],
-        "description": "fusebox: Fusebox replaces local and T3 transcript history while readable. transcripts: transcripts supply Claude and OpenAI; Fusebox adds other providers."
+        "description": "Private Fusebox key file for Costs when costFuseboxConnection is custom. Managed in the Costs tab of settings."
       },
       {
         "key": "liveAccountActivity",

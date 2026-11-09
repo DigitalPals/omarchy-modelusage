@@ -26,6 +26,8 @@ Item {
   property color surface: Commons.Color.popups.background
   property string fontFamily: Style.font.family
   property real cardRadius: Style.cornerRadius
+  // The Fusebox server Costs read, for the source line; empty without one.
+  property string fuseboxHost: ""
 
   readonly property color dim: UsageLogic.dimColor(foreground)
   readonly property var totals: payload && payload.totals ? payload.totals : ({})
@@ -38,10 +40,14 @@ Item {
   readonly property var sources: payload ? UsageLogic.listOrEmpty(payload.sources) : []
   readonly property bool sourceProblem: sources.some(function(row) {
     return row.status === "failed" || row.status === "unavailable" })
+  readonly property string sourceSummary: UsageLogic.costSourceSummary(sources, fuseboxHost)
+  readonly property var fuseboxFailure: UsageLogic.fuseboxFailure(sources)
   readonly property real chartMaximum: maximumPeriodValue()
 
   signal periodRequested(int days)
   signal menuClosed()
+  // The source line opens the Costs tab of settings.
+  signal sourceSettingsRequested()
 
   implicitHeight: content.implicitHeight
   onMetricChanged: tokenDetailsExpanded = metric === "tokens"
@@ -150,7 +156,8 @@ Item {
   }
 
   // Partial, offline or failed sources, so a total never looks more complete
-  // than it is. Details stay in Costs settings › Last scan.
+  // than it is. A failed Fusebox has its own notice with the reason; details
+  // stay in the Costs tab of settings › Last scan.
   function sourceNotice() {
     const groups = [
       { statuses: ["failed", "unavailable"], label: "Unavailable" },
@@ -160,8 +167,10 @@ Item {
     const parts = []
     for (let g = 0; g < groups.length; g++) {
       const names = []
-      for (let i = 0; i < sources.length; i++)
+      for (let i = 0; i < sources.length; i++) {
+        if (fuseboxFailure && sources[i].kind === "fusebox" && g === 0) continue
         if (groups[g].statuses.indexOf(sources[i].status) >= 0) names.push(String(sources[i].name || sources[i].id))
+      }
       if (names.length > 0) parts.push(groups[g].label + ": " + names.join(", "))
     }
     return parts.join(" · ")
@@ -289,6 +298,49 @@ Item {
         wrapMode: Text.WordWrap
       }
 
+      // What the total is made of: a Fusebox read failure says why and what
+      // is shown instead, rather than quietly showing this computer's history.
+      Column {
+        objectName: "costFuseboxFailure"
+        visible: root.fuseboxFailure !== null
+        width: parent.width
+        spacing: Style.spacing.xxs
+        Text {
+          width: parent.width
+          text: root.fuseboxFailure ? "⚠ " + root.fuseboxFailure.title : ""
+          textFormat: Text.PlainText
+          color: root.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+        Text {
+          width: parent.width
+          visible: text !== ""
+          text: root.fuseboxFailure ? root.fuseboxFailure.detail : ""
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+      }
+
+      Ui.Button {
+        objectName: "costSourceLink"
+        visible: root.sourceSummary !== ""
+        text: root.sourceSummary + " ›"
+        tooltipText: "Where Costs come from: open the Costs settings"
+        Accessible.name: root.sourceSummary + ". Open the Costs settings"
+        focusable: true
+        horizontalPadding: 0
+        verticalPadding: Style.spacing.xxs
+        foreground: root.dim
+        fontFamily: root.fontFamily
+        fontSize: Style.font.caption
+        onClicked: root.sourceSettingsRequested()
+      }
+
       Text {
         visible: root.metric === "cost"
         width: parent.width
@@ -330,7 +382,7 @@ Item {
       topPadding: Style.spacing.xl
       bottomPadding: Style.spacing.xl
       text: root.totals.historyStatus === "unavailable"
-        ? "Session history is unavailable for this period." : "No transcript usage was found in this period."
+        ? "Session history is unavailable for this period." : "No usage was found in this period."
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

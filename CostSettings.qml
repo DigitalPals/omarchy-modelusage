@@ -1,13 +1,14 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Controls as Controls
-import Quickshell
-import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
+// The Costs tab of SettingsView. Costs follow the Limits tab: its Fusebox
+// supplies history unless this tab chooses this computer or another server.
+// SettingsView collects this draft with the Limits tab and stores credentials
+// for both in one Save.
 Column {
   id: root
   property color foreground: Commons.Color.foreground
@@ -24,39 +25,59 @@ Column {
   property alias pricesExpanded: priceSection.expanded
   property alias diagnosticsExpanded: scanSection.expanded
   property alias fuseboxExpanded: fuseboxSection.expanded
-  property bool fuseboxEnabled: false
+  // auto: Fusebox when available, else this computer. local: this computer.
+  // mixed: this computer, plus the providers only Fusebox records.
+  property string historySource: "auto"
   property string fuseboxUrl: ""
   property string fuseboxKeyFile: ""
   property string fuseboxKey: ""
-  property string fuseboxOverlap: "fusebox"
-  // "limits" reuses the Limits server and key; "custom" names another server.
+  // "limits" reads the Limits server; "custom" names another Fusebox for Costs.
   property string fuseboxConnection: "limits"
+  // The Limits tab's unsaved draft, bound by SettingsView.
+  property string limitsMode: "direct"
   property string limitsUrl: ""
-  property string limitsKeyFile: ""
-  // Where the backends look when no key file is saved (scripts/proxy_connection.py).
-  readonly property string defaultKeyPath: Quickshell.env("CLIPROXY_API_KEY_FILE")
-    || (Quickshell.env("XDG_CONFIG_HOME") || "~/.config") + "/omarchy/model-usage/cliproxy.key"
-  readonly property bool fuseboxUsesLimits: fuseboxConnection === "limits"
-  property var pendingValues: null
-  property var pendingKeys: ({})
-  property var previousPaths: ({})
-  property bool keySaveDecided: false
-  readonly property bool saving: keyWriter.running
-  signal saveRequested(var values)
+  property string limitsImplementation: ""
+  // Edited since begin(); SettingsView marks the tab.
+  property bool touched: false
+  readonly property bool customFusebox: fuseboxConnection === "custom"
+  readonly property bool limitsFusebox: limitsMode === "proxy" && limitsImplementation !== "go"
+  readonly property bool fuseboxAvailable: customFusebox || limitsFusebox
+  readonly property bool usesFusebox: fuseboxAvailable && historySource === "auto"
+  readonly property string fuseboxHost: UsageLogic.urlHost(customFusebox ? fuseboxUrl : limitsUrl)
   signal cancelRequested()
   signal revealRequested(var item)
   spacing: Style.spacing.xxl
-  enabled: !saving
   Keys.onEscapePressed: cancelRequested()
 
   function sourceDetail(source) {
     var labels = {ok: "Included", partial: "Partial history", stale: "Saved history · offline",
-      missing: "No transcripts", failed: "Unavailable", unavailable: "Unavailable", duplicate: "Already included",
-      replaced: "Replaced by Fusebox", excluded: "Not counted · transcripts used"}
+      missing: source.kind === "fusebox" ? "No usage history" : "No transcripts",
+      failed: "Unavailable", unavailable: "Unavailable", duplicate: "Already included",
+      replaced: "Replaced by Fusebox", excluded: "Not counted · this computer used"}
     var text = source.name + " · " + (labels[source.status] || source.status)
     if (source.status === "stale" && source.updatedAt)
       text += " · " + Qt.formatDateTime(new Date(Number(source.updatedAt)), "MMM d, HH:mm")
+    // Generic notes for included sources stay out; anything else says why.
+    if (source.status !== "ok" && source.message) text += "\n" + source.message
     return text
+  }
+
+  function historyDescription() {
+    if (usesFusebox)
+      return "Everything sent through Fusebox at " + (fuseboxHost || "this server")
+        + ", from any computer. This computer's own history is left out, so nothing is counted twice."
+    if (fuseboxAvailable && historySource === "mixed")
+      return "Claude and OpenAI come from sessions recorded here, plus any T3 servers. Fusebox adds only the providers this computer has no history for."
+    if (fuseboxAvailable)
+      return "Codex and Claude Code sessions recorded here, plus any T3 servers. Fusebox's records are left out."
+    if (limitsMode === "proxy" && limitsImplementation === "go")
+      return "CLIProxyAPI keeps no usage history, so costs come from Codex and Claude Code sessions recorded here, plus any T3 servers."
+    return "Codex and Claude Code sessions recorded here, plus any T3 servers. Limits reads this computer's CLIs, so there is no Fusebox server to use."
+  }
+
+  function edited() {
+    touched = true
+    errorText = ""
   }
 
   function discardKey() {
@@ -64,16 +85,8 @@ Column {
     fuseboxKey = ""
     fuseboxCredential.reset()
     fuseboxTest.reset()
-    pendingKeys = ({})
-    pendingValues = null
-    if (keyWriter.running && !keySaveDecided) keyWriter.running = false
   }
   function finishSave(saved) {
-    if (keyWriter.running && !keySaveDecided) {
-      keySaveDecided = true
-      keyWriter.write(saved ? "commit\n" : "abort\n")
-    }
-    pendingValues = null
     if (saved) discardKey()
   }
   function begin(settings) {
@@ -86,15 +99,12 @@ Column {
     priceSection.expanded = false
     scanSection.expanded = false
     fuseboxSection.expanded = false
-    var fusebox = UsageLogic.fuseboxCostConnection(settings)
-    var limits = UsageLogic.proxyConnection(settings)
-    fuseboxEnabled = fusebox.enabled
+    whySection.expanded = false
+    var fusebox = UsageLogic.fuseboxCostConnection(settings, "")
+    historySource = fusebox.source
     fuseboxConnection = fusebox.mode
     fuseboxUrl = String(settings.costFuseboxUrl || "")
     fuseboxKeyFile = String(settings.costFuseboxKeyFile || "")
-    fuseboxOverlap = fusebox.overlap
-    limitsUrl = limits.url
-    limitsKeyFile = limits.keyFile
     localProviders = settings.costLocalProviders === undefined ? ["claude", "codex"] : settings.costLocalProviders
     prices.begin(String(settings.costPriceOverrides || "{}"))
     try {
@@ -109,22 +119,38 @@ Column {
     } catch (e) { loadError = "Saved T3 settings are invalid. Remove them to configure servers again." }
     if (loadError) serverSection.expanded = true
     if (prices.loadError) priceSection.expanded = true
+    touched = false
   }
-  function focusFirst() { localCodex.forceActiveFocus() }
+  function focusFirst() {
+    if (fuseboxAvailable) historyControl.forceActiveFocus()
+    else localCodex.forceActiveFocus()
+  }
+  // "fusebox" or "local" from the selector; the mixed switch refines "local".
+  function chooseHistory(value) {
+    if (value === "fusebox") historySource = "auto"
+    else if (historySource === "auto") historySource = "local"
+    edited()
+  }
   function toggleLocal(id) {
     var next = []
     var allowed = ["claude", "codex"]
     for (let i = 0; i < allowed.length; i++)
       if (UsageLogic.contains(localProviders, allowed[i]) !== (allowed[i] === id)) next.push(allowed[i])
     localProviders = next
+    edited()
   }
   function addServer() {
     if (servers.count >= 4) return
     servers.append({serverId: "t3-" + Date.now() + "-" + Math.floor(Math.random() * 1000000),
       name: "T3 Code", url: "", tokenFile: "", token: "", included: true})
+    edited()
     focusServer(servers.count - 1, "t3Url-")
   }
-  function setServer(index, key, value) { servers.setProperty(index, key, value); errorText = "" }
+  function removeServer(index) {
+    servers.remove(index)
+    edited()
+  }
+  function setServer(index, key, value) { servers.setProperty(index, key, value); edited() }
   function findItem(item, name) {
     if (item.objectName === name) return item
     var children = item.children || []
@@ -151,7 +177,7 @@ Column {
       })
     })
   }
-  function setFusebox(name, value) { root[name] = value; errorText = "" }
+  function setFusebox(name, value) { root[name] = value; edited() }
   function setFuseboxConnection(mode) {
     // Start a different server from the Limits URL rather than an empty field.
     if (mode === "custom" && fuseboxUrl.trim() === "") fuseboxUrl = limitsUrl
@@ -168,12 +194,16 @@ Column {
       else { field.forceActiveFocus(); root.revealRequested(field) }
     })
   }
-  function submit() {
-    if (saving) return false
-    if (loadError !== "") { errorText = loadError; serverSection.expanded = true; return false }
-    var values = {costLocalProviders: localProviders}
+  function fail(message) {
+    errorText = message
+    return null
+  }
+  // Validated values plus typed secrets to store privately, or null with errorText set.
+  function collect() {
+    if (loadError !== "") { serverSection.expanded = true; return fail(loadError) }
+    var values = {costLocalProviders: localProviders, costHistorySource: historySource}
     try { values.costPriceOverrides = prices.serialize() }
-    catch (e) { priceSection.expanded = true; errorText = String(e.message || e); return false }
+    catch (e) { priceSection.expanded = true; return fail(String(e.message || e)) }
     var rows = [], keys = ({}), previous = ({}), ids = ({})
     for (let i = 0; i < servers.count; i++) {
       let row = servers.get(i), url = row.url.trim(), name = row.name.trim(), token = row.token.trim()
@@ -181,15 +211,13 @@ Column {
           || name === "" || name.length > 80 || /[\x00-\x1f]/.test(name)
           || !/^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/.test(url)
           || /(?:^|\/)\.{1,2}(?:\/|$)/.test(url)) {
-        errorText = "Give each T3 server a name and an HTTP(S) URL without credentials, query, or fragment."
         focusServer(i, name === "" || name.length > 80 || /[\x00-\x1f]/.test(name) ? "t3Name-" : "t3Url-")
-        return false
+        return fail("Give each T3 server a name and an HTTP(S) URL without credentials, query, or fragment.")
       }
       ids[row.serverId] = true
       if (row.token !== "" && (token === "" || /[^\x21-\x7e]/.test(token))) {
-        errorText = "Enter the connection token without spaces."
         focusServer(i, "t3Credential-")
-        return false
+        return fail("Enter the connection token without spaces.")
       }
       rows.push({id: row.serverId, name: name, url: url, tokenFile: row.tokenFile, enabled: row.included})
       if (token !== "") {
@@ -198,257 +226,249 @@ Column {
       }
     }
     values.costT3Servers = JSON.stringify(rows)
-    var fuseboxAddress = fuseboxUrl.trim(), fuseboxToken = fuseboxUsesLimits ? "" : fuseboxKey.trim()
-    // An empty Limits key file means the default key path, exactly as Limits reads it.
-    if (fuseboxEnabled && fuseboxUsesLimits && !UsageLogic.validServerUrl(limitsUrl)) {
-      errorText = "Set up the Fusebox connection in Limits settings first, or turn off Use the Limits connection."
-      focusFusebox("costFuseboxUsesLimits")
-      return false
-    }
-    if (!fuseboxUsesLimits && (fuseboxEnabled || fuseboxAddress !== "") && !UsageLogic.validServerUrl(fuseboxAddress)) {
-      errorText = "Enter the Fusebox server HTTP(S) URL without credentials, query, or fragment."
+    var fuseboxAddress = fuseboxUrl.trim(), fuseboxToken = customFusebox ? fuseboxKey.trim() : ""
+    if (customFusebox && !UsageLogic.validServerUrl(fuseboxAddress)) {
       focusFusebox("costFuseboxUrl")
-      return false
+      return fail("Enter the Fusebox server HTTP(S) URL without credentials, query, or fragment.")
     }
-    if (!fuseboxUsesLimits && fuseboxKey !== "" && !UsageLogic.validSecret(fuseboxToken)) {
-      errorText = "Enter a nonempty management API key using ASCII characters."
+    if (customFusebox && fuseboxKey !== "" && !UsageLogic.validSecret(fuseboxToken)) {
       focusFusebox("costFuseboxCredential")
-      return false
+      return fail("Enter a nonempty management API key using ASCII characters.")
     }
-    if (fuseboxEnabled && !fuseboxUsesLimits && fuseboxToken === "" && fuseboxKeyFile === "") {
-      errorText = "Enter the Fusebox management key."
+    if (customFusebox && fuseboxToken === "" && fuseboxKeyFile === "") {
       focusFusebox("costFuseboxCredential")
-      return false
+      return fail("Enter the Fusebox management key.")
     }
-    values.costFuseboxEnabled = fuseboxEnabled
     values.costFuseboxConnection = fuseboxConnection
     values.costFuseboxUrl = fuseboxAddress
     values.costFuseboxKeyFile = fuseboxKeyFile
-    values.costFuseboxOverlap = fuseboxOverlap
     if (fuseboxToken !== "") {
       keys.costFuseboxKeyFile = fuseboxToken
       previous.costFuseboxKeyFile = fuseboxKeyFile
     }
     errorText = ""
-    if (Object.keys(keys).length) {
-      pendingValues = values; pendingKeys = keys; previousPaths = previous
-      keySaveDecided = false; keyWriter.running = true
-    } else saveRequested(values)
-    return true
+    return {values: values, keys: keys, previousPaths: previous}
+  }
+  // Saved private files replace the typed secrets in the collected values.
+  function applyPaths(values, paths) {
+    var next = Object.assign({}, values)
+    if (next.costT3Servers !== undefined) {
+      var rows = JSON.parse(next.costT3Servers)
+      for (let i = 0; i < rows.length; i++) {
+        let path = paths["t3Token_" + rows[i].id]
+        if (path) rows[i].tokenFile = path
+      }
+      next.costT3Servers = JSON.stringify(rows)
+    }
+    if (paths.costFuseboxKeyFile) next.costFuseboxKeyFile = paths.costFuseboxKeyFile
+    return next
   }
 
   ListModel { id: servers }
-  Process {
-    id: keyWriter
-    command: ["python3", "-u", decodeURIComponent(String(Qt.resolvedUrl("scripts/management-key.py")).replace(/^file:\/\//, ""))]
-    stdinEnabled: true
-    onStarted: {
-      write(JSON.stringify({keys: root.pendingKeys, previousPaths: root.previousPaths}) + "\n")
-      root.pendingKeys = ({})
-    }
-    stdout: SplitParser {
-      onRead: function(data) {
-        if (!root.pendingValues || root.keySaveDecided) return
-        var response
-        try { response = JSON.parse(data) } catch (e) { return }
-        if (!response.paths) return
-        var values = Object.assign({}, root.pendingValues)
-        var rows = JSON.parse(values.costT3Servers)
-        for (let i = 0; i < rows.length; i++) {
-          let path = response.paths["t3Token_" + rows[i].id]
-          if (path) rows[i].tokenFile = path
-        }
-        values.costT3Servers = JSON.stringify(rows)
-        if (response.paths.costFuseboxKeyFile) values.costFuseboxKeyFile = response.paths.costFuseboxKeyFile
-        root.saveRequested(values)
-      }
-    }
-    stderr: SplitParser { splitMarker: "" }
-    onRunningChanged: if (!running) {
-      root.pendingKeys = ({})
-      if (root.pendingValues && !root.keySaveDecided) root.errorText = "Could not save the private credential. Check your configuration directory and try again."
-      root.pendingValues = null
-    }
-  }
-  Timer { interval: 7000; running: keyWriter.running; onTriggered: keyWriter.running = false }
 
-  SettingsHeader {
-    width: parent.width
-    title: "Costs settings"
-    foreground: root.foreground
-    fontFamily: root.fontFamily
-    onCloseRequested: root.cancelRequested()
-    onRevealRequested: function(item) { root.revealRequested(item) }
-  }
   Column {
     width: parent.width
     spacing: Style.spacing.md
-    Label { text: "Local history"; font.bold: true }
     Row {
       width: parent.width
-      Label { width: parent.width - localCodex.width; text: "Codex CLI"; anchors.verticalCenter: parent.verticalCenter }
-      Toggle { id: localCodex; objectName: "costLocalCodex"; checked: UsageLogic.contains(root.localProviders, "codex"); onToggled: root.toggleLocal("codex"); Accessible.name: "Include local Codex" }
-    }
-    Row {
-      width: parent.width
-      Label { width: parent.width - localClaude.width; text: "Claude Code"; anchors.verticalCenter: parent.verticalCenter }
-      Toggle { id: localClaude; objectName: "costLocalClaude"; checked: UsageLogic.contains(root.localProviders, "claude"); onToggled: root.toggleLocal("claude"); Accessible.name: "Include local Claude Code" }
-    }
-    Hint { text: "Include sessions recorded on this computer." }
-  }
-
-  Section {
-    id: serverSection
-    objectName: "remoteServersSection"
-    title: "Remote T3 servers"
-    summary: servers.count ? servers.count + (servers.count === 1 ? " server" : " servers") : "Not configured"
-    Hint { text: "Include history from other computers running T3 Code." }
-    Label { visible: root.loadError !== ""; text: root.loadError; color: root.urgent }
-    Ui.Button {
-      visible: root.loadError !== ""
-      text: "Remove invalid server settings"
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-      focusable: true
-      onClicked: { servers.clear(); root.loadError = "" }
-    }
-    Repeater {
-      id: serverRepeater
-      model: servers
-      Column {
-        id: serverRow
-        required property int index
-        required property string name
-        required property string url
-        required property string token
-        required property string tokenFile
-        required property bool included
-        property alias editorSection: serverDetails
-        width: serverSection.width
-        spacing: Style.spacing.sm
-        Row {
-          width: parent.width
-          Label { width: parent.width - remoteToggle.width; text: serverRow.name || "New server"; anchors.verticalCenter: parent.verticalCenter }
-          Toggle { id: remoteToggle; checked: serverRow.included; onToggled: root.setServer(serverRow.index, "included", !checked); Accessible.name: "Include T3 server " + (serverRow.index + 1) }
-        }
-        Section {
-          id: serverDetails
-          objectName: "t3Details-" + serverRow.index
-          title: "Connection details"
-          summary: serverRow.url ? "Configured" : "Setup"
-          Label { text: "Server name" }
-          Field { objectName: "t3Name-" + serverRow.index; text: serverRow.name; placeholderText: "Server name"; maximumLength: 80; onTextEdited: root.setServer(serverRow.index, "name", text); Accessible.name: "T3 server name" }
-          Label { text: "Server URL" }
-          Field { objectName: "t3Url-" + serverRow.index; text: serverRow.url; placeholderText: "https://t3.example.com"; maximumLength: 4096; onTextEdited: root.setServer(serverRow.index, "url", text); Accessible.name: "T3 server URL" }
-          Hint { visible: UsageLogic.insecureRemoteUrl(serverRow.url); color: root.urgent; text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted." }
-          SettingsCredential {
-            objectName: "t3Credential-" + serverRow.index
-            editorObjectName: "t3Token-" + serverRow.index
-            width: parent.width
-            label: "Connection token"
-            text: serverRow.token
-            saved: serverRow.tokenFile !== ""
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            onEdited: function(value) { root.setServer(serverRow.index, "token", value) }
-            onRevealRequested: function(item) { root.revealRequested(item) }
-          }
-          Ui.Button {
-            text: "Remove server"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            focusable: true
-            onClicked: servers.remove(serverRow.index)
-            onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
-          }
-        }
-        Ui.PanelSeparator { foreground: root.foreground }
+      visible: root.fuseboxAvailable
+      Label { width: parent.width - historyControl.width; text: "Cost history from"; anchors.verticalCenter: parent.verticalCenter }
+      UsageSelect {
+        id: historyControl
+        objectName: "costHistoryControl"
+        width: Math.min(implicitWidth, parent.width * 0.6)
+        label: "Cost history from"
+        options: [{ value: "fusebox", label: "Fusebox" }, { value: "local", label: "This computer" }]
+        value: root.usesFusebox ? "fusebox" : "local"
+        foreground: root.foreground
+        surface: root.surface
+        fontFamily: root.fontFamily
+        alignPopupRight: true
+        onChanged: function(value) { root.chooseHistory(value) }
+        onMenuClosed: if (root.visible) historyControl.forceActiveFocus()
+        onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
       }
     }
-    Ui.Button {
-      objectName: "addT3Server"
-      text: "Add T3 server"
-      enabled: servers.count < 4 && root.loadError === ""
-      bordered: true
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-      focusable: true
-      onClicked: root.addServer()
-      onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+    Label { visible: !root.fuseboxAvailable; text: "Cost history from"; font.bold: true }
+    Hint { objectName: "costHistoryDescription"; text: root.historyDescription() }
+    Row {
+      width: parent.width
+      visible: root.fuseboxAvailable && !root.usesFusebox
+      Label { width: parent.width - otherProviders.width; text: "Add providers only Fusebox records"; anchors.verticalCenter: parent.verticalCenter }
+      Toggle { id: otherProviders; objectName: "costFuseboxOtherProviders"; checked: root.historySource === "mixed"; onToggled: root.setFusebox("historySource", checked ? "local" : "mixed"); Accessible.name: "Add providers only Fusebox records" }
+    }
+    Hint { visible: root.fuseboxAvailable && !root.usesFusebox; text: "Muse, Grok and other providers this computer has no history for." }
+    Section {
+      id: whySection
+      objectName: "costWhyNotBoth"
+      visible: root.fuseboxAvailable
+      title: "Why not both?"
+      Hint { text: "Requests sent through Fusebox are also saved on this computer, and the two records can't be matched, so adding them would count the same requests twice. To include sessions that bypass Fusebox, turn on Claude Code and Codex history import in Fusebox; it removes duplicates itself." }
     }
     Section {
-      title: "Learn more"
-      Hint { text: "Use the server’s base URL and connection token. Credentials are saved privately on this device. T3 can include sessions started outside T3; matching transcript folders are counted once. Offline servers retain their last usable history with a timestamp." }
+      id: fuseboxSection
+      objectName: "fuseboxCostSection"
+      title: root.limitsFusebox ? "Different Fusebox server" : "Fusebox server"
+      summary: root.customFusebox ? (root.fuseboxHost || "Setup") : "Off"
+      Row {
+        width: parent.width
+        Label { width: parent.width - fuseboxCustomToggle.width; text: root.limitsFusebox ? "Use a different Fusebox server for costs" : "Read costs from a Fusebox server"; anchors.verticalCenter: parent.verticalCenter }
+        Toggle { id: fuseboxCustomToggle; objectName: "costFuseboxCustom"; checked: root.customFusebox; onToggled: root.setFuseboxConnection(checked ? "limits" : "custom"); Accessible.name: root.limitsFusebox ? "Use a different Fusebox server for costs" : "Read costs from a Fusebox server" }
+      }
+      Hint { visible: !root.customFusebox; text: root.limitsFusebox ? "Costs read the Fusebox server set in the Limits tab." : "For a Fusebox server that Limits doesn't use." }
+      Label { visible: root.customFusebox; text: "Server URL" }
+      Field { objectName: "costFuseboxUrl"; visible: root.customFusebox; text: root.fuseboxUrl; placeholderText: root.limitsUrl || UsageLogic.DEFAULT_PROXY_URL; maximumLength: 4096; onTextEdited: root.setFusebox("fuseboxUrl", text); Accessible.name: "Fusebox server URL" }
+      Hint { visible: root.customFusebox && UsageLogic.insecureRemoteUrl(root.fuseboxUrl); color: root.urgent; text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted." }
+      SettingsCredential {
+        id: fuseboxCredential
+        objectName: "costFuseboxCredential"
+        visible: root.customFusebox
+        editorObjectName: "costFuseboxKey"
+        width: parent.width
+        label: "Management API key"
+        saved: root.fuseboxKeyFile !== ""
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onEdited: function(value) { root.setFusebox("fuseboxKey", value) }
+        onRevealRequested: function(item) { root.revealRequested(item) }
+      }
+      ConnectionTest {
+        id: fuseboxTest
+        objectName: "costFuseboxConnectionTest"
+        visible: root.customFusebox
+        width: parent.width
+        requireFusebox: true
+        url: root.fuseboxUrl
+        keyFile: root.fuseboxKeyFile
+        key: root.fuseboxKey
+        foreground: root.foreground
+        urgent: root.urgent
+        fontFamily: root.fontFamily
+        onRevealRequested: function(item) { root.revealRequested(item) }
+      }
+      Hint { visible: root.customFusebox; text: "Uses the management key from the Fusebox dashboard. Saved privately on this device; blank keeps the saved key. An offline server keeps its last history with a timestamp." }
     }
   }
 
-  Section {
-    id: fuseboxSection
-    objectName: "fuseboxCostSection"
-    title: "Fusebox"
-    summary: !root.fuseboxEnabled ? "Off"
-      : (root.fuseboxUsesLimits ? "Limits connection · " : "")
-        + (root.fuseboxOverlap === "fusebox" ? "Replaces transcripts" : "Adds other providers")
-    Row {
+  Column {
+    width: parent.width
+    spacing: Style.spacing.xxl
+    Text {
+      objectName: "costInactiveNotice"
+      visible: root.usesFusebox
       width: parent.width
-      Label { width: parent.width - fuseboxToggle.width; text: "Include Fusebox usage"; anchors.verticalCenter: parent.verticalCenter }
-      Toggle { id: fuseboxToggle; objectName: "costFuseboxEnabled"; checked: root.fuseboxEnabled; onToggled: root.setFusebox("fuseboxEnabled", !checked); Accessible.name: "Include Fusebox usage" }
+      text: "NOT USED WHILE FUSEBOX SUPPLIES COSTS"
+      color: UsageLogic.dimColor(root.foreground)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
     }
-    Hint { text: "Fusebox prices every request it records. Its estimates are used as reported; unpriced requests stay unpriced." }
-    Row {
+    Column {
+      objectName: "costLocalSection"
       width: parent.width
-      Label { width: parent.width - fuseboxLimitsToggle.width; text: "Use the Limits connection"; anchors.verticalCenter: parent.verticalCenter }
-      Toggle { id: fuseboxLimitsToggle; objectName: "costFuseboxUsesLimits"; checked: root.fuseboxUsesLimits; onToggled: root.setFuseboxConnection(checked ? "custom" : "limits"); Accessible.name: "Use the Limits connection" }
+      spacing: Style.spacing.md
+      opacity: root.usesFusebox ? 0.45 : 1
+      Label { text: "This computer"; font.bold: true }
+      Row {
+        width: parent.width
+        Label { width: parent.width - localCodex.width; text: "Codex CLI"; anchors.verticalCenter: parent.verticalCenter }
+        Toggle { id: localCodex; objectName: "costLocalCodex"; checked: UsageLogic.contains(root.localProviders, "codex"); onToggled: root.toggleLocal("codex"); Accessible.name: "Include local Codex" }
+      }
+      Row {
+        width: parent.width
+        Label { width: parent.width - localClaude.width; text: "Claude Code"; anchors.verticalCenter: parent.verticalCenter }
+        Toggle { id: localClaude; objectName: "costLocalClaude"; checked: UsageLogic.contains(root.localProviders, "claude"); onToggled: root.toggleLocal("claude"); Accessible.name: "Include local Claude Code" }
+      }
+      Hint { text: "Include sessions recorded on this computer." }
     }
-    Hint {
-      objectName: "costFuseboxLimitsStatus"
-      visible: root.fuseboxUsesLimits
-      text: root.limitsKeyFile === ""
-        ? "Reads " + root.limitsUrl + " with the default key file, as Limits does (" + root.defaultKeyPath + "). Test the connection to confirm it."
-        : "Reads " + root.limitsUrl + " with the key saved in Limits."
+
+    Section {
+      id: serverSection
+      objectName: "remoteServersSection"
+      opacity: root.usesFusebox ? 0.45 : 1
+      title: "T3 Code servers"
+      summary: servers.count ? servers.count + (servers.count === 1 ? " server" : " servers") : "Not configured"
+      Hint { text: "Include history from other computers running T3 Code." }
+      Label { visible: root.loadError !== ""; text: root.loadError; color: root.urgent }
+      Ui.Button {
+        visible: root.loadError !== ""
+        text: "Remove invalid server settings"
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        focusable: true
+        onClicked: { servers.clear(); root.loadError = ""; root.edited() }
+      }
+      Repeater {
+        id: serverRepeater
+        model: servers
+        Column {
+          id: serverRow
+          required property int index
+          required property string name
+          required property string url
+          required property string token
+          required property string tokenFile
+          required property bool included
+          property alias editorSection: serverDetails
+          width: serverSection.width
+          spacing: Style.spacing.sm
+          Row {
+            width: parent.width
+            Label { width: parent.width - remoteToggle.width; text: serverRow.name || "New server"; anchors.verticalCenter: parent.verticalCenter }
+            Toggle { id: remoteToggle; checked: serverRow.included; onToggled: root.setServer(serverRow.index, "included", !checked); Accessible.name: "Include T3 server " + (serverRow.index + 1) }
+          }
+          Section {
+            id: serverDetails
+            objectName: "t3Details-" + serverRow.index
+            title: "Connection details"
+            summary: serverRow.url ? "Configured" : "Setup"
+            Label { text: "Server name" }
+            Field { objectName: "t3Name-" + serverRow.index; text: serverRow.name; placeholderText: "Server name"; maximumLength: 80; onTextEdited: root.setServer(serverRow.index, "name", text); Accessible.name: "T3 server name" }
+            Label { text: "Server URL" }
+            Field { objectName: "t3Url-" + serverRow.index; text: serverRow.url; placeholderText: "https://t3.example.com"; maximumLength: 4096; onTextEdited: root.setServer(serverRow.index, "url", text); Accessible.name: "T3 server URL" }
+            Hint { visible: UsageLogic.insecureRemoteUrl(serverRow.url); color: root.urgent; text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted." }
+            SettingsCredential {
+              objectName: "t3Credential-" + serverRow.index
+              editorObjectName: "t3Token-" + serverRow.index
+              width: parent.width
+              label: "Connection token"
+              text: serverRow.token
+              saved: serverRow.tokenFile !== ""
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onEdited: function(value) { root.setServer(serverRow.index, "token", value) }
+              onRevealRequested: function(item) { root.revealRequested(item) }
+            }
+            Ui.Button {
+              text: "Remove server"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              focusable: true
+              onClicked: root.removeServer(serverRow.index)
+              onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+            }
+          }
+          Ui.PanelSeparator { foreground: root.foreground }
+        }
+      }
+      Ui.Button {
+        objectName: "addT3Server"
+        text: "Add T3 server"
+        enabled: servers.count < 4 && root.loadError === ""
+        bordered: true
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        focusable: true
+        onClicked: root.addServer()
+        onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
+      }
+      Section {
+        title: "Learn more"
+        Hint { text: "Use the server’s base URL and connection token. Credentials are saved privately on this device. T3 can include sessions started outside T3; matching transcript folders are counted once. Offline servers retain their last usable history with a timestamp." }
+      }
     }
-    Label { visible: !root.fuseboxUsesLimits; text: "Server URL" }
-    Field { objectName: "costFuseboxUrl"; visible: !root.fuseboxUsesLimits; text: root.fuseboxUrl; placeholderText: root.limitsUrl || UsageLogic.DEFAULT_PROXY_URL; maximumLength: 4096; onTextEdited: root.setFusebox("fuseboxUrl", text); Accessible.name: "Fusebox server URL" }
-    Hint { visible: UsageLogic.insecureRemoteUrl(root.fuseboxUsesLimits ? root.limitsUrl : root.fuseboxUrl); color: root.urgent; text: "This credential is sent unencrypted over http:// to another computer. Use https:// unless the network is trusted." }
-    SettingsCredential {
-      id: fuseboxCredential
-      objectName: "costFuseboxCredential"
-      visible: !root.fuseboxUsesLimits
-      editorObjectName: "costFuseboxKey"
-      width: parent.width
-      label: "Management API key"
-      saved: root.fuseboxKeyFile !== ""
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-      onEdited: function(value) { root.setFusebox("fuseboxKey", value) }
-      onRevealRequested: function(item) { root.revealRequested(item) }
-    }
-    ConnectionTest {
-      id: fuseboxTest
-      objectName: "costFuseboxConnectionTest"
-      width: parent.width
-      requireFusebox: true
-      url: root.fuseboxUsesLimits ? root.limitsUrl : root.fuseboxUrl
-      keyFile: root.fuseboxUsesLimits ? root.limitsKeyFile : root.fuseboxKeyFile
-      key: root.fuseboxUsesLimits ? "" : root.fuseboxKey
-      foreground: root.foreground
-      urgent: root.urgent
-      fontFamily: root.fontFamily
-      onRevealRequested: function(item) { root.revealRequested(item) }
-    }
-    Row {
-      width: parent.width
-      Label { width: parent.width - fuseboxOverlapToggle.width; text: "Use Fusebox instead of transcripts"; anchors.verticalCenter: parent.verticalCenter }
-      Toggle { id: fuseboxOverlapToggle; objectName: "costFuseboxReplaces"; checked: root.fuseboxOverlap === "fusebox"; onToggled: root.setFusebox("fuseboxOverlap", checked ? "transcripts" : "fusebox"); Accessible.name: "Use Fusebox instead of transcripts" }
-    }
-    Hint {
-      text: root.fuseboxOverlap === "fusebox"
-        ? "CLIs routed through Fusebox also write transcripts, which carry no Fusebox request IDs. While Fusebox is readable, local and T3 history is left out so nothing is counted twice. Turn on Claude Code and Codex history import in Fusebox to include sessions that bypass it."
-        : "Local and T3 history supplies Claude and OpenAI. Fusebox adds only its other providers. A CLI that sends requests to another provider's model through Fusebox can still appear in both."
-    }
-    Hint { text: root.fuseboxUsesLimits
-      ? "Changes to the Limits server or key apply here too. An offline server keeps its last history with a timestamp."
-      : "Uses the same management key as the Fusebox dashboard. Saved privately on this device; blank keeps the saved key. An offline server keeps its last history with a timestamp." }
   }
 
   Section {
@@ -463,7 +483,7 @@ Column {
       urgent: root.urgent
       fontFamily: root.fontFamily
       onRevealRequested: function(item) { priceSection.expanded = true; root.revealRequested(item) }
-      onEdited: root.errorText = ""
+      onEdited: root.edited()
     }
   }
 
@@ -484,9 +504,6 @@ Column {
         color: modelData.status === "unavailable" || modelData.status === "failed" ? root.urgent : UsageLogic.dimColor(root.foreground)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        HoverHandler { id: sourceHover }
-        Controls.ToolTip.visible: sourceHover.hovered
-        Controls.ToolTip.text: String(modelData.message || "")
       }
     }
     Hint { visible: root.sources.length === 0; text: "Open Costs to scan session history." }

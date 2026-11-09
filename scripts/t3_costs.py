@@ -389,7 +389,7 @@ def collect(server, query, days, state_dir, timeout):
             raw = client.rpc(query, access or token)
         except PermissionError:
             if not token:
-                raise T3Error("Enter a T3 connection token in Costs settings.") from None
+                raise T3Error("Enter a T3 connection token in the Costs tab of settings.") from None
             access = client.exchange(token)
             try:
                 atomic_write_json(auth_path, {"access": access})

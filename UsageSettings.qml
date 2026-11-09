@@ -1,12 +1,13 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
 import "UsageLogic.js" as UsageLogic
 
+// The Limits tab of SettingsView. It keeps its own draft; SettingsView
+// collects it with the Costs tab and stores credentials for both in one Save.
 Column {
   id: root
 
@@ -25,10 +26,8 @@ Column {
   property var draft: ({})
   property alias managementKey: managementCredential.text
   property alias keeperPassword: keeperCredential.text
-  readonly property bool saving: keyWriter.running
-  property var pendingValues: null
-  property var pendingKeys: ({})
-  property bool keySaveDecided: false
+  // Edited since begin(); SettingsView marks the tab.
+  property bool touched: false
   property var proxyProviders: []
   // Detected by the last quota refresh for the saved connection.
   property string proxyImplementation: ""
@@ -56,31 +55,35 @@ Column {
     return ids
   }
   readonly property bool proxyMode: draft.usageSource === "proxy"
+  readonly property string connectionHost: UsageLogic.urlHost(draft.proxyUrl)
 
-  signal saveRequested(var values)
   signal cancelRequested()
   signal revealRequested(var item)
 
   spacing: Style.spacing.xxl
-  enabled: !saving
   Keys.onEscapePressed: root.cancelRequested()
 
   function discardKey() {
     managementCredential.reset()
     keeperCredential.reset()
     connectionTest.reset()
-    pendingKeys = ({})
-    pendingValues = null
-    if (keyWriter.running && !keySaveDecided) keyWriter.running = false
   }
 
   function finishSave(saved) {
-    if (keyWriter.running && !keySaveDecided) {
-      keySaveDecided = true
-      keyWriter.write(saved ? "commit\n" : "abort\n")
-    }
-    pendingValues = null
     if (saved) { managementKey = ""; keeperPassword = "" }
+  }
+
+  // Saved private files replace the typed secrets in the collected values.
+  function applyPaths(values, paths) {
+    var next = Object.assign({}, values)
+    if (paths.proxyKeyFile) next.proxyKeyFile = paths.proxyKeyFile
+    if (paths.keeperPasswordFile) next.keeperPasswordFile = paths.keeperPasswordFile
+    return next
+  }
+
+  function edited() {
+    touched = true
+    errorText = ""
   }
 
   function begin(settings) {
@@ -113,6 +116,7 @@ Column {
     alertsSection.expanded = false
     diagnosticsSection.expanded = false
     errorText = ""
+    touched = false
   }
 
   function setValue(key, value) {
@@ -120,7 +124,7 @@ Column {
     next[key] = value
     draft = next
     if (key === "refreshIntervalSec") refreshMinutes = String(value).trim() === "" ? "" : String(Number(value) / 60)
-    errorText = ""
+    edited()
   }
 
   function toggleProvider(key, id) {
@@ -135,6 +139,7 @@ Column {
 
   function focusFirst() { sourceControl.forceActiveFocus() }
 
+  // Shows the problem and focuses its field once SettingsView shows this tab.
   function fail(message, section, item) {
     errorText = message
     if (section) section.expanded = true
@@ -143,11 +148,11 @@ Column {
       if (item.focusEditor) item.focusEditor()
       else { item.forceActiveFocus(); root.revealRequested(item) }
     })
-    return false
+    return null
   }
 
-  function submit() {
-    if (saving) return false
+  // Validated values plus typed secrets to store privately, or null after fail().
+  function collect() {
     var next = Object.assign({}, draft)
     var minutes = Number(refreshMinutes)
     if (refreshMinutes.trim() === "" || !isFinite(minutes) || minutes < 1 || minutes > 60)
@@ -195,73 +200,25 @@ Column {
     if (proxyMode && key !== "") keys.proxyKeyFile = key
     if (password !== "") keys.keeperPasswordFile = password
     errorText = ""
-    if (Object.keys(keys).length > 0) {
-      pendingValues = next
-      pendingKeys = keys
-      keySaveDecided = false
-      keyWriter.running = true
-    } else saveRequested(next)
-    return true
-  }
-
-  Process {
-    id: keyWriter
-    command: ["python3", "-u", decodeURIComponent(String(Qt.resolvedUrl("scripts/management-key.py")).replace(/^file:\/\//, ""))]
-    stdinEnabled: true
-    onStarted: {
-      write(JSON.stringify({ keys: root.pendingKeys, previousPaths: {
-        proxyKeyFile: root.draft.proxyKeyFile,
-        keeperPasswordFile: root.draft.keeperPasswordFile
-      } }) + "\n")
-      root.pendingKeys = ({})
-    }
-    stdout: SplitParser {
-      onRead: function(data) {
-        if (!root.pendingValues || root.keySaveDecided) return
-        var response = null
-        try { response = JSON.parse(data) } catch (error) {}
-        if (!response || !response.paths) return
-        var values = Object.assign({}, root.pendingValues, response.paths)
-        root.saveRequested(values)
-      }
-    }
-    stderr: SplitParser { splitMarker: "" }
-    onRunningChanged: if (!running) {
-      root.pendingKeys = ({})
-      if (root.pendingValues && !root.keySaveDecided)
-        root.errorText = "Could not save credentials. Check that your configuration directory is writable and try again."
-      root.pendingValues = null
-    }
-  }
-
-  Timer {
-    interval: 7000
-    running: keyWriter.running
-    onTriggered: keyWriter.running = false
-  }
-
-  SettingsHeader {
-    width: parent.width
-    title: "Limits settings"
-    foreground: root.foreground
-    fontFamily: root.fontFamily
-    onCloseRequested: root.cancelRequested()
-    onRevealRequested: function(item) { root.revealRequested(item) }
+    return { values: next, keys: keys, previousPaths: {
+      proxyKeyFile: String(draft.proxyKeyFile || ""),
+      keeperPasswordFile: String(draft.keeperPasswordFile || "")
+    } }
   }
 
   Row {
     width: parent.width
     Label {
       width: parent.width - sourceControl.width
-      text: "Quota source"
+      text: "Read limits from"
       anchors.verticalCenter: parent.verticalCenter
     }
     UsageSelect {
       id: sourceControl
       objectName: "usageSourceControl"
       width: Math.min(implicitWidth, parent.width * 0.6)
-      label: "Quota source"
-      options: [{ value: "direct", label: "Local CLIs" }, { value: "proxy", label: root.proxyName }]
+      label: "Read limits from"
+      options: [{ value: "direct", label: "This computer's CLIs" }, { value: "proxy", label: root.proxyName }]
       value: String(root.draft.usageSource || "direct")
       foreground: root.foreground
       surface: root.surface
@@ -293,8 +250,10 @@ Column {
     id: connectionSection
     objectName: "quotaConnectionSection"
     visible: root.proxyMode
-    title: "Connection details"
-    summary: root.draft.proxyKeyFile ? (root.knownImplementation ? root.proxyName : "Configured") : "Setup"
+    title: "Connection"
+    summary: root.draft.proxyKeyFile
+      ? (root.knownImplementation ? root.proxyName : "Configured") + (root.connectionHost ? " · " + root.connectionHost : "")
+      : "Setup"
     Label { text: root.proxyName + " server URL" }
     Field {
       id: proxyUrlField
@@ -317,7 +276,7 @@ Column {
       saved: !!root.draft.proxyKeyFile
       foreground: root.foreground
       fontFamily: root.fontFamily
-      onEdited: root.errorText = ""
+      onEdited: root.edited()
       onRevealRequested: function(item) { root.revealRequested(item) }
     }
     ConnectionTest {
@@ -335,7 +294,7 @@ Column {
     Hint { text: "Test to check the URL and key before saving. Save to discover every provider and account." }
     Section {
       title: "Learn more"
-      Hint { text: "Use the management key from the Fusebox or CLIProxyAPI dashboard, not a client API key. The implementation is detected automatically. The key is saved privately on this device. Costs can reuse this connection for Fusebox history." }
+      Hint { text: "Use the management key from the Fusebox or CLIProxyAPI dashboard, not a client API key. The implementation is detected automatically. The key is saved privately on this device. Costs read Fusebox's usage history through this connection; choose otherwise in the Costs tab." }
     }
   }
 
@@ -487,7 +446,7 @@ Column {
       saved: !!root.draft.keeperPasswordFile
       foreground: root.foreground
       fontFamily: root.fontFamily
-      onEdited: root.errorText = ""
+      onEdited: root.edited()
       onRevealRequested: function(item) { root.revealRequested(item) }
     }
     Hint { visible: !root.fuseboxProxy; text: "Show the last-used account in the percentage menu bar." }
@@ -519,7 +478,7 @@ Column {
       font.pixelSize: Style.font.bodySmall
       inputMethodHints: Qt.ImhFormattedNumbersOnly
       Accessible.name: "Refresh interval in minutes"
-      onTextEdited: { root.refreshMinutes = text; root.errorText = "" }
+      onTextEdited: { root.refreshMinutes = text; root.edited() }
       onActiveFocusChanged: if (activeFocus) root.revealRequested(this)
     }
     Row {

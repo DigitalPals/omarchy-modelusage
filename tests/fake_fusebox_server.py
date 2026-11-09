@@ -1,7 +1,7 @@
 """Local synthetic Fusebox management API for the settings QML contract.
 
-Serves the Rust account fixture to one key and rejects every other request,
-including the CLIProxyAPI path, as Fusebox does. Writes its base URL to the
+Serves the Rust account fixture and a healthy usage status to one key and
+rejects every other request, including the CLIProxyAPI path, as Fusebox does. Writes its base URL to the
 file named on the command line, then serves until terminated.
 """
 from __future__ import annotations
@@ -24,6 +24,8 @@ class Handler(BaseHTTPRequestHandler):
             status, payload = 401, {"error": "unauthorized"}
         elif self.path == "/api/accounts":
             status, payload = 200, ACCOUNTS
+        elif self.path == "/api/usage/status":
+            status, payload = 200, {"health": {"state": "healthy"}, "imports": [], "collectors": []}
         else:
             status, payload = 404, {}
         body = json.dumps(payload).encode()

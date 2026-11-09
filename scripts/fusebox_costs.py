@@ -48,6 +48,10 @@ class FuseboxError(ValueError):
     pass
 
 
+class FuseboxMissing(FuseboxError):
+    """The server has no Fusebox usage history: CLIProxyAPI or an older Fusebox."""
+
+
 def bucket(provider):
     return BUCKETS.get(provider, provider)
 
@@ -74,7 +78,7 @@ def read_key(path):
         return connection.read_secret(connection.key_path(path))
     except connection.SettingError as exc:
         if str(exc) == "unreadable":
-            raise FuseboxError("Could not read the Fusebox management key. Enter it in Limits or Costs settings.") from None
+            raise FuseboxError("Could not read the Fusebox management key. Enter it in settings.") from None
         raise FuseboxError("The Fusebox key file must be private (0600), owned by you, and contain the management key.") from None
 
 
@@ -92,7 +96,7 @@ class Client:
 
     def get(self, path, query, limit):
         request = urllib.request.Request(
-            self.url + "/api/usage/" + path + "?" + urllib.parse.urlencode(query),
+            self.url + "/api/usage/" + path + ("?" + urllib.parse.urlencode(query) if query else ""),
             headers={"Authorization": "Bearer " + self.key, "Accept": "application/json"})
         try:
             with connection.open_url(request, self.remaining()) as response:
@@ -109,7 +113,7 @@ class Client:
             if exc.code in (401, 403):
                 raise FuseboxError("Fusebox rejected the management key or remote management access.") from None
             if exc.code == 404:
-                raise FuseboxError("This server does not provide Fusebox usage analytics. Update Fusebox or check the URL.") from None
+                raise FuseboxMissing("This server keeps no Fusebox usage history. Update Fusebox or check the URL.") from None
             if exc.code == 503:
                 raise FuseboxError("Fusebox usage analytics is busy or disabled. Check Usage in its dashboard.") from None
             if exc.code == 504:
@@ -307,16 +311,41 @@ def validate_rows(rows):
     return rows
 
 
+def probe(url, key, timeout):
+    """Return (ok, message): whether Costs can read this server's usage history."""
+    try:
+        document = Client(url, key, timeout).get("status", {}, MAX_PAGE_BYTES)
+    except FuseboxError as exc:
+        return False, str(exc)
+    except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException, RecursionError):
+        return False, "Could not read Fusebox usage history. Check the server, network, and TLS certificate."
+    health = document.get("health") if isinstance(document, dict) else None
+    state = health.get("state") if isinstance(health, dict) else None
+    if state == "healthy":
+        return True, "Usage history available for Costs."
+    if state == "degraded":
+        return True, "Usage history available for Costs; Fusebox reports recording problems."
+    if state == "disabled":
+        return False, "Usage history is turned off in Fusebox (usage: enabled). Costs will use this computer's history."
+    if state == "stopped":
+        return False, "Fusebox has stopped recording usage history. Check Usage in its dashboard."
+    if state == "error":
+        return False, "Fusebox could not open its usage history. Check Usage in its dashboard."
+    return False, "Fusebox returned an unexpected usage status."
+
+
 def collect(config, days, since_ms, until_ms, zone_name, zone, state_dir, timeout):
     """Return (summary, state, error). A failed read reuses the last private
-    snapshot for this server, period and timezone, labelled stale."""
+    snapshot for this server, period and timezone, labelled stale. With no
+    snapshot, state is "missing" for a server without usage history and
+    "unavailable" otherwise."""
     try:
         key = read_key(config.get("keyFile", ""))
         url = normalize_url(config.get("url", ""))
     except FuseboxError as exc:
         return None, "unavailable", str(exc)
     cache = state_dir / ("fusebox-usage-" + digest([url, digest(key), days, zone_name]) + ".json")
-    error = ""
+    error, missing = "", False
     try:
         client = Client(url, key, timeout)
         if days == 1:
@@ -334,7 +363,7 @@ def collect(config, days, since_ms, until_ms, zone_name, zone, state_dir, timeou
             pass
         return summary, "fresh", ""
     except FuseboxError as exc:
-        error = str(exc)
+        error, missing = str(exc), isinstance(exc, FuseboxMissing)
     except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError,
             urllib.error.URLError, http.client.HTTPException, RecursionError):
         error = "Could not read Fusebox usage. Check the server URL, network, and TLS certificate."
@@ -349,4 +378,4 @@ def collect(config, days, since_ms, until_ms, zone_name, zone, state_dir, timeou
                         "pricing": summary.get("pricing") if isinstance(summary.get("pricing"), dict) else {}}, "stale", error
         except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
             pass
-    return None, "unavailable", clean_message(error)
+    return None, "missing" if missing else "unavailable", clean_message(error)
