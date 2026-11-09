@@ -24,9 +24,9 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(keys, {
             "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
             "warningThreshold", "criticalThreshold", "liveAccountActivity",
-            "usageSource", "cliproxyUrl", "cliproxyKeyFile", "hideAccountEmails", "squareUsageCards", "costPriceOverrides",
-            "costLocalProviders", "costKeeperUrl", "costKeeperPasswordFile", "costT3Servers",
-            "costFuseboxEnabled", "costFuseboxUrl", "costFuseboxKeyFile", "costFuseboxOverlap",
+            "usageSource", "proxyUrl", "proxyKeyFile", "hideAccountEmails", "squareUsageCards", "costPriceOverrides",
+            "costLocalProviders", "keeperUrl", "keeperPasswordFile", "costT3Servers",
+            "costFuseboxEnabled", "costFuseboxConnection", "costFuseboxUrl", "costFuseboxKeyFile", "costFuseboxOverlap",
         })
 
     def test_packaged_paths_and_assets_are_self_contained(self):

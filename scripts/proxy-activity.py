@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import keeper_client as keeper
+import proxy_connection as connection
 
 SPEC = importlib.util.spec_from_file_location("activity_usage", Path(__file__).with_name("usage-fetch.py"))
 assert SPEC and SPEC.loader
@@ -75,10 +76,10 @@ def normalize_activity(entries, document, now=None):
             for provider, (timestamp, ids) in sorted(latest.items())]
 
 
-def collect(proxy_url, proxy_key_file, keeper_url, password_file, timeout):
+def collect(proxy_url, proxy_key_file, keeper_url, password_file, timeout, implementation="auto"):
     deadline = time.monotonic() + timeout
-    proxy = usage.CliProxyClient(proxy_url, usage.read_cliproxy_key(proxy_key_file))
-    entries = proxy.auth_files(timeout)
+    proxy = connection.ProxyClient(proxy_url, connection.read_key(proxy_key_file), implementation)
+    entries = proxy.accounts(timeout)
     if proxy.implementation == "rust":
         return normalize_rust_activity(entries)
     if not keeper_url:
@@ -124,16 +125,16 @@ def normalize_rust_activity(entries, now=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cliproxy-url", required=True)
-    parser.add_argument("--cliproxy-key-file", type=Path)
+    connection.add_arguments(parser)
     parser.add_argument("--keeper-url", default="")
     parser.add_argument("--keeper-password-file", type=Path)
     parser.add_argument("--timeout", type=float, default=10)
     args = parser.parse_args()
     payload = {"schemaVersion": 1, "providers": [], "error": ""}
     try:
-        payload["providers"] = collect(args.cliproxy_url, args.cliproxy_key_file or usage.cliproxy_key_path(),
-                                       args.keeper_url, args.keeper_password_file, max(1, min(12, args.timeout)))
+        payload["providers"] = collect(args.proxy_url, args.proxy_key_file, args.keeper_url,
+                                       args.keeper_password_file, max(1, min(12, args.timeout)),
+                                       args.implementation)
     except usage.ProviderFailure as exc:
         payload["error"] = exc.message
     except keeper.KeeperError as exc:

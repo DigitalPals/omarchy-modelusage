@@ -16,6 +16,8 @@ python3 -m py_compile "$repo_root/scripts/proxy-activity.py"
 python3 -m py_compile "$repo_root/scripts/proxy-live.py"
 python3 -m py_compile "$repo_root/scripts/management-key.py"
 python3 -m py_compile "$repo_root/scripts/reset-credit.py"
+python3 -m py_compile "$repo_root/scripts/proxy_connection.py"
+python3 -m py_compile "$repo_root/scripts/proxy-test.py"
 python3 -m unittest discover -s "$repo_root/tests" -p 'test_*.py' -v
 node "$repo_root/tests/test_usage_logic.js"
 
@@ -43,7 +45,7 @@ if [[ -n $qml_lint && -d "$quattro_root/shell/Ui" ]]; then
     "$repo_root/BlockMeter.qml" "$repo_root/UsageHistory.qml" \
     "$repo_root/UsageSettings.qml" "$repo_root/SettingsSection.qml" "$repo_root/SettingsField.qml" \
     "$repo_root/SettingsCredential.qml" "$repo_root/SettingsHeader.qml" "$repo_root/SettingsActions.qml" "$repo_root/ResetBackend.qml" \
-    "$repo_root/ResetConfirmation.qml" >"$lint_log" 2>&1; then
+    "$repo_root/ResetConfirmation.qml" "$repo_root/ConnectionTest.qml" >"$lint_log" 2>&1; then
     sed -n '1,240p' "$lint_log"
     exit 1
   fi
@@ -125,6 +127,28 @@ assert {row['pid'] for row in starts} == {row['pid'] for row in stops}, rows
 LIVEPY
   echo "Live QML contract: passed (shared lifetime and connection replacement)"
 
+  settings_root="$test_root/settings"
+  mkdir -p "$settings_root/config" "$settings_root/cache"
+  cp "$repo_root/tests/qml/settings-shell.qml" "$settings_root/shell.qml"
+  ln -s "$quattro_root/shell/Ui" "$settings_root/Ui"
+  ln -s "$quattro_root/shell/Commons" "$settings_root/Commons"
+  python3 "$repo_root/tests/fake_fusebox_server.py" "$settings_root/server-url" &
+  fusebox_pid=$!
+  for _ in $(seq 50); do [[ -s $settings_root/server-url ]] && break; sleep 0.1; done
+  settings_status=0
+  QT_QPA_PLATFORM=offscreen XDG_CONFIG_HOME="$settings_root/config" XDG_CACHE_HOME="$settings_root/cache" \
+  MODEL_USAGE_REPO_URL="$repo_url" MODEL_USAGE_FUSEBOX_URL="$(cat "$settings_root/server-url")" \
+  QML_IMPORT_PATH="$quattro_root/shell${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
+    timeout 15 quickshell -p "$settings_root" --no-color >"$settings_root/runtime.log" 2>&1 || settings_status=$?
+  kill "$fusebox_pid" 2>/dev/null || true
+  wait "$fusebox_pid" 2>/dev/null || true
+  if (( settings_status != 0 )) || ! rg -q 'Settings QML contract: passed' "$settings_root/runtime.log" \
+      || rg -n 'Error:|ReferenceError|TypeError|Binding loop|Unable to assign|failed to load|failed to instantiate|SETTINGS TEST FAILED' "$settings_root/runtime.log"; then
+    cat "$settings_root/runtime.log"
+    exit 1
+  fi
+  echo "Settings QML contract: passed (renamed settings, connection test, and server-specific fields)"
+
   cost_root="$test_root/cost"
   mkdir -p "$cost_root/config" "$cost_root/cache"
   cp "$repo_root/tests/qml/cost-shell.qml" "$cost_root/shell.qml"
@@ -181,6 +205,7 @@ import pathlib
 import sys
 requests = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
 assert len(requests) == 2, "double clicks, cancellation and stale confirmations must not consume"
+assert [row.pop("retry") for row in requests] == [False, True], "only the second request is a retry"
 assert requests[0] == requests[1], "retry must reuse the same account, credit and request ID"
 assert requests[0]["credit_id"] == "second", "the selected credit must be consumed"
 PY

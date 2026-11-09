@@ -100,12 +100,16 @@ class ActivityTests(unittest.TestCase):
                 key.write_text("management-secret"); key.chmod(0o600)
                 password.write_text("keeper-secret"); password.chmod(0o600)
                 url = f"http://127.0.0.1:{server.server_port}"
-                self.assertEqual(len(activity.collect(url, key, url, password, 3)), 1)
+                self.assertEqual(len(activity.collect(url, key, url, password, 3, "go")), 1)
                 self.assertEqual(requests, ["/v0/management/auth-files", "/api/v1/auth/login", "/api/v1/status",
                                             "/api/v1/usage/identities", "/api/v1/auth/logout"])
                 healthy[0] = False
                 with self.assertRaises(activity.keeper.KeeperError):
-                    activity.collect(url, key, url, password, 3)
+                    activity.collect(url, key, url, password, 3, "go")
                 self.assertEqual(requests[-1], "/api/v1/auth/logout")
+                requests.clear()
+                healthy[0] = True
+                activity.collect(url, key, url, password, 3)
+                self.assertEqual(requests[:2], ["/api/accounts", "/v0/management/auth-files"])
         finally:
             server.shutdown(); server.server_close(); thread.join()

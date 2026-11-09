@@ -30,8 +30,7 @@ Item {
   }
   function start() {
     if (stopped || process.running) return
-    var command = ["python3", "-u", scriptPath, "--cliproxy-url", proxyUrl]
-    if (keyFile !== "") command.push("--cliproxy-key-file", keyFile)
+    var command = ["python3", "-u", scriptPath].concat(UsageLogic.proxyArgs(proxyUrl, keyFile, "rust"))
     process.command = command
     process.body = ""
     process.running = true

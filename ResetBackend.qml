@@ -24,7 +24,7 @@ Item {
   signal finished()
 
   function begin(account, label) {
-    if (active || busy || usageBackend.usageSource !== "cliproxy" || !account
+    if (active || busy || usageBackend.usageSource !== "proxy" || !account
         || !UsageLogic.supportsAccountReset(account)
         || !(Number(account.credits && account.credits.resetCreditsAvailable) > 0)
         || !account.accountId) return false
@@ -63,10 +63,8 @@ Item {
   }
 
   function launch(action, retry) {
-    var command = ["python3", scriptPath, "--action", action, "--account-id", accountId,
-      "--cliproxy-url", usageBackend.cliproxyUrl]
-    if (usageBackend.cliproxyKeyFile.trim() !== "")
-      command.push("--cliproxy-key-file", usageBackend.cliproxyKeyFile)
+    var command = ["python3", scriptPath, "--action", action, "--account-id", accountId]
+      .concat(usageBackend.proxyArgs())
     if (action === "consume") command.push("--target", details.target,
       "--credit-id", selectedCredit.id, "--request-id", details.requestId)
     if (action === "consume" && retry === true) command.push("--retry")

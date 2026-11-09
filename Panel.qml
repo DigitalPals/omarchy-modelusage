@@ -20,7 +20,7 @@ Ui.Panel {
   readonly property color surface: Color.popups.background
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property bool proxyMode: backend.usageSource === "cliproxy"
+  readonly property bool proxyMode: backend.usageSource === "proxy"
   readonly property var providers: UsageLogic.availableProviders(proxyMode
     ? backend.providers : UsageLogic.selectedProviders(backend.providers, backend.enabledProviderIds))
   property string selectedProviderId: ""
@@ -159,10 +159,12 @@ Ui.Panel {
   }
 
   function saveSettings(values) {
-    var entry = Object.assign({}, settings, values)
+    // Saving also moves renamed connection settings to their current keys.
+    var entry = UsageLogic.migrateSettings(Object.assign({}, settings, values))
     var changed = false
-    for (var key in values) {
-      if (JSON.stringify(settings[key]) !== JSON.stringify(values[key])) changed = true
+    var keys = Object.keys(entry).concat(Object.keys(settings || {}))
+    for (var i = 0; i < keys.length; i++) {
+      if (JSON.stringify(settings[keys[i]]) !== JSON.stringify(entry[keys[i]])) changed = true
     }
     if (changed) {
       if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function"

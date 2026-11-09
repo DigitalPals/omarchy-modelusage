@@ -21,12 +21,14 @@ Item {
     Math.round(Number(setting("refreshIntervalSec", 900)) || 900)))
   readonly property var enabledProviderIds: normalizedProviderIds(setting(
     "enabledProviders", ["claude", "codex", "kimi"]))
-  readonly property string usageSource: String(setting("usageSource", "direct")) === "cliproxy" ? "cliproxy" : "direct"
-  readonly property string cliproxyUrl: String(setting("cliproxyUrl", "http://127.0.0.1:8317"))
-  readonly property string cliproxyKeyFile: String(setting("cliproxyKeyFile", ""))
+  // The one Limits proxy connection; activity, live, reset and Costs reuse it.
+  readonly property string usageSource: UsageLogic.usageSource(settings)
+  readonly property var proxyConnection: UsageLogic.proxyConnection(settings)
+  readonly property string proxyUrl: proxyConnection.url
+  readonly property string proxyKeyFile: proxyConnection.keyFile
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property string proxyImplementation: String(payload && payload.proxyImplementation || "")
-  readonly property string connectionId: JSON.stringify([usageSource, cliproxyUrl, cliproxyKeyFile])
+  readonly property string connectionId: JSON.stringify([usageSource, proxyUrl, proxyKeyFile])
   readonly property string scriptPath: localPath(Qt.resolvedUrl("scripts/usage-fetch.py"))
   readonly property double nextRefreshAt: lastAttemptAt > 0
     ? lastAttemptAt + refreshIntervalSec * 1000 : 0
@@ -34,8 +36,12 @@ Item {
   signal refreshed()
 
   function setting(name, fallback) {
-    var value = settings ? settings[name] : undefined
-    return value === undefined || value === null ? fallback : value
+    return UsageLogic.setting(settings, name, fallback)
+  }
+
+  // The detected implementation is a hint; scripts still fall back to the other.
+  function proxyArgs() {
+    return UsageLogic.proxyArgs(proxyUrl, proxyKeyFile, proxyImplementation)
   }
 
   function normalizedProviderIds(value) {
@@ -78,10 +84,7 @@ Item {
       "--source", usageSource,
       "--timeout", "12"
     ]
-    if (usageSource === "cliproxy") {
-      if (cliproxyUrl.trim() !== "") command.push("--cliproxy-url", cliproxyUrl.trim())
-      if (cliproxyKeyFile.trim() !== "") command.push("--cliproxy-key-file", cliproxyKeyFile.trim())
-    }
+    if (usageSource === "proxy") command = command.concat(proxyArgs())
     fetchProcess.command = command
     fetchProcess.connectionId = connectionId
     fetchProcess.running = true
@@ -110,7 +113,7 @@ Item {
         if (backendError !== "") {
           fetchError = backendError
         } else {
-          payload = usageSource === "cliproxy" ? UsageLogic.preserveProxyReadings(payload, parsed) : parsed
+          payload = usageSource === "proxy" ? UsageLogic.preserveProxyReadings(payload, parsed) : parsed
           fetchError = ""
           var generated = new Date(String(parsed.generatedAt || "")).getTime()
           lastSuccessAt = isFinite(generated) ? generated : Date.now()

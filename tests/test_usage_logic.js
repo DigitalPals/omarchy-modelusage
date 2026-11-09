@@ -192,3 +192,43 @@ assert.equal(context.acquireLive('test', factory, {}), context.acquireLive('test
 assert.equal(created,1);
 context.releaseLive('test'); assert.equal(stopped,0);
 context.releaseLive('test'); assert.equal(stopped,1);
+
+// Connection settings: renamed keys are read until a save migrates them.
+const same = (actual, expected, message) => assert.equal(JSON.stringify(actual), JSON.stringify(expected), message);
+const legacy = { usageSource: "cliproxy", cliproxyUrl: " https://proxy.test ", cliproxyKeyFile: "/k",
+  costKeeperUrl: "https://keeper.test", costKeeperPasswordFile: "/p", costFuseboxEnabled: true };
+assert.equal(context.usageSource(legacy), "proxy");
+assert.equal(context.usageSource({ usageSource: "proxy" }), "proxy");
+assert.equal(context.usageSource({}), "direct");
+same(context.proxyConnection(legacy), { url: "https://proxy.test", keyFile: "/k" });
+same(context.proxyConnection({}), { url: "http://127.0.0.1:8317", keyFile: "" });
+assert.equal(context.setting(legacy, "keeperUrl", ""), "https://keeper.test");
+assert.equal(context.setting({ keeperUrl: "new", costKeeperUrl: "old" }, "keeperUrl", ""), "new");
+// Costs inherits the Limits connection unless an older Costs URL exists or another server is chosen.
+same(context.fuseboxCostConnection(legacy),
+  { enabled: true, mode: "limits", url: "https://proxy.test", keyFile: "/k", overlap: "fusebox" });
+same(context.fuseboxCostConnection({ proxyUrl: "https://a.test", costFuseboxUrl: "https://b.test", costFuseboxKeyFile: "/b" }),
+  { enabled: false, mode: "custom", url: "https://b.test", keyFile: "/b", overlap: "fusebox" });
+assert.equal(context.fuseboxCostConnection({ costFuseboxConnection: "limits", costFuseboxUrl: "https://b.test" }).url,
+  "http://127.0.0.1:8317");
+const migrated = context.migrateSettings(legacy);
+same(Object.keys(migrated).filter((key) => /^cliproxy|^costKeeper/.test(key)), [], "legacy keys are removed");
+assert.equal(migrated.usageSource, "proxy");
+assert.equal(migrated.proxyUrl, " https://proxy.test ");
+assert.equal(migrated.keeperPasswordFile, "/p");
+assert.equal(migrated.costFuseboxConnection, "limits");
+assert.equal(context.migrateSettings({ proxyUrl: "new", cliproxyUrl: "old" }).proxyUrl, "new");
+assert.equal(context.migrateSettings({ costFuseboxUrl: "https://b.test" }).costFuseboxConnection, "custom");
+same(context.migrateSettings({}), { costFuseboxConnection: "limits" });
+same(context.proxyArgs("https://p.test", "/k", "rust"),
+  ["--proxy-url", "https://p.test", "--proxy-key-file", "/k", "--implementation", "rust"]);
+same(context.proxyArgs("", "", ""), ["--proxy-url", "http://127.0.0.1:8317"]);
+for (const url of ["https://p.test", "http://127.0.0.1:8317/prefix/management.html", "https://p.test:8443/a.b/"])
+  assert.equal(context.validServerUrl(url), true, url);
+for (const url of ["ftp://p.test", "https://u:p@p.test", "https://p.test/?q", "https://p.test/a/../b", "https://p.test/#x", ""])
+  assert.equal(context.validServerUrl(url), false, url);
+assert.equal(context.validSecret("key with spaces"), true);
+assert.equal(context.validSecret("bad\nkey"), false);
+assert.equal(context.validSecret("   "), false);
+assert.equal(context.validSecret("x".repeat(8192)), false);
+console.log("Connection settings: passed");

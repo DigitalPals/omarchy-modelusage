@@ -16,7 +16,6 @@ import os
 import re
 import select
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -27,7 +26,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from model_usage_common import atomic_write_json, clean_message
+from model_usage_common import ProviderFailure, atomic_write_json, clean_message, number
+from proxy_connection import (
+    EMAIL_PATTERN, MAX_HTTP_RESPONSE_BYTES, NoRedirects, ProxyClient,
+    normalize_url, read_key,
+)
+from proxy_connection import add_arguments as add_proxy_arguments
 
 SCHEMA_VERSION = 1
 PROVIDER_ORDER = ("claude", "codex", "kimi")
@@ -58,21 +62,11 @@ SEVEN_DAYS = 7 * 24 * 60 * 60
 HISTORY_RETENTION_SECONDS = SEVEN_DAYS
 HISTORY_MAX_SAMPLES = 10_080  # One sample/minute/provider for seven days.
 MAX_LOCAL_JSON_BYTES = 2 * 1024 * 1024
-MAX_HTTP_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_CODEX_RPC_LINE_BYTES = 2 * 1024 * 1024
 CODEX_RPC_READ_BYTES = 64 * 1024
 MAX_CLIPROXY_ACCOUNTS = 32
 MAX_CLIPROXY_PROVIDERS = 32
 RUST_QUOTA_STALE_SECONDS = 10 * 60
-
-
-class ProviderFailure(Exception):
-    """A display-safe provider failure."""
-
-    def __init__(self, kind: str, message: str):
-        super().__init__(message)
-        self.kind = kind
-        self.message = clean_message(message)
 
 
 def now_iso() -> str:
@@ -85,21 +79,6 @@ def read_json(path: Path, max_bytes: int = MAX_LOCAL_JSON_BYTES) -> Any:
     if len(raw) > max_bytes:
         raise ValueError(f"JSON input exceeds the {max_bytes}-byte limit")
     return json.loads(raw)
-
-
-def number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        result = float(value)
-    elif isinstance(value, str):
-        try:
-            result = float(value.strip().replace("%", ""))
-        except ValueError:
-            return None
-    else:
-        return None
-    return result if result == result and result not in (float("inf"), float("-inf")) else None
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -145,12 +124,6 @@ def error_provider(provider_id: str, kind: str, message: str) -> dict[str, Any]:
     result = base_provider(provider_id)
     result.update(status="error", errorKind=kind, message=clean_message(message))
     return result
-
-
-class NoRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # Authenticated requests must never forward credentials to a redirect.
-        return None
 
 
 def http_json(url: str, headers: dict[str, str], timeout: float) -> Any:
@@ -863,197 +836,6 @@ def fetch_kimi(timeout: float) -> dict[str, Any]:
 # --------------------------------------------------------------- CLIProxyAPI
 
 
-def cliproxy_key_path() -> Path:
-    override = os.environ.get("CLIPROXY_API_KEY_FILE")
-    if override:
-        return Path(override).expanduser()
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-    return config_home / "omarchy" / "model-usage" / "cliproxy.key"
-
-
-def read_cliproxy_key(path: Path) -> str:
-    try:
-        # NONBLOCK also prevents a misconfigured FIFO from stalling the poll.
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise ProviderFailure("config", "Proxy key file must be a regular file owned by you with mode 0600.")
-            raw = os.read(fd, 8193)
-        finally:
-            os.close(fd)
-    except OSError:
-        raise ProviderFailure("config", "Proxy management key could not be read. Enter your Management API key in widget settings.") from None
-    try:
-        key = raw.decode("utf-8").strip()
-    except UnicodeDecodeError:
-        key = ""
-    if len(raw) > 8192 or not key or any(ord(char) < 32 or ord(char) > 126 for char in key):
-        raise ProviderFailure("config", "Proxy management key file must contain one nonempty ASCII key.")
-    return key
-
-
-def normalize_cliproxy_url(address: str) -> str:
-    try:
-        if any(ord(char) < 32 or ord(char) == 127 for char in address):
-            raise ValueError
-        parts = urllib.parse.urlsplit(address.strip())
-        parts.port  # Validate the port without echoing a possibly secret URL.
-        if (parts.scheme not in ("http", "https") or not parts.hostname
-                or parts.username is not None or parts.password is not None
-                or parts.query or parts.fragment):
-            raise ValueError
-        path = parts.path.rstrip("/")
-        for suffix in ("/management.html", "/v0/management/auth-files", "/v0/management"):
-            if path.endswith(suffix):
-                path = path[:-len(suffix)].rstrip("/")
-                break
-        if any(segment in (".", "..") for segment in urllib.parse.unquote(path).split("/")):
-            raise ValueError
-        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
-    except (TypeError, ValueError):
-        raise ProviderFailure("config", "Proxy URL must be an HTTP(S) server or management URL without credentials, query, or fragment.") from None
-
-
-class CliProxyClient:
-    def __init__(self, address: str, key: str):
-        self.base_url = normalize_cliproxy_url(address)
-        self.key = key
-        self.implementation = "auto"
-
-    def request(self, path: str, timeout: float, payload: dict[str, Any] | None = None,
-                *, native: bool = False) -> Any:
-        name = "Fusebox" if native or self.implementation == "rust" else "CLIProxyAPI"
-        headers = {"Authorization": "Bearer " + self.key, "Accept": "application/json"}
-        body = None
-        if payload is not None:
-            headers["Content-Type"] = "application/json"
-            body = json.dumps(payload).encode("utf-8")
-        prefix = "/api/" if native else "/v0/management/"
-        request = urllib.request.Request(self.base_url + prefix + path, data=body, headers=headers)
-        try:
-            opener = urllib.request.build_opener(NoRedirects())
-            with opener.open(request, timeout=timeout) as response:
-                raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
-        except urllib.error.HTTPError as exc:
-            detail = ""
-            if native:
-                # Fusebox explains refusals as {"error": "..."}; keep only that text.
-                try:
-                    reason = json.loads(exc.read(4097)[:4096]).get("error")
-                    detail = clean_message(reason)[:200] if isinstance(reason, str) else ""
-                except (ValueError, AttributeError, OSError, RecursionError):
-                    detail = ""
-            exc.close()
-            if exc.code in (401, 403):
-                error = ProviderFailure("config", f"{name} rejected the management key or remote management access.")
-            elif exc.code == 429:
-                error = ProviderFailure("rate_limited", f"{name} is rate limiting management requests.")
-            else:
-                error = ProviderFailure("http", f"{name} management endpoint returned HTTP {exc.code}.")
-            error.http_status = exc.code
-            error.detail = EMAIL_PATTERN.sub("[email]", detail)
-            raise error from None
-        except (TimeoutError, urllib.error.URLError, OSError) as exc:
-            reason = getattr(exc, "reason", exc)
-            if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
-                raise ProviderFailure("timeout", f"{name} usage request timed out.") from None
-            raise ProviderFailure("network", f"Could not reach {name}. Check the server URL, network, and TLS certificate.") from None
-        if len(raw) > MAX_HTTP_RESPONSE_BYTES:
-            raise ProviderFailure("malformed", f"{name} returned unexpectedly large usage data.")
-        try:
-            return json.loads(raw)
-        except (ValueError, UnicodeDecodeError, RecursionError):
-            raise ProviderFailure("malformed", f"{name} returned unreadable JSON.") from None
-
-    def auth_files(self, timeout: float) -> list[dict[str, Any]]:
-        deadline = time.monotonic() + timeout
-        if self.implementation == "rust":
-            return self.rust_accounts(timeout)
-        try:
-            payload = self.request("auth-files", timeout)
-        except ProviderFailure as legacy_error:
-            # Rust's unsupported legacy paths can pass through client auth and
-            # return 401. Only a valid authenticated native inventory proves Rust.
-            if self.implementation == "go" or getattr(legacy_error, "http_status", None) not in (401, 403, 404, 405):
-                raise
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ProviderFailure("timeout", "CLIProxyAPI account discovery timed out.") from None
-            try:
-                return self.rust_accounts(remaining)
-            except ProviderFailure as native_error:
-                if getattr(native_error, "http_status", None) in (401, 403, 404, 405):
-                    raise legacy_error from None
-                raise
-        if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
-            raise ProviderFailure("malformed", "CLIProxyAPI returned an invalid account list.")
-        self.implementation = "go"
-        return [entry for entry in payload["files"] if isinstance(entry, dict)]
-
-    def rust_accounts(self, timeout: float) -> list[dict[str, Any]]:
-        payload = self.request("accounts", timeout, native=True)
-        if not isinstance(payload, list) or len(payload) > 4096:
-            raise ProviderFailure("malformed", "Fusebox returned an invalid account list.")
-        entries, seen = [], set()
-        for row in payload:
-            if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
-                    or not 0 < len(row["id"]) <= 512 or not isinstance(row.get("provider"), str)
-                    or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", row["provider"])
-                    or not isinstance(row.get("disabled"), bool)
-                    or row.get("kind") not in ("oauth", "api-key", "service-account")):
-                raise ProviderFailure("malformed", "Fusebox returned an invalid account list.")
-            identity = row["id"]
-            # Go's OAuth auth-file ID is its filename. Keep hashes/private
-            # labels stable across a Go-to-Rust migration of the same files.
-            if identity.startswith("file:"):
-                filename = identity[5:]
-                if (not filename or filename in (".", "..") or "/" in filename or "\\" in filename
-                        or row.get("file") != filename):
-                    raise ProviderFailure("malformed", "Fusebox returned an invalid account identity.")
-                identity = filename
-            marker = (row["provider"], identity)
-            if marker in seen:
-                raise ProviderFailure("malformed", "Fusebox returned duplicate account identities.")
-            seen.add(marker)
-            entries.append(dict(row, id=identity, _native_id=row["id"], _rust=True))
-        self.implementation = "rust"
-        return entries
-
-    def usage(self, entry: dict[str, Any], url: str, headers: dict[str, str], timeout: float,
-              data: dict[str, Any] | None = None) -> Any:
-        if entry.get("_rust") is True or self.implementation == "rust":
-            raise ProviderFailure("unsupported", "Fusebox does not expose upstream account actions.")
-        index = entry.get("auth_index") or entry.get("authIndex")
-        if not isinstance(index, str) or not index.strip():
-            raise ProviderFailure("config", "CLIProxyAPI account has no auth_index. Check the account in its management panel.")
-        request = {
-            "auth_index": index, "method": "POST" if data is not None else "GET", "url": url,
-            "header": {"Authorization": "Bearer $TOKEN$", "Accept": "application/json", **headers},
-        }
-        if data is not None:
-            request["data"] = json.dumps(data)
-        payload = self.request("api-call", timeout, request)
-        if not isinstance(payload, dict):
-            raise ProviderFailure("malformed", "CLIProxyAPI returned an invalid usage response.")
-        status = number(payload.get("status_code", payload.get("statusCode")))
-        if status is None or status != int(status):
-            raise ProviderFailure("malformed", "CLIProxyAPI omitted the upstream HTTP status.")
-        if status in (401, 403):
-            raise ProviderFailure("expired", "The managed sign-in was rejected. Sign in again through CLIProxyAPI, then refresh.")
-        if status == 429:
-            raise ProviderFailure("rate_limited", "The managed provider is rate limiting usage checks.")
-        if not 200 <= status < 300:
-            raise ProviderFailure("http", f"The managed usage endpoint returned HTTP {int(status)}.")
-        body = payload.get("body")
-        if isinstance(body, dict):
-            return body
-        try:
-            return json.loads(body)
-        except (TypeError, ValueError):
-            raise ProviderFailure("malformed", "The managed provider returned unreadable usage data.") from None
-
-
 def parse_cliproxy_codex(payload: Any) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
     if not isinstance(payload, dict):
         raise ProviderFailure("malformed", "Codex returned an unexpected usage payload.")
@@ -1168,7 +950,6 @@ RUST_UNSETTLED_RESETS = ("pending", "unknown")
 SIGN_IN_ERROR = re.compile(
     r"invalid_grant|refresh token|sign in again|re-?authenticat|unauthori[sz]ed|\b401\b"
     r"|token (?:has )?expired|expired token|revoked", re.IGNORECASE)
-EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
 def rust_text(value: Any, limit: int = 128) -> str | None:
@@ -1419,7 +1200,7 @@ def fetch_rust_account(provider_id: str, entry: dict[str, Any]) -> dict[str, Any
     return result
 
 
-def fetch_cliproxy_account(provider_id: str, entry: dict[str, Any], client: CliProxyClient, timeout: float) -> dict[str, Any]:
+def fetch_cliproxy_account(provider_id: str, entry: dict[str, Any], client: ProxyClient, timeout: float) -> dict[str, Any]:
     if entry.get("_rust") is True:
         return fetch_rust_account(provider_id, entry)
     result = cliproxy_account_record(provider_id, entry)
@@ -1469,14 +1250,15 @@ def fetch_cliproxy_account(provider_id: str, entry: dict[str, Any], client: CliP
     return result
 
 
-def collect_cliproxy(provider_ids: list[str], timeout: float, address: str, key_path: Path,
-                     discover: bool = False, metadata: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def collect_cliproxy(provider_ids: list[str], timeout: float, address: str, key_file: Path | str | None,
+                     discover: bool = False, metadata: dict[str, Any] | None = None,
+                     implementation: str = "auto") -> list[dict[str, Any]]:
     if not provider_ids and not discover:
         return []
     overall_deadline = time.monotonic() + timeout if discover else None
     try:
-        client = CliProxyClient(address, read_cliproxy_key(key_path))
-        entries = client.auth_files(timeout)
+        client = ProxyClient(address, read_key(key_file), implementation)
+        entries = client.accounts(timeout)
         if metadata is not None:
             metadata["proxyImplementation"] = client.implementation if client.implementation != "auto" else "go"
     except ProviderFailure as exc:
@@ -1697,15 +1479,17 @@ def parse_provider_ids(value: str) -> list[str]:
 
 def build_payload(
     provider_ids: list[str], timeout: float, state_dir: Path | None,
-    source: str = "direct", cliproxy_url: str = "http://127.0.0.1:8317",
-    key_file: Path | None = None,
+    source: str = "direct", proxy_url: str = "http://127.0.0.1:8317",
+    key_file: Path | str | None = None, implementation: str = "auto",
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
-    if source == "cliproxy":
-        providers = collect_cliproxy(provider_ids, timeout, cliproxy_url, key_file or cliproxy_key_path(), discover=True, metadata=metadata)
+    proxy = source in ("proxy", "cliproxy")
+    if proxy:
+        providers = collect_cliproxy(provider_ids, timeout, proxy_url, key_file, discover=True,
+                                     metadata=metadata, implementation=implementation)
         try:
-            server = normalize_cliproxy_url(cliproxy_url)
-        except ProviderFailure:
+            server = normalize_url(proxy_url)
+        except ValueError:
             server = "invalid"
         server_id = hashlib.sha256(server.encode("utf-8")).hexdigest()[:16]
         state_dir = history_path(state_dir).parent / ("cliproxy-" + server_id)
@@ -1716,7 +1500,8 @@ def build_payload(
         "schemaVersion": SCHEMA_VERSION,
         "generatedAt": now_iso(),
         "providers": providers,
-        "source": source,
+        # The output contract keeps its original source identifier.
+        "source": "cliproxy" if proxy else "direct",
         **metadata,
     }
 
@@ -1726,15 +1511,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--providers", default=",".join(PROVIDER_ORDER))
     parser.add_argument("--timeout", type=float, default=12.0)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--source", choices=("direct", "cliproxy"), default="direct")
-    parser.add_argument("--cliproxy-url", default=os.environ.get("CLIPROXY_API_URL") or "http://127.0.0.1:8317")
-    parser.add_argument("--cliproxy-key-file", type=lambda value: Path(value).expanduser())
+    parser.add_argument("--source", choices=("direct", "proxy", "cliproxy"), default="direct",
+                        help="direct CLI sign-ins, or proxy for Fusebox / CLIProxyAPI (cliproxy is an alias)")
+    add_proxy_arguments(parser)
     args = parser.parse_args(argv)
 
     provider_ids = parse_provider_ids(args.providers)
     timeout = clamp(args.timeout, 1.0, 30.0)
     try:
-        payload = build_payload(provider_ids, timeout, args.state_dir, args.source, args.cliproxy_url, args.cliproxy_key_file)
+        payload = build_payload(provider_ids, timeout, args.state_dir, args.source, args.proxy_url,
+                                args.proxy_key_file, args.implementation)
     except Exception as exc:
         payload = {
             "schemaVersion": SCHEMA_VERSION,

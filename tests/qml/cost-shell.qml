@@ -217,7 +217,27 @@ ShellRoot {
         root.check(root.find(root.form, "costFuseboxCredential").saved, "saved Fusebox key has a configured state")
         root.check(root.form.submit() && root.saved.costFuseboxEnabled === true
           && root.saved.costFuseboxKeyFile === "/private/fusebox.key"
-          && root.saved.costFuseboxOverlap === "transcripts", "Fusebox settings round trip; blank key keeps the saved file")
+          && root.saved.costFuseboxOverlap === "transcripts"
+          && root.saved.costFuseboxConnection === "custom", "Fusebox settings round trip; blank key keeps the saved file")
+        root.form.begin({costFuseboxEnabled: true})
+        root.check(root.form.fuseboxUsesLimits, "new Fusebox costs default to the Limits connection")
+        root.check(!root.form.submit() && root.form.fuseboxExpanded
+          && root.form.errorText.indexOf("Limits settings") >= 0, "the Limits connection needs a saved key")
+        root.form.begin({costFuseboxEnabled: true, proxyUrl: "https://limits.example", proxyKeyFile: "/private/limits.key"})
+        root.form.fuseboxExpanded = true
+        root.check(root.find(root.form, "costFuseboxUsesLimits").visible
+          && !root.find(root.form, "costFuseboxUrl").visible
+          && !root.find(root.form, "costFuseboxCredential").visible, "the Limits connection needs no URL or key")
+        root.check(root.find(root.form, "costFuseboxConnectionTest").url === "https://limits.example"
+          && root.find(root.form, "costFuseboxConnectionTest").keyFile === "/private/limits.key",
+          "the connection test uses the Limits server and key")
+        root.check(root.form.submit() && root.saved.costFuseboxConnection === "limits"
+          && root.saved.costFuseboxEnabled === true, "Fusebox costs save with the Limits connection")
+        root.form.begin({costFuseboxEnabled: true, cliproxyUrl: "https://legacy.example", cliproxyKeyFile: "/private/legacy.key"})
+        root.check(root.form.limitsKeyFile === "/private/legacy.key" && root.form.submit(),
+          "renamed Limits settings are still read")
+        root.form.setFuseboxConnection("custom")
+        root.check(root.form.fuseboxUrl === "https://legacy.example", "a different server starts from the Limits URL")
         root.form.begin({costFuseboxUrl: "https://user:secret@fusebox.example"})
         root.check(!root.form.submit(), "Fusebox URL credentials cannot be saved")
         console.log("Cost QML contract: passed")

@@ -10,12 +10,13 @@ ShellRoot {
   property bool startupVerified: false
   QtObject {
     id: usage
-    property string usageSource: "cliproxy"
-    property string cliproxyUrl: "http://synthetic.invalid"
-    property string cliproxyKeyFile: ""
+    property string usageSource: "proxy"
+    property string proxyUrl: "http://synthetic.invalid"
+    property string proxyKeyFile: ""
     property string proxyImplementation: "go"
-    readonly property string connectionId: JSON.stringify([usageSource, cliproxyUrl])
+    readonly property string connectionId: JSON.stringify([usageSource, proxyUrl])
     function localPath(url) { return String(url).replace("file://", "") }
+    function proxyArgs() { return ["--proxy-url", proxyUrl] }
   }
   Item { id: host }
   function check(condition, message) {
@@ -29,7 +30,7 @@ ShellRoot {
       scriptPath: Quickshell.env("MODEL_USAGE_FAKE_ACTIVITY") })
     check(backend !== null, "create activity backend")
     startupProbe = component.createObject(host, { usageBackend: usage,
-      settings: { costKeeperUrl: "http://synthetic.invalid/old" },
+      settings: { keeperUrl: "http://synthetic.invalid/old" },
       scriptPath: Quickshell.env("MODEL_USAGE_FAKE_ACTIVITY") })
     startupProbe.providersChanged.connect(function() {
       if (!startupProbe.providers.length) return
@@ -37,7 +38,7 @@ ShellRoot {
       root.startupVerified = true
     })
     startupProbe.refresh()
-    startupProbe.settings = { costKeeperUrl: "http://synthetic.invalid/new" }
+    startupProbe.settings = { keeperUrl: "http://synthetic.invalid/new" }
     startupProbe.refresh()
     startupProbe.refresh()
   }
@@ -50,8 +51,8 @@ ShellRoot {
       root.check(root.ticks < 150, "state machine timed out at " + root.phase)
       var b = root.backend
       if (root.phase === 0 && root.ticks >= 2) {
-        b.settings = { costKeeperUrl: "http://synthetic.invalid/new",
-          costKeeperPasswordFile: Quickshell.env("MODEL_USAGE_ACTIVITY_MARKER") }
+        b.settings = { keeperUrl: "http://synthetic.invalid/new",
+          keeperPasswordFile: Quickshell.env("MODEL_USAGE_ACTIVITY_MARKER") }
         root.check(b.providers.length === 0, "changing Keeper clears activity immediately")
         root.phase++
       } else if (root.phase === 1 && b.providers.length > 0) {
@@ -64,8 +65,8 @@ ShellRoot {
         root.check(b.notice === "Synthetic outage", "outage is explained")
         usage.usageSource = "direct"
         root.check(!b.trackingEnabled && b.providers.length === 0, "direct mode disables and clears tracking")
-        usage.usageSource = "cliproxy"
-        b.settings = { costKeeperUrl: "http://synthetic.invalid/oversized" }
+        usage.usageSource = "proxy"
+        b.settings = { keeperUrl: "http://synthetic.invalid/oversized" }
         root.phase++
       } else if (root.phase === 3 && b.fetchError !== "") {
         root.check(b.providers.length === 0, "oversized output cannot supply account activity")

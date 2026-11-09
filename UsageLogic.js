@@ -83,6 +83,91 @@ function proxyName(implementation) {
   return "Fusebox / CLIProxyAPI"
 }
 
+// ------------------------------------------------------------ Connection settings
+
+var DEFAULT_PROXY_URL = "http://127.0.0.1:8317"
+// Settings renamed after 1.4. Old names are read until the next save migrates them.
+var LEGACY_SETTINGS = {
+  proxyUrl: "cliproxyUrl",
+  proxyKeyFile: "cliproxyKeyFile",
+  keeperUrl: "costKeeperUrl",
+  keeperPasswordFile: "costKeeperPasswordFile"
+}
+
+function setting(settings, name, fallback) {
+  var value = settings ? settings[name] : undefined
+  if ((value === undefined || value === null) && settings && LEGACY_SETTINGS[name])
+    value = settings[LEGACY_SETTINGS[name]]
+  return value === undefined || value === null ? fallback : value
+}
+
+function usageSource(settings) {
+  var value = setting(settings, "usageSource", "direct")
+  return value === "proxy" || value === "cliproxy" ? "proxy" : "direct"
+}
+
+function proxyConnection(settings) {
+  return {
+    url: String(setting(settings, "proxyUrl", DEFAULT_PROXY_URL)).trim(),
+    keyFile: String(setting(settings, "proxyKeyFile", "")).trim()
+  }
+}
+
+// Costs reads Fusebox through the Limits connection unless a different
+// server was chosen. Older settings with their own Costs URL stay separate.
+function fuseboxCostMode(settings) {
+  var value = setting(settings, "costFuseboxConnection", "")
+  if (value === "limits" || value === "custom") return value
+  return String(setting(settings, "costFuseboxUrl", "")).trim() !== "" ? "custom" : "limits"
+}
+
+function fuseboxCostConnection(settings) {
+  var mode = fuseboxCostMode(settings)
+  var limits = proxyConnection(settings)
+  var custom = mode === "custom"
+  return {
+    enabled: setting(settings, "costFuseboxEnabled", false) === true,
+    mode: mode,
+    url: custom ? String(setting(settings, "costFuseboxUrl", "")).trim() : limits.url,
+    keyFile: custom ? String(setting(settings, "costFuseboxKeyFile", "")).trim() : limits.keyFile,
+    overlap: setting(settings, "costFuseboxOverlap", "fusebox") === "transcripts" ? "transcripts" : "fusebox"
+  }
+}
+
+function migrateSettings(entry) {
+  var result = Object.assign({}, entry || {})
+  for (var name in LEGACY_SETTINGS) {
+    var legacy = LEGACY_SETTINGS[name]
+    if (result[name] === undefined || result[name] === null) {
+      if (result[legacy] !== undefined && result[legacy] !== null) result[name] = result[legacy]
+    }
+    delete result[legacy]
+  }
+  if (result.usageSource !== undefined) result.usageSource = usageSource(result)
+  result.costFuseboxConnection = fuseboxCostMode(result)
+  return result
+}
+
+// Command-line arguments shared by every proxy script.
+function proxyArgs(url, keyFile, implementation) {
+  var args = ["--proxy-url", String(url || "").trim() || DEFAULT_PROXY_URL]
+  if (String(keyFile || "").trim() !== "") args.push("--proxy-key-file", String(keyFile).trim())
+  if (implementation === "go" || implementation === "rust") args.push("--implementation", implementation)
+  return args
+}
+
+function validServerUrl(text) {
+  var value = String(text || "").trim()
+  return /^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/.test(value)
+    && !/(?:^|\/)\.{1,2}(?:\/|$)/.test(value.replace(/^https?:\/\/[^/]*/, ""))
+}
+
+// The rule management-key.py applies when saving a key or password.
+function validSecret(text) {
+  var value = String(text || "").trim()
+  return value !== "" && value.length <= 8191 && /^[\x20-\x7e]+$/.test(value)
+}
+
 function clamp(value, minimum, maximum) {
   var number = Number(value)
   if (!isFinite(number)) return minimum

@@ -27,7 +27,11 @@ Column {
   property string fuseboxKeyFile: ""
   property string fuseboxKey: ""
   property string fuseboxOverlap: "fusebox"
-  property string fuseboxPlaceholder: "http://127.0.0.1:8317"
+  // "limits" reuses the Limits server and key; "custom" names another server.
+  property string fuseboxConnection: "limits"
+  property string limitsUrl: ""
+  property string limitsKeyFile: ""
+  readonly property bool fuseboxUsesLimits: fuseboxConnection === "limits"
   property var pendingValues: null
   property var pendingKeys: ({})
   property var previousPaths: ({})
@@ -54,6 +58,7 @@ Column {
     for (var i = 0; i < servers.count; i++) servers.setProperty(i, "token", "")
     fuseboxKey = ""
     fuseboxCredential.reset()
+    fuseboxTest.reset()
     pendingKeys = ({})
     pendingValues = null
     if (keyWriter.running && !keySaveDecided) keyWriter.running = false
@@ -76,11 +81,15 @@ Column {
     priceSection.expanded = false
     scanSection.expanded = false
     fuseboxSection.expanded = false
-    fuseboxEnabled = settings.costFuseboxEnabled === true
+    var fusebox = UsageLogic.fuseboxCostConnection(settings)
+    var limits = UsageLogic.proxyConnection(settings)
+    fuseboxEnabled = fusebox.enabled
+    fuseboxConnection = fusebox.mode
     fuseboxUrl = String(settings.costFuseboxUrl || "")
     fuseboxKeyFile = String(settings.costFuseboxKeyFile || "")
-    fuseboxOverlap = settings.costFuseboxOverlap === "transcripts" ? "transcripts" : "fusebox"
-    fuseboxPlaceholder = String(settings.cliproxyUrl || "") || "http://127.0.0.1:8317"
+    fuseboxOverlap = fusebox.overlap
+    limitsUrl = limits.url
+    limitsKeyFile = limits.keyFile
     localProviders = settings.costLocalProviders === undefined ? ["claude", "codex"] : settings.costLocalProviders
     prices.begin(String(settings.costPriceOverrides || "{}"))
     try {
@@ -138,6 +147,11 @@ Column {
     })
   }
   function setFusebox(name, value) { root[name] = value; errorText = "" }
+  function setFuseboxConnection(mode) {
+    // Start a different server from the Limits URL rather than an empty field.
+    if (mode === "custom" && fuseboxUrl.trim() === "") fuseboxUrl = limitsUrl
+    setFusebox("fuseboxConnection", mode)
+  }
   function focusFusebox(name) {
     var generation = draftGeneration
     fuseboxSection.expanded = true
@@ -179,24 +193,29 @@ Column {
       }
     }
     values.costT3Servers = JSON.stringify(rows)
-    var fuseboxAddress = fuseboxUrl.trim(), fuseboxToken = fuseboxKey.trim()
-    if ((fuseboxEnabled || fuseboxAddress !== "") && (!/^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/.test(fuseboxAddress)
-        || /(?:^|\/)\.{1,2}(?:\/|$)/.test(fuseboxAddress))) {
+    var fuseboxAddress = fuseboxUrl.trim(), fuseboxToken = fuseboxUsesLimits ? "" : fuseboxKey.trim()
+    if (fuseboxEnabled && fuseboxUsesLimits && (limitsKeyFile === "" || !UsageLogic.validServerUrl(limitsUrl))) {
+      errorText = "Set up the Fusebox connection in Limits settings first, or turn off Use the Limits connection."
+      focusFusebox("costFuseboxUsesLimits")
+      return false
+    }
+    if (!fuseboxUsesLimits && (fuseboxEnabled || fuseboxAddress !== "") && !UsageLogic.validServerUrl(fuseboxAddress)) {
       errorText = "Enter the Fusebox server HTTP(S) URL without credentials, query, or fragment."
       focusFusebox("costFuseboxUrl")
       return false
     }
-    if (fuseboxKey !== "" && (fuseboxToken === "" || /[^\x21-\x7e]/.test(fuseboxToken))) {
-      errorText = "Enter the management key without spaces."
+    if (!fuseboxUsesLimits && fuseboxKey !== "" && !UsageLogic.validSecret(fuseboxToken)) {
+      errorText = "Enter a nonempty management API key using ASCII characters."
       focusFusebox("costFuseboxCredential")
       return false
     }
-    if (fuseboxEnabled && fuseboxToken === "" && fuseboxKeyFile === "") {
+    if (fuseboxEnabled && !fuseboxUsesLimits && fuseboxToken === "" && fuseboxKeyFile === "") {
       errorText = "Enter the Fusebox management key."
       focusFusebox("costFuseboxCredential")
       return false
     }
     values.costFuseboxEnabled = fuseboxEnabled
+    values.costFuseboxConnection = fuseboxConnection
     values.costFuseboxUrl = fuseboxAddress
     values.costFuseboxKeyFile = fuseboxKeyFile
     values.costFuseboxOverlap = fuseboxOverlap
@@ -361,18 +380,33 @@ Column {
     objectName: "fuseboxCostSection"
     title: "Fusebox"
     summary: !root.fuseboxEnabled ? "Off"
-      : root.fuseboxOverlap === "fusebox" ? "Replaces transcripts" : "Adds other providers"
+      : (root.fuseboxUsesLimits ? "Limits connection · " : "")
+        + (root.fuseboxOverlap === "fusebox" ? "Replaces transcripts" : "Adds other providers")
     Row {
       width: parent.width
       Label { width: parent.width - fuseboxToggle.width; text: "Include Fusebox usage"; anchors.verticalCenter: parent.verticalCenter }
       Toggle { id: fuseboxToggle; objectName: "costFuseboxEnabled"; checked: root.fuseboxEnabled; onToggled: root.setFusebox("fuseboxEnabled", !checked); Accessible.name: "Include Fusebox usage" }
     }
     Hint { text: "Fusebox prices every request it records. Its estimates are used as reported; unpriced requests stay unpriced." }
-    Label { text: "Server URL" }
-    Field { objectName: "costFuseboxUrl"; text: root.fuseboxUrl; placeholderText: root.fuseboxPlaceholder; maximumLength: 4096; onTextEdited: root.setFusebox("fuseboxUrl", text); Accessible.name: "Fusebox server URL" }
+    Row {
+      width: parent.width
+      Label { width: parent.width - fuseboxLimitsToggle.width; text: "Use the Limits connection"; anchors.verticalCenter: parent.verticalCenter }
+      Toggle { id: fuseboxLimitsToggle; objectName: "costFuseboxUsesLimits"; checked: root.fuseboxUsesLimits; onToggled: root.setFuseboxConnection(checked ? "custom" : "limits"); Accessible.name: "Use the Limits connection" }
+    }
+    Hint {
+      objectName: "costFuseboxLimitsStatus"
+      visible: root.fuseboxUsesLimits
+      color: root.limitsKeyFile === "" ? root.urgent : root.foreground
+      text: root.limitsKeyFile === ""
+        ? "Limits has no saved management key. Set up Fusebox in Limits settings, or turn this off to enter a different server."
+        : "Reads " + root.limitsUrl + " with the key saved in Limits."
+    }
+    Label { visible: !root.fuseboxUsesLimits; text: "Server URL" }
+    Field { objectName: "costFuseboxUrl"; visible: !root.fuseboxUsesLimits; text: root.fuseboxUrl; placeholderText: root.limitsUrl || UsageLogic.DEFAULT_PROXY_URL; maximumLength: 4096; onTextEdited: root.setFusebox("fuseboxUrl", text); Accessible.name: "Fusebox server URL" }
     SettingsCredential {
       id: fuseboxCredential
       objectName: "costFuseboxCredential"
+      visible: !root.fuseboxUsesLimits
       editorObjectName: "costFuseboxKey"
       width: parent.width
       label: "Management API key"
@@ -380,6 +414,19 @@ Column {
       foreground: root.foreground
       fontFamily: root.fontFamily
       onEdited: function(value) { root.setFusebox("fuseboxKey", value) }
+      onRevealRequested: function(item) { root.revealRequested(item) }
+    }
+    ConnectionTest {
+      id: fuseboxTest
+      objectName: "costFuseboxConnectionTest"
+      width: parent.width
+      requireFusebox: true
+      url: root.fuseboxUsesLimits ? root.limitsUrl : root.fuseboxUrl
+      keyFile: root.fuseboxUsesLimits ? root.limitsKeyFile : root.fuseboxKeyFile
+      key: root.fuseboxUsesLimits ? "" : root.fuseboxKey
+      foreground: root.foreground
+      urgent: root.urgent
+      fontFamily: root.fontFamily
       onRevealRequested: function(item) { root.revealRequested(item) }
     }
     Row {
@@ -392,7 +439,9 @@ Column {
         ? "CLIs routed through Fusebox also write transcripts, which carry no Fusebox request IDs. While Fusebox is readable, local and T3 history is left out so nothing is counted twice. Turn on Claude Code and Codex history import in Fusebox to include sessions that bypass it."
         : "Local and T3 history supplies Claude and OpenAI. Fusebox adds only its other providers. A CLI that sends requests to another provider's model through Fusebox can still appear in both."
     }
-    Hint { text: "Uses the same management key as the Fusebox dashboard. Saved privately on this device; blank keeps the saved key. Settings stay separate from Limits. An offline server keeps its last history with a timestamp." }
+    Hint { text: root.fuseboxUsesLimits
+      ? "Changes to the Limits server or key apply here too. An offline server keeps its last history with a timestamp."
+      : "Uses the same management key as the Fusebox dashboard. Saved privately on this device; blank keeps the saved key. An offline server keeps its last history with a timestamp." }
   }
 
   Section {

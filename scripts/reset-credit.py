@@ -19,6 +19,7 @@ assert SPEC and SPEC.loader
 usage = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = usage
 SPEC.loader.exec_module(usage)
+import proxy_connection as connection  # noqa: E402
 
 RESET_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 
@@ -83,7 +84,7 @@ def provider_of(entry):
 def find_account(client, account_id, remaining):
     if not isinstance(account_id, str) or not re.fullmatch(r"[0-9a-f]{16}", account_id):
         raise usage.ProviderFailure("config", "Invalid reset account.")
-    entries = client.auth_files(remaining())
+    entries = client.accounts(remaining())
     # Fusebox redeems Claude and Codex resets itself; CLIProxyAPI only Codex.
     providers = ("claude", "codex") if client.implementation == "rust" else ("codex",)
     matches = [entry for entry in entries if provider_of(entry) in providers
@@ -280,15 +281,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--action", required=True, choices=("prepare", "consume"))
     parser.add_argument("--account-id", required=True)
-    parser.add_argument("--cliproxy-url", required=True)
-    parser.add_argument("--cliproxy-key-file", type=lambda p: Path(p).expanduser())
+    connection.add_arguments(parser)
     parser.add_argument("--target", default="")
     parser.add_argument("--credit-id", default="")
     parser.add_argument("--request-id", default="")
     parser.add_argument("--retry", action="store_true", help="Retry an uncertain Fusebox Claude reset")
     args = parser.parse_args()
     try:
-        client = usage.CliProxyClient(args.cliproxy_url, usage.read_cliproxy_key(args.cliproxy_key_file or usage.cliproxy_key_path()))
+        client = connection.client_from_args(args)
         result = execute(client, args.action, args.account_id, args.target, args.credit_id, args.request_id,
                          retry=args.retry)
         result.update(ok=True, schemaVersion=1)

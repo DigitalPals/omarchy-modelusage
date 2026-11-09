@@ -127,3 +127,27 @@ def atomic_write_json(path: Path, payload: Any) -> None:
             except OSError:
                 pass
         os.close(directory_fd)
+
+
+class ProviderFailure(Exception):
+    """A display-safe provider failure."""
+
+    def __init__(self, kind: str, message: str):
+        super().__init__(message)
+        self.kind = kind
+        self.message = clean_message(message)
+
+
+def number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        result = float(value)
+    elif isinstance(value, str):
+        try:
+            result = float(value.strip().replace("%", ""))
+        except ValueError:
+            return None
+    else:
+        return None
+    return result if result == result and result not in (float("inf"), float("-inf")) else None

@@ -87,12 +87,12 @@ class LiveTransport(unittest.TestCase):
         states = []
         with mock.patch.object(live.time, "monotonic", side_effect=lambda: clock[0]), \
                 mock.patch.object(live.time, "sleep", side_effect=sleep), \
-                mock.patch.object(live.usage, "read_cliproxy_key", return_value="key"), \
-                mock.patch.object(live.usage.CliProxyClient, "rust_accounts", return_value=[entry("file:a.json")]), \
+                mock.patch.object(live.connection, "read_key", return_value="key"), \
+                mock.patch.object(live.connection.ProxyClient, "rust_accounts", return_value=[entry("file:a.json")]), \
                 mock.patch.object(live.Tracker, "publish", lambda tracker: states.append(tracker.payload())), \
                 mock.patch.object(live, "heartbeat"):
             with self.assertRaises(Done):
-                live.observe(SimpleNamespace(cliproxy_url="https://proxy.example", cliproxy_key_file=Path("key")), connect)
+                live.observe(SimpleNamespace(proxy_url="https://proxy.example", proxy_key_file=Path("key"), implementation="auto"), connect)
         self.assertEqual(pauses, [2, 4, 5, 3])  # delays 2, 4, 8 split into heartbeats
         self.assertTrue(all(state["state"] == "reconnecting" and not state["accounts"] for state in states))
 

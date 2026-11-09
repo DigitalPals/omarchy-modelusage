@@ -4,8 +4,9 @@ import time
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--cliproxy-url")
-parser.add_argument("--cliproxy-key-file")
+parser.add_argument("--proxy-url", "--cliproxy-url", dest="cliproxy_url")
+parser.add_argument("--implementation", default="auto")
+parser.add_argument("--proxy-key-file", "--cliproxy-key-file", dest="cliproxy_key_file")
 parser.add_argument("--keeper-url")
 parser.add_argument("--keeper-password-file")
 parser.add_argument("--timeout")

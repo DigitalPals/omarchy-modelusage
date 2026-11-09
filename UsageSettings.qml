@@ -20,7 +20,7 @@ Column {
   property alias activityExpanded: activitySection.expanded
   property alias alertsExpanded: alertsSection.expanded
   readonly property bool percentageDisplay: draft.barDisplayMode === "Percentages"
-  onProxyModeChanged: if (proxyMode && !draft.cliproxyKeyFile) connectionSection.expanded = true
+  onProxyModeChanged: if (proxyMode && !draft.proxyKeyFile) connectionSection.expanded = true
   property var draft: ({})
   property alias managementKey: managementCredential.text
   property alias keeperPassword: keeperCredential.text
@@ -29,8 +29,19 @@ Column {
   property var pendingKeys: ({})
   property bool keySaveDecided: false
   property var proxyProviders: []
+  // Detected by the last quota refresh for the saved connection.
   property string proxyImplementation: ""
-  readonly property string proxyName: UsageLogic.proxyName(proxyImplementation)
+  property string savedProxyUrl: ""
+  property string savedProxyKeyFile: ""
+  // A connection test describes the draft; otherwise the saved connection's
+  // detection applies while the draft still names that connection.
+  readonly property string knownImplementation: connectionTest.implementation !== ""
+    ? connectionTest.implementation
+    : String(draft.proxyUrl || "").trim() === savedProxyUrl && managementKey === ""
+      && String(draft.proxyKeyFile || "") === savedProxyKeyFile ? proxyImplementation : ""
+  readonly property bool fuseboxProxy: knownImplementation === "rust"
+  readonly property bool goProxy: knownImplementation === "go"
+  readonly property string proxyName: UsageLogic.proxyName(knownImplementation)
   readonly property string fuseboxRepositoryUrl: "https://github.com/DigitalPals/Fusebox"
   readonly property var providerOptions: proxyMode ? UsageLogic.listOrEmpty(proxyProviders) : [
     { id: "claude", name: "Claude Code" },
@@ -43,7 +54,7 @@ Column {
       if (!UsageLogic.contains(ids, proxyProviders[i].id)) ids.push(proxyProviders[i].id)
     return ids
   }
-  readonly property bool proxyMode: draft.usageSource === "cliproxy"
+  readonly property bool proxyMode: draft.usageSource === "proxy"
 
   signal saveRequested(var values)
   signal cancelRequested()
@@ -56,6 +67,7 @@ Column {
   function discardKey() {
     managementCredential.reset()
     keeperCredential.reset()
+    connectionTest.reset()
     pendingKeys = ({})
     pendingValues = null
     if (keyWriter.running && !keySaveDecided) keyWriter.running = false
@@ -73,14 +85,17 @@ Column {
   function begin(settings) {
     discardKey()
     function value(key, fallback) {
-      return settings[key] === undefined || settings[key] === null ? fallback : settings[key]
+      return UsageLogic.setting(settings, key, fallback)
     }
+    var connection = UsageLogic.proxyConnection(settings)
+    savedProxyUrl = connection.url
+    savedProxyKeyFile = connection.keyFile
     draft = {
-      usageSource: value("usageSource", "direct") === "cliproxy" ? "cliproxy" : "direct",
-      cliproxyUrl: String(value("cliproxyUrl", "http://127.0.0.1:8317")),
-      cliproxyKeyFile: String(value("cliproxyKeyFile", "")),
-      costKeeperUrl: String(value("costKeeperUrl", "")),
-      costKeeperPasswordFile: String(value("costKeeperPasswordFile", "")),
+      usageSource: UsageLogic.usageSource(settings),
+      proxyUrl: connection.url,
+      proxyKeyFile: connection.keyFile,
+      keeperUrl: String(value("keeperUrl", "")),
+      keeperPasswordFile: String(value("keeperPasswordFile", "")),
       enabledProviders: value("enabledProviders", ["claude", "codex", "kimi"]),
       barProviders: value("barProviders", ["claude", "codex", "kimi"]),
       liveAccountActivity: value("liveAccountActivity", true) !== false,
@@ -92,7 +107,7 @@ Column {
       criticalThreshold: String(value("criticalThreshold", 10))
     }
     refreshMinutes = String(Number(draft.refreshIntervalSec) / 60)
-    connectionSection.expanded = proxyMode && !draft.cliproxyKeyFile
+    connectionSection.expanded = proxyMode && !draft.proxyKeyFile
     activitySection.expanded = false
     alertsSection.expanded = false
     diagnosticsSection.expanded = false
@@ -156,27 +171,28 @@ Column {
     if (next.criticalThreshold > next.warningThreshold) {
       return fail("Critical threshold must be at or below the warning threshold.", alertsSection, criticalField)
     }
-    next.cliproxyUrl = String(next.cliproxyUrl).trim()
-    next.cliproxyKeyFile = String(next.cliproxyKeyFile).trim()
-    if (proxyMode && !/^https?:\/\/[^\s/?#@]+(?::[0-9]+)?(?:\/[^\s?#]*)?$/.test(next.cliproxyUrl)) {
+    next.proxyUrl = String(next.proxyUrl).trim()
+    next.proxyKeyFile = String(next.proxyKeyFile).trim()
+    if (proxyMode && !UsageLogic.validServerUrl(next.proxyUrl)) {
       return fail("Enter an HTTP or HTTPS server URL without credentials, query, or fragment.", connectionSection, proxyUrlField)
     }
     var key = managementKey.trim()
-    if (proxyMode && managementKey !== "" && (key === "" || key.length > 8191 || /[^\x20-\x7e]/.test(key))) {
+    if (proxyMode && managementKey !== "" && !UsageLogic.validSecret(key)) {
       return fail("Enter a nonempty management API key using ASCII characters.", connectionSection, managementCredential)
     }
-    next.costKeeperUrl = String(next.costKeeperUrl).trim()
-    var password = keeperPassword.trim()
-    if ((proxyMode && (next.costKeeperUrl !== "" || password !== ""))
-        && !/^https?:\/\/[^\s/?#@]+(?::[0-9]+)?(?:\/[^\s?#]*)?$/.test(next.costKeeperUrl)) {
+    next.keeperUrl = String(next.keeperUrl).trim()
+    // Fusebox reports activity itself; its hidden Keeper fields keep their saved values.
+    var keeperShown = proxyMode && !fuseboxProxy
+    var password = keeperShown ? keeperPassword.trim() : ""
+    if (keeperShown && (next.keeperUrl !== "" || password !== "") && !UsageLogic.validServerUrl(next.keeperUrl)) {
       return fail("Enter the CPA Usage Keeper HTTP or HTTPS URL.", activitySection, keeperUrlField)
     }
-    if (keeperPassword !== "" && (password === "" || password.length > 8191 || /[^\x20-\x7e]/.test(password))) {
+    if (keeperShown && keeperPassword !== "" && !UsageLogic.validSecret(password)) {
       return fail("Enter a nonempty Keeper password using ASCII characters.", activitySection, keeperCredential)
     }
     var keys = ({})
-    if (proxyMode && key !== "") keys.cliproxyKeyFile = key
-    if (proxyMode && password !== "") keys.costKeeperPasswordFile = password
+    if (proxyMode && key !== "") keys.proxyKeyFile = key
+    if (password !== "") keys.keeperPasswordFile = password
     errorText = ""
     if (Object.keys(keys).length > 0) {
       pendingValues = next
@@ -193,8 +209,8 @@ Column {
     stdinEnabled: true
     onStarted: {
       write(JSON.stringify({ keys: root.pendingKeys, previousPaths: {
-        cliproxyKeyFile: root.draft.cliproxyKeyFile,
-        costKeeperPasswordFile: root.draft.costKeeperPasswordFile
+        proxyKeyFile: root.draft.proxyKeyFile,
+        keeperPasswordFile: root.draft.keeperPasswordFile
       } }) + "\n")
       root.pendingKeys = ({})
     }
@@ -244,7 +260,7 @@ Column {
       objectName: "usageSourceControl"
       width: Math.min(implicitWidth, parent.width * 0.6)
       label: "Quota source"
-      options: [{ value: "direct", label: "Local CLIs" }, { value: "cliproxy", label: root.proxyName }]
+      options: [{ value: "direct", label: "Local CLIs" }, { value: "proxy", label: root.proxyName }]
       value: String(root.draft.usageSource || "direct")
       foreground: root.foreground
       surface: root.surface
@@ -277,13 +293,13 @@ Column {
     objectName: "quotaConnectionSection"
     visible: root.proxyMode
     title: "Connection details"
-    summary: root.draft.cliproxyKeyFile ? "Configured" : "Setup"
+    summary: root.draft.proxyKeyFile ? (root.knownImplementation ? root.proxyName : "Configured") : "Setup"
     Label { text: root.proxyName + " server URL" }
     Field {
       id: proxyUrlField
-      objectName: "cliproxyUrlField"
-      settingKey: "cliproxyUrl"
-      placeholderText: "http://127.0.0.1:8317"
+      objectName: "proxyUrlField"
+      settingKey: "proxyUrl"
+      placeholderText: UsageLogic.DEFAULT_PROXY_URL
       Accessible.name: root.proxyName + " server URL"
     }
     SettingsCredential {
@@ -291,16 +307,28 @@ Column {
       width: parent.width
       label: "Management API key"
       editorObjectName: "managementKeyField"
-      saved: !!root.draft.cliproxyKeyFile
+      saved: !!root.draft.proxyKeyFile
       foreground: root.foreground
       fontFamily: root.fontFamily
       onEdited: root.errorText = ""
       onRevealRequested: function(item) { root.revealRequested(item) }
     }
-    Hint { text: "Save to discover the proxy’s providers and accounts." }
+    ConnectionTest {
+      id: connectionTest
+      objectName: "proxyConnectionTest"
+      width: parent.width
+      url: String(root.draft.proxyUrl || "")
+      keyFile: String(root.draft.proxyKeyFile || "")
+      key: root.managementKey
+      foreground: root.foreground
+      urgent: root.urgent
+      fontFamily: root.fontFamily
+      onRevealRequested: function(item) { root.revealRequested(item) }
+    }
+    Hint { text: "Test to check the URL and key before saving. Save to discover every provider and account." }
     Section {
       title: "Learn more"
-      Hint { text: "Use the management key for Fusebox or CLIProxyAPI. The implementation is detected automatically. The key is saved privately on this device. Quota limits and estimated costs use separate data sources." }
+      Hint { text: "Use the management key from the Fusebox or CLIProxyAPI dashboard, not a client API key. The implementation is detected automatically. The key is saved privately on this device. Costs can reuse this connection for Fusebox history." }
     }
   }
 
@@ -408,9 +436,12 @@ Column {
     objectName: "accountActivitySection"
     visible: root.proxyMode
     title: "Account activity"
-    summary: root.draft.liveAccountActivity !== false ? "Live on Fusebox" : "Last used"
+    summary: root.goProxy ? (root.draft.keeperUrl ? "CPA Usage Keeper" : "Not configured")
+      : root.draft.liveAccountActivity !== false ? "Live on Fusebox" : "Last used"
     Row {
       width: parent.width
+      // CLIProxyAPI has no live stream; only Keeper applies there.
+      visible: !root.goProxy
       Label { width: parent.width - liveAccountActivitySwitch.width; text: "Live account activity"; anchors.verticalCenter: parent.verticalCenter }
       ProviderToggle {
         id: liveAccountActivitySwitch
@@ -421,30 +452,42 @@ Column {
         onToggled: root.setValue("liveAccountActivity", !checked)
       }
     }
-    Hint { text: "Fusebox session counts appear beside the subscription title. Sessions may remain assigned after requests finish." }
-    Label { text: "CPA Usage Keeper URL" }
+    Hint {
+      visible: !root.goProxy
+      text: "Fusebox session counts appear beside the subscription title. Sessions may remain assigned after requests finish."
+    }
+    // Fusebox reports activity itself and never uses Keeper.
+    Label { visible: !root.fuseboxProxy; text: "CPA Usage Keeper URL" }
     Field {
       id: keeperUrlField
-      objectName: "costKeeperUrlField"
-      settingKey: "costKeeperUrl"
+      objectName: "keeperUrlField"
+      visible: !root.fuseboxProxy
+      settingKey: "keeperUrl"
       placeholderText: "https://proxy.example.com/keeper"
       Accessible.name: "CPA Usage Keeper URL"
     }
     SettingsCredential {
       id: keeperCredential
+      visible: !root.fuseboxProxy
       width: parent.width
       label: "Keeper login password"
       editorObjectName: "keeperPasswordField"
-      saved: !!root.draft.costKeeperPasswordFile
+      saved: !!root.draft.keeperPasswordFile
       foreground: root.foreground
       fontFamily: root.fontFamily
       onEdited: root.errorText = ""
       onRevealRequested: function(item) { root.revealRequested(item) }
     }
-    Hint { text: "Show the last-used account in the percentage menu bar." }
+    Hint { visible: !root.fuseboxProxy; text: "Show the last-used account in the percentage menu bar." }
     Section {
       title: "Learn more"
-      Hint { text: "CLIProxyAPI uses Keeper for account activity. Fusebox streams live activity without Keeper. One connection is shared by all panels. With live activity off, last-used accounts update every 15 seconds, independently of Costs." }
+      Hint {
+        text: root.fuseboxProxy
+          ? "Fusebox streams live activity and reports last-used accounts directly; no Keeper is needed. One connection is shared by all panels. With live activity off, last-used accounts update every 15 seconds."
+          : root.goProxy
+            ? "CLIProxyAPI uses CPA Usage Keeper for last-used accounts, updated every 15 seconds, independently of Costs."
+            : "CLIProxyAPI uses Keeper for account activity. Fusebox streams live activity without Keeper. Test the connection to show only the settings your server uses."
+      }
     }
   }
 

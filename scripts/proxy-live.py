@@ -19,6 +19,7 @@ assert SPEC and SPEC.loader
 activity = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(activity)
 usage = activity.usage
+connection = activity.connection
 
 MAX_FRAME = 512 * 1024
 INVENTORY_INTERVAL = 15
@@ -27,7 +28,7 @@ STALE_SECONDS = 15
 
 
 def websocket_url(base):
-    parts = urlsplit(usage.normalize_cliproxy_url(base))
+    parts = urlsplit(connection.server_url(base))
     return urlunsplit(("wss" if parts.scheme == "https" else "ws", parts.netloc,
                       parts.path + "/api/live", "", ""))
 
@@ -98,8 +99,9 @@ def observe(args, connect):
         started = time.monotonic()
         unsupported = False
         try:
-            key = usage.read_cliproxy_key(args.cliproxy_key_file or usage.cliproxy_key_path())
-            proxy = usage.CliProxyClient(args.cliproxy_url, key)
+            key = connection.read_key(args.proxy_key_file)
+            # Live activity is native to Fusebox; no detection is needed.
+            proxy = connection.ProxyClient(args.proxy_url, key, "rust")
             tracker.inventory(proxy.rust_accounts(8))
             tracker.publish()
             inventory_at = time.monotonic()
@@ -167,8 +169,7 @@ def observe(args, connect):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cliproxy-url", required=True)
-    parser.add_argument("--cliproxy-key-file", type=Path)
+    connection.add_arguments(parser)
     args = parser.parse_args()
     try:
         from websockets.sync.client import connect

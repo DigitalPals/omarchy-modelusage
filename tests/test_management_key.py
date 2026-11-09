@@ -115,7 +115,7 @@ class ManagementKeyTests(unittest.TestCase):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                     env={**os.environ, "XDG_CONFIG_HOME": config})
                 self.addCleanup(self.stop, process)
-                keys = {"cliproxyKeyFile": "proxy-secret", "costKeeperPasswordFile": "keeper-secret"}
+                keys = {"proxyKeyFile": "proxy-secret", "keeperPasswordFile": "keeper-secret"}
                 process.stdin.write(json.dumps({"keys": keys, "previousPaths": {}}) + "\n")
                 process.stdin.flush()
                 response = process.stdout.readline()

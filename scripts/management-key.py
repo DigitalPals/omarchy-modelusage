@@ -32,7 +32,7 @@ def main() -> int:
         keys = request.pop("keys") if batch else {"key": request.pop("key")}
         if not isinstance(keys, dict) or not 1 <= len(keys) <= 5:  # Four T3 tokens and Fusebox.
             raise ValueError
-        allowed = {"cliproxyKeyFile", "costKeeperPasswordFile", "costFuseboxKeyFile"} if batch else {"key"}
+        allowed = {"proxyKeyFile", "keeperPasswordFile", "costFuseboxKeyFile"} if batch else {"key"}
         previous_paths = request.get("previousPaths", {}) if batch else {"key": request.get("previousPath", "")}
         if not isinstance(previous_paths, dict):
             raise ValueError

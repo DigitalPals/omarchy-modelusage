@@ -10,12 +10,13 @@ ShellRoot {
   property int ticks: 0
   QtObject {
     id: usage
-    property string usageSource: "cliproxy"
-    property string cliproxyUrl: "http://synthetic.invalid/old"
-    property string cliproxyKeyFile: ""
+    property string usageSource: "proxy"
+    property string proxyUrl: "http://synthetic.invalid/old"
+    property string proxyKeyFile: ""
     property string proxyImplementation: "rust"
-    readonly property string connectionId: JSON.stringify([usageSource, cliproxyUrl])
+    readonly property string connectionId: JSON.stringify([usageSource, proxyUrl])
     function localPath(url) { return String(url).replace("file://", "") }
+    function proxyArgs() { return ["--proxy-url", proxyUrl] }
   }
   Item { id: host }
   function check(condition, message) {
@@ -46,7 +47,7 @@ ShellRoot {
       } else if (root.phase === 1 && root.ticks > 8) {
         root.check(root.second.liveConnection === root.original, "first consumer destruction retains observer")
         root.check(root.second.liveState === "live", "observer continues after creator destruction")
-        usage.cliproxyUrl = "http://synthetic.invalid/new"
+        usage.proxyUrl = "http://synthetic.invalid/new"
         root.check(root.second.liveAccounts.length === 0, "changed connection clears activity immediately")
         root.phase = 2
       } else if (root.phase === 2 && root.second.liveState === "live") {

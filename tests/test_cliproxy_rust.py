@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from test_backend import ROOT, BACKEND, fixture, usage
+import proxy_connection as connection
 
 NOW = 1893456060
 
@@ -134,14 +135,15 @@ class RustIntegrationTests(unittest.TestCase):
     def test_legacy_auth_failures_and_missing_paths_detect_rust_with_same_key(self):
         for status in (401, 403, 404, 405):
             with self.subTest(status=status), proxy_server(legacy_status=status) as (url, requests):
-                client = usage.CliProxyClient(url, "test-management-key")
-                rows = client.auth_files(2)
+                # A Go hint left over from an earlier server still finds Fusebox.
+                client = connection.ProxyClient(url, "test-management-key", "go")
+                rows = client.accounts(2)
                 self.assertEqual(client.implementation, "rust")
                 self.assertEqual(len(rows), 4)
                 self.assertEqual(rows[0]["id"], "claude-one.json")
                 self.assertEqual(usage.cliproxy_account_record("claude", rows[0])["accountId"],
                                  usage.cliproxy_account_record("claude", {"id": "claude-one.json"})["accountId"])
-                client.auth_files(2)
+                client.accounts(2)
                 self.assertEqual(requests[-1], ("GET", "/api/accounts"))
                 with self.assertRaises(usage.ProviderFailure):
                     client.usage(rows[0], "https://upstream.invalid/action", {}, 1, data={})
@@ -149,46 +151,75 @@ class RustIntegrationTests(unittest.TestCase):
 
     def test_wrong_key_and_invalid_native_shape_never_succeed(self):
         with proxy_server() as (url, requests):
-            client = usage.CliProxyClient(url, "wrong-key")
+            client = connection.ProxyClient(url, "wrong-key")
             with self.assertRaises(usage.ProviderFailure) as error:
-                client.auth_files(2)
+                client.accounts(2)
             self.assertEqual(error.exception.kind, "config")
             self.assertEqual(client.implementation, "auto")
         for document in ({"files": []}, [None], [{"id": "x", "provider": "codex"}],
                          [dict(account(), disabled="false")], [dict(account(), file="mismatch.json")],
                          [account(), account()], [{}] * 4097):
             with self.subTest(document=str(document)[:80]), proxy_server(document=document) as (url, requests):
-                client = usage.CliProxyClient(url, "test-management-key")
+                client = connection.ProxyClient(url, "test-management-key")
                 with self.assertRaises(usage.ProviderFailure) as error:
-                    client.auth_files(2)
+                    client.accounts(2)
                 self.assertEqual(error.exception.kind, "malformed")
                 self.assertEqual(client.implementation, "auto")
 
     def test_empty_inventory_is_valid_and_legacy_outages_are_not_reinterpreted(self):
         with proxy_server(document=[]) as (url, requests):
-            client = usage.CliProxyClient(url, "test-management-key")
-            self.assertEqual(client.auth_files(2), [])
+            client = connection.ProxyClient(url, "test-management-key")
+            self.assertEqual(client.accounts(2), [])
             self.assertEqual(client.implementation, "rust")
         with proxy_server(legacy_status=500) as (url, requests):
             with self.assertRaises(usage.ProviderFailure):
-                usage.CliProxyClient(url, "test-management-key").auth_files(2)
+                connection.ProxyClient(url, "test-management-key", "go").accounts(2)
             self.assertEqual(requests, [("GET", "/v0/management/auth-files")])
+        with proxy_server(native_status=500) as (url, requests):
+            with self.assertRaises(usage.ProviderFailure):
+                connection.ProxyClient(url, "test-management-key").accounts(2)
+            self.assertEqual(requests, [("GET", "/api/accounts")])
+
+    def test_fusebox_is_probed_first_and_needs_one_request(self):
+        for hint in ("auto", "rust"):
+            with self.subTest(hint=hint), proxy_server() as (url, requests):
+                client = connection.ProxyClient(url, "test-management-key", hint)
+                self.assertEqual(len(client.accounts(2)), 4)
+                self.assertEqual(client.implementation, "rust")
+                self.assertEqual(requests, [("GET", "/api/accounts")])
+
+    def test_detection_failures_name_both_implementations_when_ambiguous(self):
+        with proxy_server(legacy_status=404, native_status=404) as (url, requests):
+            with self.assertRaises(usage.ProviderFailure) as error:
+                connection.ProxyClient(url, "test-management-key").accounts(2)
+            self.assertEqual(error.exception.kind, "http")
+            self.assertIn("No Fusebox or CLIProxyAPI management API", error.exception.message)
+        with proxy_server() as (url, requests):
+            with self.assertRaises(usage.ProviderFailure) as error:
+                connection.ProxyClient(url, "wrong-key").accounts(2)
+            self.assertEqual(error.exception.kind, "config")
+            self.assertIn("Fusebox / CLIProxyAPI rejected", error.exception.message)
+        # A route that is absent says less than an authenticated rejection.
+        with proxy_server(legacy_status=404, native_status=403) as (url, requests):
+            with self.assertRaises(usage.ProviderFailure) as error:
+                connection.ProxyClient(url, "test-management-key").accounts(2)
+            self.assertIn("Fusebox rejected", error.exception.message)
 
     def test_detection_shares_a_deadline(self):
-        client = usage.CliProxyClient("https://proxy.invalid", "key")
+        client = connection.ProxyClient("https://proxy.invalid", "key")
         failure = usage.ProviderFailure("config", "Rejected")
         failure.http_status = 401
         with mock.patch.object(client, "request", side_effect=failure) as request, \
                 mock.patch.object(usage.time, "monotonic", side_effect=[100, 102]):
             with self.assertRaises(usage.ProviderFailure) as error:
-                client.auth_files(1)
+                client.accounts(1)
         self.assertEqual(error.exception.kind, "timeout")
         self.assertEqual(request.call_count, 1)
 
     def test_native_response_limit_is_enforced(self):
         with proxy_server(document=[{"padding": "x" * (usage.MAX_HTTP_RESPONSE_BYTES + 1)}]) as (url, requests):
             with self.assertRaises(usage.ProviderFailure) as error:
-                usage.CliProxyClient(url, "test-management-key").auth_files(2)
+                connection.ProxyClient(url, "test-management-key").accounts(2)
             self.assertEqual(error.exception.kind, "malformed")
 
     def test_subprocess_discovery_and_native_activity_only_read_account_api(self):

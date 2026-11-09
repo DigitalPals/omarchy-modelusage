@@ -21,9 +21,9 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 from model_usage_common import atomic_write_json, clean_message
+import proxy_connection as connection
 
 SNAPSHOT_VERSION = 1
 MAX_DASHBOARD_BYTES = 8 * 1024 * 1024
@@ -62,50 +62,20 @@ def digest(value):
 
 def normalize_url(address):
     try:
-        if not isinstance(address, str) or any(ord(c) < 32 or ord(c) == 127 for c in address):
-            raise ValueError
-        parts = urllib.parse.urlsplit(address.strip())
-        parts.port  # Validate the port without echoing a possibly secret URL.
-        if (parts.scheme not in ("http", "https") or not parts.hostname
-                or parts.username is not None or parts.password is not None
-                or parts.query or parts.fragment):
-            raise ValueError
-        path = parts.path.rstrip("/")
-        for suffix in ("/management.html", "/v0/management/auth-files", "/v0/management"):
-            if path.endswith(suffix):
-                path = path[:-len(suffix)].rstrip("/")
-                break
-        if any(segment in (".", "..") for segment in urllib.parse.unquote(path).split("/")):
-            raise ValueError
-        return urllib.parse.urlunsplit((parts.scheme, parts.netloc.lower(), path, "", ""))
-    except (TypeError, ValueError):
+        # Lowercased hosts keep existing private snapshot names stable.
+        return connection.normalize_url(address, lowercase_host=True)
+    except connection.SettingError:
         raise FuseboxError("Enter the Fusebox server HTTP(S) URL without credentials, query, or fragment.") from None
 
 
 def read_key(path):
-    if not path:
-        raise FuseboxError("Enter the Fusebox management key in Costs settings.")
+    """The Fusebox key file; an empty path uses the shared proxy key, as Limits does."""
     try:
-        fd = os.open(Path(path).expanduser(), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise ValueError
-            raw = os.read(fd, 8193)
-        finally:
-            os.close(fd)
-        value = raw.decode("ascii").strip()
-        if not value or len(raw) > 8192 or any(ord(c) < 33 or ord(c) > 126 for c in value):
-            raise ValueError
-        return value
-    except (OSError, ValueError, UnicodeError):
+        return connection.read_secret(connection.key_path(path))
+    except connection.SettingError as exc:
+        if str(exc) == "unreadable":
+            raise FuseboxError("Could not read the Fusebox management key. Enter it in Limits or Costs settings.") from None
         raise FuseboxError("The Fusebox key file must be private (0600), owned by you, and contain the management key.") from None
-
-
-class NoRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # The management key must never follow a redirect to another origin.
-        return None
 
 
 class Client:
@@ -125,7 +95,7 @@ class Client:
             self.url + "/api/usage/" + path + "?" + urllib.parse.urlencode(query),
             headers={"Authorization": "Bearer " + self.key, "Accept": "application/json"})
         try:
-            with urllib.request.build_opener(NoRedirects()).open(request, timeout=self.remaining()) as response:
+            with connection.open_url(request, self.remaining()) as response:
                 parts, size = [], 0
                 while size <= limit:
                     self.remaining()

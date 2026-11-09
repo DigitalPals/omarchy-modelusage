@@ -15,10 +15,11 @@ ShellRoot {
   QtObject {
     id: usage
     property string connectionId: "first-server"
-    property string usageSource: "cliproxy"
-    property string cliproxyUrl: "http://synthetic.invalid"
-    property string cliproxyKeyFile: ""
+    property string usageSource: "proxy"
+    property string proxyUrl: "http://synthetic.invalid"
+    property string proxyKeyFile: ""
     function localPath(url) { return String(url).replace("file://", "") }
+    function proxyArgs() { return ["--proxy-url", proxyUrl] }
   }
   Item { id: host; width: 420; height: 800 }
 
@@ -47,7 +48,7 @@ ShellRoot {
     backend.finished.connect(function() { root.finishes++ })
     usage.usageSource = "direct"
     check(!backend.begin(account, "Account 1"), "direct mode is not actionable")
-    usage.usageSource = "cliproxy"
+    usage.usageSource = "proxy"
     check(!backend.begin(Object.assign({}, account, { credits: {} }), "Account 1"), "unknown count is not actionable")
     check(backend.begin(account, "Account 1"), "begin fresh lookup")
     check(!backend.begin(account, "Account 2"), "duplicate click is ignored")
@@ -107,8 +108,8 @@ ShellRoot {
           return
         }
         root.widget = root.create("Panel.qml", { moduleName: "test.reset", ipcTarget: "test.reset",
-          settings: { usageSource: "cliproxy", cliproxyUrl: "https://proxy.test/prefix",
-            cliproxyKeyFile: "/private/proxy key", enabledProviders: [], refreshIntervalSec: 3600 } })
+          settings: { usageSource: "proxy", proxyUrl: "https://proxy.test/prefix",
+            proxyKeyFile: "/private/proxy key", enabledProviders: [], refreshIntervalSec: 3600 } })
         root.widget.resetAction.scriptPath = Quickshell.env("MODEL_USAGE_FAKE_RESET")
         root.phase++
       } else if (root.phase === 6 && root.widget.providers.length > 0) {

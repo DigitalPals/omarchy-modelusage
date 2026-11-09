@@ -17,10 +17,10 @@ Item {
   property bool pendingRefresh: false
   property bool launchPending: false
   property string scriptPath: usageBackend.localPath(Qt.resolvedUrl("scripts/proxy-activity.py"))
-  readonly property string keeperUrl: String(settings.costKeeperUrl || "")
-  readonly property string passwordFile: String(settings.costKeeperPasswordFile || "")
+  readonly property string keeperUrl: String(UsageLogic.setting(settings, "keeperUrl", ""))
+  readonly property string passwordFile: String(UsageLogic.setting(settings, "keeperPasswordFile", ""))
   readonly property bool rustProxy: usageBackend.proxyImplementation === "rust"
-  readonly property bool trackingEnabled: usageBackend.usageSource === "cliproxy" && (rustProxy || keeperUrl.trim() !== "")
+  readonly property bool trackingEnabled: usageBackend.usageSource === "proxy" && (rustProxy || keeperUrl.trim() !== "")
   readonly property bool useLive: trackingEnabled && rustProxy && settings.liveAccountActivity !== false
   property string liveScriptPath: usageBackend.localPath(Qt.resolvedUrl("scripts/proxy-live.py"))
   property var liveConnection: null
@@ -33,14 +33,14 @@ Item {
 
   function syncLive() {
     if (!ready) return
-    var key = useLive ? JSON.stringify([usageBackend.cliproxyUrl, usageBackend.cliproxyKeyFile, liveScriptPath]) : ""
+    var key = useLive ? JSON.stringify([usageBackend.proxyUrl, usageBackend.proxyKeyFile, liveScriptPath]) : ""
     if (key === liveKey) return
     liveConnection = null
     if (liveKey !== "") UsageLogic.releaseLive(liveKey)
     liveKey = key
     if (key !== "") {
       liveConnection = UsageLogic.acquireLive(key, null, { scriptPath: liveScriptPath,
-          proxyUrl: usageBackend.cliproxyUrl, keyFile: usageBackend.cliproxyKeyFile })
+          proxyUrl: usageBackend.proxyUrl, keyFile: usageBackend.proxyKeyFile })
     }
   }
   Component.onCompleted: { ready = true; syncLive() }
@@ -58,10 +58,8 @@ Item {
     if (process.running || launchPending) { pendingRefresh = true; return }
     launchPending = true
     pendingRefresh = false
-    var command = ["python3", scriptPath, "--cliproxy-url", usageBackend.cliproxyUrl,
-      "--timeout", "10"]
+    var command = ["python3", scriptPath, "--timeout", "10"].concat(usageBackend.proxyArgs())
     if (!rustProxy && keeperUrl.trim() !== "") command.push("--keeper-url", keeperUrl)
-    if (usageBackend.cliproxyKeyFile !== "") command.push("--cliproxy-key-file", usageBackend.cliproxyKeyFile)
     if (!rustProxy && passwordFile !== "") command.push("--keeper-password-file", passwordFile)
     process.command = command
     process.connectionId = connectionId

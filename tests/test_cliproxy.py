@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from test_backend import BACKEND, fixture, usage
+import proxy_connection as connection
 
 
 class CliProxyTests(unittest.TestCase):
@@ -36,9 +37,9 @@ class CliProxyTests(unittest.TestCase):
     def test_discovery_ignores_local_filters_and_keeps_unqueried_accounts(self):
         entries = [{"provider": "new-provider", "auth_index": "a"},
                    {"provider": "antigravity", "auth_index": "b", "disabled": True}]
-        with mock.patch.object(usage, "read_cliproxy_key", return_value="key"), \
-                mock.patch.object(usage.CliProxyClient, "auth_files", return_value=entries), \
-                mock.patch.object(usage.CliProxyClient, "usage") as upstream:
+        with mock.patch.object(usage, "read_key", return_value="key"), \
+                mock.patch.object(connection.ProxyClient, "accounts", return_value=entries), \
+                mock.patch.object(connection.ProxyClient, "usage") as upstream:
             rows = usage.collect_cliproxy([], 1, "https://proxy.test", Path("key"), discover=True)
         self.assertEqual([row["id"] for row in rows], ["antigravity", "new-provider"])
         self.assertEqual([row["status"] for row in rows], ["disabled", "unsupported"])
@@ -54,12 +55,12 @@ class CliProxyTests(unittest.TestCase):
 
     def test_urls_accept_dashboard_management_and_reverse_proxy_prefix(self):
         for suffix in ("", "/", "/management.html", "/v0/management", "/v0/management/auth-files"):
-            self.assertEqual(usage.normalize_cliproxy_url("https://proxy.test/prefix" + suffix), "https://proxy.test/prefix")
+            self.assertEqual(connection.server_url("https://proxy.test/prefix" + suffix), "https://proxy.test/prefix")
         for address in ("file:///tmp/key", "https://user:secret@proxy.test", "https://proxy.test?key=secret",
                         "https://proxy.test#secret", "https://proxy.test:bad", "https://proxy.test/%2e%2e",
                         "https://proxy.test\n/secret", ""):
             with self.subTest(address=address), self.assertRaises(usage.ProviderFailure) as raised:
-                usage.normalize_cliproxy_url(address)
+                connection.server_url(address)
             self.assertEqual(raised.exception.kind, "config")
             self.assertNotIn("secret", raised.exception.message)
 
@@ -68,29 +69,29 @@ class CliProxyTests(unittest.TestCase):
             path = Path(temporary) / "key"
             path.write_text("management-secret\n")
             path.chmod(0o600)
-            self.assertEqual(usage.read_cliproxy_key(path), "management-secret")
+            self.assertEqual(connection.read_key(path), "management-secret")
             path.chmod(0o644)
             with self.assertRaises(usage.ProviderFailure):
-                usage.read_cliproxy_key(path)
+                connection.read_key(path)
             path.chmod(0o600)
             link = Path(temporary) / "link"
             link.symlink_to(path)
             with self.assertRaises(usage.ProviderFailure):
-                usage.read_cliproxy_key(link)
+                connection.read_key(link)
             fifo = Path(temporary) / "fifo"
             os.mkfifo(fifo, 0o600)
             with self.assertRaises(usage.ProviderFailure):
-                usage.read_cliproxy_key(fifo)
+                connection.read_key(fifo)
             for raw in (b"", b"secret\nsecond", b"x" * 8193, b"\xff", b"secret\x7f"):
                 path.write_bytes(raw)
                 with self.assertRaises(usage.ProviderFailure):
-                    usage.read_cliproxy_key(path)
+                    connection.read_key(path)
 
     def test_xdg_key_location_and_override(self):
         with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": "/config", "CLIPROXY_API_KEY_FILE": ""}):
-            self.assertEqual(usage.cliproxy_key_path(), Path("/config/omarchy/model-usage/cliproxy.key"))
+            self.assertEqual(connection.default_key_path(), Path("/config/omarchy/model-usage/cliproxy.key"))
             with mock.patch.dict(os.environ, {"CLIPROXY_API_KEY_FILE": "/private/proxy.key"}):
-                self.assertEqual(usage.cliproxy_key_path(), Path("/private/proxy.key"))
+                self.assertEqual(connection.default_key_path(), Path("/private/proxy.key"))
 
     def test_codex_scoped_windows_credits_and_relative_resets(self):
         with mock.patch.object(usage.time, "time", return_value=1_900_000_000):
@@ -128,7 +129,7 @@ class CliProxyTests(unittest.TestCase):
                 self.assertIsNone(credits["resetCreditsAvailable"])
 
     def test_management_errors_are_safe_and_bounded(self):
-        client = usage.CliProxyClient("https://proxy.test", "private-key")
+        client = connection.ProxyClient("https://proxy.test", "private-key")
         cases = [
             (urllib.error.HTTPError("https://proxy.test", 401, "private-key", {}, None), "config"),
             (urllib.error.HTTPError("https://proxy.test", 403, "private-key", {}, None), "config"),
@@ -142,7 +143,7 @@ class CliProxyTests(unittest.TestCase):
                 with mock.patch.object(usage.urllib.request, "build_opener") as opener:
                     opener.return_value.open.side_effect = error
                     with self.assertRaises(usage.ProviderFailure) as raised:
-                        client.auth_files(1)
+                        client.accounts(1)
                 self.assertEqual(raised.exception.kind, kind)
                 self.assertNotIn("private-key", raised.exception.message)
             finally:
@@ -153,12 +154,12 @@ class CliProxyTests(unittest.TestCase):
                 reader = opener.return_value.open.return_value.__enter__.return_value.read
                 reader.return_value = raw
                 with self.assertRaises(usage.ProviderFailure) as raised:
-                    client.auth_files(1)
+                    client.go_accounts(1)
                 self.assertEqual(raised.exception.kind, "malformed")
                 reader.assert_called_once_with(usage.MAX_HTTP_RESPONSE_BYTES + 1)
 
     def test_upstream_errors_and_malformed_envelopes(self):
-        client = usage.CliProxyClient("https://proxy.test", "private-key")
+        client = connection.ProxyClient("https://proxy.test", "private-key")
         for envelope, kind in (({"status_code": 401}, "expired"), ({"statusCode": 429}, "rate_limited"),
                                ({"status_code": 502}, "http"), ({"body": "{}"}, "malformed"),
                                ({"status_code": 200, "body": "secret"}, "malformed"), ([], "malformed")):
@@ -179,13 +180,13 @@ class CliProxyTests(unittest.TestCase):
         self.assertNotIn("private-key", json.dumps(failed))
 
     def test_no_enabled_providers_skips_management_entirely(self):
-        with mock.patch.object(usage, "read_cliproxy_key") as key:
+        with mock.patch.object(usage, "read_key") as key:
             self.assertEqual(usage.collect_cliproxy([], 1, "invalid", Path("missing")), [])
         key.assert_not_called()
 
     def test_missing_accounts_and_failed_configuration_keep_provider_contract(self):
-        with mock.patch.object(usage, "read_cliproxy_key", return_value="private-key"), \
-                mock.patch.object(usage.CliProxyClient, "auth_files", return_value=[]):
+        with mock.patch.object(usage, "read_key", return_value="private-key"), \
+                mock.patch.object(connection.ProxyClient, "accounts", return_value=[]):
             results = usage.collect_cliproxy(["claude", "kimi"], 1, "https://proxy.test", Path("key"))
         self.assertEqual([row["id"] for row in results], ["claude", "kimi"])
         self.assertTrue(all(row["errorKind"] == "no_credentials" and row["authCommand"] == "" for row in results))
@@ -195,14 +196,14 @@ class CliProxyTests(unittest.TestCase):
 
     def test_account_limit_and_shared_deadline(self):
         entries = [{"provider": "kimi", "auth_index": str(i)} for i in range(40)]
-        with mock.patch.object(usage, "read_cliproxy_key", return_value="key"), \
-                mock.patch.object(usage.CliProxyClient, "auth_files", return_value=entries), \
+        with mock.patch.object(usage, "read_key", return_value="key"), \
+                mock.patch.object(connection.ProxyClient, "accounts", return_value=entries), \
                 mock.patch.object(usage, "fetch_cliproxy_account", side_effect=lambda *args: usage.base_provider("kimi")) as fetch:
             result = usage.collect_cliproxy(["kimi"], 1, "https://proxy.test", Path("key"))[0]
         self.assertEqual(fetch.call_count, usage.MAX_CLIPROXY_ACCOUNTS)
         self.assertIn("first 32", result["notice"])
-        with mock.patch.object(usage, "read_cliproxy_key", return_value="key"), \
-                mock.patch.object(usage.CliProxyClient, "auth_files", return_value=entries[:1]), \
+        with mock.patch.object(usage, "read_key", return_value="key"), \
+                mock.patch.object(connection.ProxyClient, "accounts", return_value=entries[:1]), \
                 mock.patch.object(usage.time, "monotonic", side_effect=[0, 2]), \
                 mock.patch.object(usage, "fetch_cliproxy_account") as fetch:
             result = usage.collect_cliproxy(["kimi"], 1, "https://proxy.test", Path("key"))[0]
@@ -281,8 +282,8 @@ class CliProxyIntegrationTests(unittest.TestCase):
             state.mkdir()
             direct_history = state / "history.json"
             direct_history.write_text('{"direct":"untouched"}')
-            command = [sys.executable, str(BACKEND), "--source", "cliproxy", "--cliproxy-url", address + "/management.html",
-                       "--cliproxy-key-file", str(key), "--state-dir", str(state), "--timeout", "2"]
+            command = [sys.executable, str(BACKEND), "--source", "proxy", "--proxy-url", address + "/management.html",
+                       "--proxy-key-file", str(key), "--state-dir", str(state), "--timeout", "2"]
             process = subprocess.run(command, capture_output=True, text=True, timeout=10, check=True)
             payload = json.loads(process.stdout)
             claude, codex, gemini, kimi = payload["providers"]
@@ -306,7 +307,13 @@ class CliProxyIntegrationTests(unittest.TestCase):
             self.assertEqual(json.loads(history.read_text())["providers"]["claude"][-1][1], 25)
             for secret in ("private-management-key", "private-client-key", "private-token", "claude-available", "chatgpt-account"):
                 self.assertNotIn(secret, process.stdout + process.stderr + history.read_text())
-            self.assertEqual(len(calls), 6)  # Account list and five quota reads; no model or client-key requests.
+            # Fusebox's account list is probed first, then the Go account list
+            # and five quota reads; no model or client-key requests.
+            self.assertEqual(calls[0][0], "/api/accounts")
+            self.assertEqual(calls[1][0], "/v0/management/auth-files")
+            self.assertEqual(len(calls), 7)
+            self.assertEqual(payload["proxyImplementation"], "go")
+            self.assertEqual(payload["source"], "cliproxy")
             for path, authorization, body in calls:
                 self.assertEqual(authorization, "Bearer private-management-key")
                 if body:
@@ -316,11 +323,23 @@ class CliProxyIntegrationTests(unittest.TestCase):
                     if body["auth_index"] == "codex-account":
                         self.assertEqual(body["header"]["ChatGPT-Account-Id"], "chatgpt-account")
 
+    def test_detected_go_hint_skips_the_fusebox_probe(self):
+        with proxy_server() as (address, calls):
+            client = connection.ProxyClient(address, "private-management-key", "go")
+            self.assertEqual(len(client.accounts(1)), len(fixture("cliproxy-auth-files.json")["files"]))
+            self.assertEqual(client.implementation, "go")
+            self.assertEqual([call[0] for call in calls], ["/v0/management/auth-files"])
+        with proxy_server() as (address, calls):
+            client = connection.ProxyClient(address, "private-management-key", "rust")
+            client.accounts(1)
+            self.assertEqual(client.implementation, "go")
+            self.assertEqual([call[0] for call in calls], ["/api/accounts", "/v0/management/auth-files"])
+
     def test_management_redirect_does_not_forward_key(self):
         with proxy_server(redirect=True) as (address, calls):
-            client = usage.CliProxyClient(address, "private-key")
+            client = connection.ProxyClient(address, "private-key")
             with self.assertRaises(usage.ProviderFailure) as raised:
-                client.auth_files(1)
+                client.accounts(1)
         self.assertEqual(raised.exception.kind, "http")
         self.assertEqual(len(calls), 1)
 

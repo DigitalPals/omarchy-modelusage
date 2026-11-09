@@ -7,6 +7,9 @@
 - `Panel.qml` owns the injected bar widget, native popup, keyboard behavior, provider selection, error/credit/limit presentation, and namespaced IPC.
 - `UsageBackend.qml` owns one bounded asynchronous Python process, coalesces duplicate refresh requests, applies the configured interval, and rejects malformed contract output.
 - `scripts/usage-fetch.py` performs parallel, failure-isolated provider collection and emits the versioned provider-neutral contract documented in [docs/backend-contract.md](backend-contract.md).
+- `scripts/proxy_connection.py` is the single Fusebox / CLIProxyAPI connection layer: URL normalization, private key files, redirect rejection, the management client, implementation detection, and the shared `--proxy-url`/`--proxy-key-file`/`--implementation` flags. Quota, activity, live, reset, Fusebox cost, and connection-test scripts all use it.
+- `ConnectionTest.qml` and `scripts/proxy-test.py` test unsaved connection settings from Limits and Costs; the draft key goes over stdin.
+- `UsageLogic.js` resolves connection settings (`setting`, `proxyConnection`, `fuseboxCostConnection`) including renamed keys, and `migrateSettings` rewrites them on save. `UsageBackend.proxyArgs()` gives the other backends the Limits connection with its detected implementation.
 - `CostBackend.qml` owns an independent, on-demand transcript scan, keeps the last known-good result across malformed responses, and never changes quota polling.
 - `scripts/cost-fetch.py` streams CLI JSONL, applies provider-specific deduplication, resumes growing files from a guarded byte position, caches sanitized usage records, prices attributable models, and emits [the estimated-cost contract](cost-contract.md).
 - `CostPriceEditor.qml` provides validated custom-price fields inside settings, with exact model matching and Save/Cancel behavior.

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Reuse the Limits connection for Fusebox costs by default: enabling **Include Fusebox usage** no longer needs the URL and key a second time. Costs settings saved with their own URL keep it, and **Use the Limits connection** can be turned off for a different server.
+- Add **Test connection** to Limits and Costs settings. It names the detected implementation and counts accounts and providers, or explains a rejected key, an unreachable server, or a URL without a management API, all before saving. Unsaved keys are passed privately, never as process arguments.
+- Probe Fusebox's account API first and pass the detected implementation to later refreshes, activity, live and reset processes, so Fusebox refreshes no longer start with a failed CLIProxyAPI request. A server replaced behind the same URL is still detected.
+- Show only the settings the detected server uses: Fusebox hides the CPA Usage Keeper fields; CLIProxyAPI hides the live activity switch.
+- Share one connection module across all backends, so URL handling, private key files and redirect rejection behave identically. Keys with spaces saved in settings now also work for Fusebox costs.
+- Rename settings to `usageSource: proxy`, `proxyUrl`, `proxyKeyFile`, `keeperUrl` and `keeperPasswordFile`, and backend flags to `--source proxy`, `--proxy-url` and `--proxy-key-file`. Earlier names are still read, and the next Save migrates them.
+- Fix the reset QML contract check, which required a retry request to match the original exactly, including its retry flag.
+
 ## 1.4.0
 
 - Read Fusebox's full account snapshot: Meta and Antigravity quotas, model-scoped and spending limits, Claude extra usage, Codex credits, Claude Pro/Max/Ultra and ChatGPT Pro tier names. Feature allowances such as Code review and Cowork are informational and never drive the menu bar or warnings.

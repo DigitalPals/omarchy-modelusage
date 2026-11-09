@@ -22,8 +22,8 @@ ShellRoot {
     })
     backend.refresh()
     check(backend.loading, "refresh reports loading during process startup")
-    backend.settings = {usageSource: "cliproxy", cliproxyUrl: "https://new.example",
-      cliproxyKeyFile: "/synthetic/new-key", enabledProviders: ["codex"]}
+    backend.settings = {usageSource: "proxy", proxyUrl: "https://new.example",
+      proxyKeyFile: "/synthetic/new-key", enabledProviders: ["codex"]}
     backend.refresh()
     backend.refresh()
   }

@@ -13,8 +13,9 @@ parser.add_argument("--providers", default="claude,codex,kimi")
 parser.add_argument("--timeout")
 parser.add_argument("--state-dir")
 parser.add_argument("--source", default="direct")
-parser.add_argument("--cliproxy-url")
-parser.add_argument("--cliproxy-key-file")
+parser.add_argument("--proxy-url", "--cliproxy-url", dest="cliproxy_url")
+parser.add_argument("--implementation", default="auto")
+parser.add_argument("--proxy-key-file", "--cliproxy-key-file", dest="cliproxy_key_file")
 args = parser.parse_args()
 
 # A singleton-backend instance in the QML contract deliberately gets bad
@@ -27,7 +28,7 @@ payload = json.loads(Path(os.environ["MODEL_USAGE_NORMALIZED_FIXTURE"]).read_tex
 now = int(time.time())
 payload["generatedAt"] = dt.datetime.now(dt.timezone.utc).isoformat()
 for provider in payload["providers"]:
-    if args.source == "cliproxy":
+    if args.source in ("proxy", "cliproxy"):
         if args.cliproxy_url != "https://proxy.test/prefix" or args.cliproxy_key_file != "/private/proxy key":
             raise SystemExit("CLIProxyAPI settings were not forwarded intact")
         provider.update(source="CLIProxyAPI management API", authCommand="", accountCount=3, availableCount=2)
@@ -47,7 +48,7 @@ for provider in payload["providers"]:
             reset_offset = (index + 2) * 86400
         window["resetsAt"] = now + reset_offset
 selected = {value for value in args.providers.split(",") if value}
-if args.source == "cliproxy":
+if args.source in ("proxy", "cliproxy"):
     payload["source"] = "cliproxy"
     payload["providers"].append({"id": "gemini", "name": "Gemini", "status": "unsupported", "windows": [],
                                  "notice": "Quota lookup unavailable", "accounts": []})

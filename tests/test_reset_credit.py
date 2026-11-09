@@ -31,7 +31,7 @@ class ResetTests(unittest.TestCase):
                       "chatgpt_account_id": "selected-chatgpt", "email": "private@example.test"}
         self.account_id = reset.usage.cliproxy_account_record("codex", self.entry)["accountId"]
         self.client = mock.Mock()
-        self.client.auth_files.return_value = [dict(self.entry, id="other", auth_index="other"), self.entry]
+        self.client.accounts.return_value = [dict(self.entry, id="other", auth_index="other"), self.entry]
         self.client.usage.return_value = {"available_count": 1, "credits": [credit()]}
 
     def prepare(self):
@@ -85,7 +85,7 @@ class ResetTests(unittest.TestCase):
                         [dict(self.entry, chatgpt_account_id="changed")],
                         [dict(self.entry, auth_index="changed")], [self.entry, self.entry],
                         [dict(self.entry, provider="claude")]):
-            self.client.auth_files.return_value = entries
+            self.client.accounts.return_value = entries
             self.client.usage.reset_mock()
             with self.subTest(entries=entries), self.assertRaises(reset.usage.ProviderFailure):
                 self.consume(details)

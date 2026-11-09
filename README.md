@@ -81,7 +81,8 @@ The current UI rendered with representative fixture data; this is a local CLI mo
 
 1. Open **Limits → gear** and select **Fusebox** (or **Fusebox / CLIProxyAPI** before detection) under **Quota source**. The Go implementation appears as **CLIProxyAPI**.
 2. Enter the server URL, such as `http://127.0.0.1:8317`, and its **Management API key**.
-3. Save. All managed providers and accounts are discovered automatically; local CLI sign-ins are unnecessary.
+3. Optionally click **Test connection** to confirm the server, key, and account count before saving.
+4. Save. All managed providers and accounts are discovered automatically; local CLI sign-ins are unnecessary.
 
 The **Fusebox on GitHub** link in Limits settings opens [the project repository](https://github.com/DigitalPals/Fusebox).
 
@@ -103,7 +104,7 @@ Other discovered providers display an unsupported-quota notice; paused and faile
 
 Open **Costs → gear**. Local **Codex CLI** and **Claude Code CLI** history are enabled by default. Choose **Add T3 server** to enter a name, HTTP(S) base URL, and connection token; up to four enabled servers contribute together. T3 usage contract **4 or 5** is required. Blank token replacements preserve saved credentials.
 
-**Fusebox** adds Fusebox's own priced history. Open **Costs → gear → Fusebox**, enable **Include Fusebox usage**, and enter the server URL and management API key. The key is saved privately and is separate from Limits. Fusebox estimates are used as reported; unpriced requests stay unpriced.
+**Fusebox** adds Fusebox's own priced history. Open **Costs → gear → Fusebox**, enable **Include Fusebox usage**, and Save: by default Costs reuses the Fusebox server and key from Limits. Turn off **Use the Limits connection** to read a different Fusebox server with its own privately saved key. Fusebox estimates are used as reported; unpriced requests stay unpriced.
 
 CLIs routed through Fusebox also write transcripts, and those carry no Fusebox request IDs, so the same request could count twice. By default **Use Fusebox instead of transcripts** leaves local and T3 history out while Fusebox is readable. To include sessions that bypass Fusebox, turn on Fusebox's Claude Code/Codex history import, which deduplicates by response ID. Turn the option off to keep transcripts for Claude and OpenAI and add only Fusebox's other providers.
 

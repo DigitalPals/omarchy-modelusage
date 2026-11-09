@@ -27,8 +27,8 @@
         "kimi"
       ],
       "usageSource": "direct",
-      "cliproxyUrl": "http://127.0.0.1:8317",
-      "cliproxyKeyFile": "",
+      "proxyUrl": "http://127.0.0.1:8317",
+      "proxyKeyFile": "",
       "hideAccountEmails": true,
       "squareUsageCards": true,
       "barDisplayMode": "Percentages",
@@ -40,14 +40,15 @@
       "warningThreshold": 25,
       "criticalThreshold": 10,
       "costPriceOverrides": "{}",
-      "costKeeperUrl": "",
-      "costKeeperPasswordFile": "",
+      "keeperUrl": "",
+      "keeperPasswordFile": "",
       "costLocalProviders": [
         "claude",
         "codex"
       ],
       "costT3Servers": "[]",
       "costFuseboxEnabled": false,
+      "costFuseboxConnection": "limits",
       "costFuseboxUrl": "",
       "costFuseboxKeyFile": "",
       "costFuseboxOverlap": "fusebox",
@@ -60,20 +61,20 @@
         "label": "Quota source",
         "options": [
           "direct",
-          "cliproxy"
+          "proxy"
         ],
         "defaultValue": "direct",
-        "description": "Read local CLI sign-ins or query Fusebox and CLIProxyAPI accounts. Proxy implementations are detected automatically. Costs has its own source setting."
+        "description": "direct reads local CLI sign-ins; proxy reads Fusebox or CLIProxyAPI accounts (detected automatically). Older settings with cliproxy are read as proxy."
       },
       {
-        "key": "cliproxyUrl",
+        "key": "proxyUrl",
         "type": "string",
         "label": "Fusebox / CLIProxyAPI server URL",
         "defaultValue": "http://127.0.0.1:8317",
-        "description": "Server, management.html, or /v0/management URL. HTTPS certificates are verified."
+        "description": "Server, management.html, or /v0/management URL for Limits. Costs reuses it for Fusebox history unless another server is set. HTTPS certificates are verified."
       },
       {
-        "key": "cliproxyKeyFile",
+        "key": "proxyKeyFile",
         "type": "string",
         "label": "Proxy management key file",
         "defaultValue": "",
@@ -193,14 +194,14 @@
         "description": "Managed by Custom model prices in Costs settings. Exact model IDs mapped to USD-per-million input/output and optional cache rates as JSON."
       },
       {
-        "key": "costKeeperUrl",
+        "key": "keeperUrl",
         "type": "string",
         "label": "CPA Usage Keeper URL",
         "defaultValue": "",
-        "description": "Optional Keeper URL for Go proxy account activity. Fusebox reports activity directly. Not used for Costs."
+        "description": "Optional CPA Usage Keeper URL for CLIProxyAPI last-used accounts. Fusebox reports activity directly."
       },
       {
-        "key": "costKeeperPasswordFile",
+        "key": "keeperPasswordFile",
         "type": "string",
         "label": "Keeper password file",
         "defaultValue": "",
@@ -240,18 +241,29 @@
         "description": "Include Fusebox's own API-price estimates in Costs. Configured in Costs settings, separately from Limits."
       },
       {
+        "key": "costFuseboxConnection",
+        "type": "enum",
+        "label": "Fusebox cost connection",
+        "defaultValue": "limits",
+        "options": [
+          "limits",
+          "custom"
+        ],
+        "description": "limits: read Fusebox history with the Limits server and key. custom: use costFuseboxUrl and costFuseboxKeyFile."
+      },
+      {
         "key": "costFuseboxUrl",
         "type": "string",
         "label": "Fusebox cost server URL",
         "defaultValue": "",
-        "description": "Fusebox server for Costs, such as http://127.0.0.1:8317."
+        "description": "Fusebox server for Costs when costFuseboxConnection is custom."
       },
       {
         "key": "costFuseboxKeyFile",
         "type": "string",
         "label": "Fusebox cost key file",
         "defaultValue": "",
-        "description": "Managed privately when saving the Fusebox management key in Costs settings."
+        "description": "Private Fusebox key file for Costs when costFuseboxConnection is custom. Managed by Costs settings."
       },
       {
         "key": "costFuseboxOverlap",

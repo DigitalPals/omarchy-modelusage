@@ -14,15 +14,19 @@ Model Usage is a monitor, not an authentication manager. Its backend code reads 
 
 Environment overrides owned by the CLIs are honored: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIMI_CODE_HOME`, `KIMI_CODE_BASE_URL`, and `KIMI_SHARE_DIR`.
 
-### CLIProxyAPI
+### Fusebox and CLIProxyAPI
 
-Open the Model Usage popup and click the **gear icon** in its upper-right corner. Select **CLIProxyAPI** under **Quota source** to discover all providers and accounts managed by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) or [CLIProxyAPI-Rust](https://github.com/IuCC123/CLIProxyAPI-Rust). The implementation is detected automatically with the same management key. Local CLI sign-ins are not needed for this source. The default `direct` source retains the existing behavior. Click **Save** to apply your configuration.
+Open the Model Usage popup and click the **gear icon** in its upper-right corner. Select **Fusebox / CLIProxyAPI** under **Quota source** to discover all providers and accounts managed by [Fusebox](https://github.com/DigitalPals/Fusebox) or [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). The implementation is detected automatically with the same management key, and the source is then labelled **Fusebox** or **CLIProxyAPI**. Local CLI sign-ins are not needed for this source. The default `direct` source retains the existing behavior.
 
-Set **CLIProxyAPI server URL** to your server address (default `http://127.0.0.1:8317`). Dashboard URLs ending in `/management.html`, management API URLs ending in `/v0/management` or `/v0/management/auth-files`, and reverse-proxy path prefixes are accepted. HTTPS certificates are verified; redirects are rejected.
+Set the **server URL** (default `http://127.0.0.1:8317`). Dashboard URLs ending in `/management.html`, management API URLs ending in `/v0/management` or `/v0/management/auth-files`, and reverse-proxy path prefixes are accepted. HTTPS certificates are verified; redirects are rejected.
 
-Enter the server's **Management API key** in the masked settings field and click **Save**. Use the plaintext key accepted by the management panel, not a client API key or a bcrypt hash from the server configuration. The widget stores it automatically in a private file with permissions `0600`; you do not need to create or choose a file. Leave the field blank to keep your existing key. The saved key is never loaded back into the form, and Cancel discards an entered key.
+Enter the server's **Management API key** in the masked settings field. Use the plaintext key accepted by the management panel, not a client API key or a bcrypt hash from the server configuration. Click **Test connection** to check the URL and key before saving: the result names the detected implementation and counts its accounts and providers, or explains a rejected key, an unreachable server, or a URL with no management API. The test reads only the account list, and an unsaved key is passed to it privately, never as a process argument. Click **Save** to apply your configuration. The widget stores the key automatically in a private file with permissions `0600`; you do not need to create or choose a file. Leave the field blank to keep your existing key. The saved key is never loaded back into the form, and Cancel discards an entered key.
 
-For terminal-only configuration, you can still supply a key file with `cliproxyKeyFile`. The default file is `${XDG_CONFIG_HOME:-~/.config}/omarchy/model-usage/cliproxy.key`. To create it without putting the key in shell history:
+Once the implementation is known (from a test or the last refresh), settings show only what that server uses: Fusebox hides the CPA Usage Keeper fields, and CLIProxyAPI hides the live activity switch.
+
+Fusebox's account API is tried first; CLIProxyAPI's is tried when Fusebox's is absent or rejects the key. After the first refresh, the detected implementation is passed to later refreshes, activity, live and reset processes so they try it first, and still fall back if the server behind the URL changes.
+
+For terminal-only configuration, you can still supply a key file with `proxyKeyFile`. The default file is `${XDG_CONFIG_HOME:-~/.config}/omarchy/model-usage/cliproxy.key`. To create it without putting the key in shell history:
 
 ```bash
 install -d -m 700 "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/model-usage"
@@ -33,8 +37,8 @@ install -d -m 700 "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/model-usage"
 Enable the source:
 
 ```bash
-omarchy bar set digitalpals.model-usage usageSource cliproxy
-omarchy bar set digitalpals.model-usage cliproxyUrl https://proxy.example.com
+omarchy bar set digitalpals.model-usage usageSource proxy
+omarchy bar set digitalpals.model-usage proxyUrl https://proxy.example.com
 ```
 
 The Go collector lists managed accounts and asks CLIProxyAPI to make read-only upstream quota calls using `$TOKEN$` substitution. Provider tokens stay on the server. All managed providers are discovered automatically, independently of the local CLI provider selection. Claude, Codex, Kimi, and Antigravity have quota lookups; other providers stay visible with an explicit unsupported-quota notice. Antigravity requires the account’s project ID. Paused accounts remain browsable without being queried. Remote servers must permit remote management access.
@@ -49,7 +53,7 @@ Provider buttons wrap to fit the panel. Failed refreshes preserve the last known
 
 **Hide account emails** is enabled by default in widget settings. Account cards and menubar tooltips use numbered labels (Account 1, Account 2, …), and account identities are omitted from the settings details. Turn it off and Save to show usernames/email addresses. This is a display preference; quota collection continues normally.
 
-Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. Costs sources are configured separately using the gear on Costs.
+Proxy quota history continues to record the best-capacity pool summary and is stored separately for each server under `cliproxy-<server-hash>/history.json` in the normal state directory. It never mixes with direct-CLI history. Costs sources are configured using the gear on Costs; Fusebox costs reuse this connection by default.
 
 ### Local and remote cost history
 
@@ -82,8 +86,12 @@ filter is needed: all enabled cost sources contribute together.
 
 **Costs → gear → Fusebox** adds Fusebox's usage database
 (`/api/usage/dashboard` and `/api/usage/observations?view=combined`) with the
-management API key. These settings are independent of Limits; the URL field
-suggests the Limits URL. 7D/30D read daily totals by model (one unfiltered read
+management API key. **Use the Limits connection** is on by default: enable
+**Include Fusebox usage** and Save, and Costs reads the server and key saved in
+Limits, following later changes there. Turn it off to enter a different server
+and key; the URL starts from the Limits URL. **Test connection** confirms that
+the server is Fusebox, since CLIProxyAPI records no usage history. Installations
+that saved their own Costs URL in 1.4 keep that separate server. 7D/30D read daily totals by model (one unfiltered read
 plus one per provider; mismatched totals mark the source partial). 24H pages
 through individual responses, 500 per page and at most 40 pages; reaching the
 cap marks it partial. Fusebox's own estimates are used as reported. Custom
@@ -111,7 +119,7 @@ labelled stale.
 Costs does not read CLIProxyAPI or Keeper. Keeper remains optional for the quota
 menubar’s last-used account feature; see [deployment](keeper-deployment.md).
 
-For standalone quota backend use, `--source cliproxy`, `--cliproxy-url`, and `--cliproxy-key-file` are available. `CLIPROXY_API_URL` supplies the URL when the CLI flag is omitted, and `CLIPROXY_API_KEY_FILE` supplies the key path when neither the widget nor the CLI sets one. Keys are never passed as command-line arguments or saved in widget settings.
+For standalone quota backend use, `--source proxy`, `--proxy-url`, `--proxy-key-file`, and `--implementation auto|rust|go` are available; the older `--source cliproxy`, `--cliproxy-url`, and `--cliproxy-key-file` spellings are still accepted. `CLIPROXY_API_URL` supplies the URL when the CLI flag is omitted, and `CLIPROXY_API_KEY_FILE` supplies the key path when neither the widget nor the CLI sets one. Fusebox costs use the same key path when no Costs key file is set. Keys are never passed as command-line arguments or saved in widget settings.
 
 No credential is printed or included in display errors. T3 access tokens are cached in separate private authentication files; usage snapshots contain only accounting metadata and hashed folder identities. State is XDG-aware: the plugin directory uses mode `0700` and its files use `0600`.
 
@@ -143,9 +151,9 @@ In **Costs → gear → Custom prices**, add the exact model ID and its input/ou
 |---|---:|---|
 | `refreshIntervalSec` | `900` | Automatic refresh interval; clamped to 60–3600 seconds |
 | `enabledProviders` | all three | Local CLI providers queried and displayed; proxy discovery is automatic |
-| `usageSource` | `direct` | `direct` CLI sign-ins or `cliproxy` managed accounts for quotas |
-| `cliproxyUrl` | `http://127.0.0.1:8317` | CLIProxyAPI server or management URL |
-| `cliproxyKeyFile` | empty | Set automatically when saving a key in the GUI; can also point to an existing private key file |
+| `usageSource` | `direct` | `direct` CLI sign-ins or `proxy` Fusebox / CLIProxyAPI accounts for quotas |
+| `proxyUrl` | `http://127.0.0.1:8317` | Fusebox or CLIProxyAPI server or management URL |
+| `proxyKeyFile` | empty | Set automatically when saving a key in the GUI; can also point to an existing private key file |
 | `hideAccountEmails` | `true` | Replace account identities with numbered labels and hide them in settings |
 | `squareUsageCards` | `true` | Use square corners for cards in Limits; otherwise follow the theme |
 | `barDisplayMode` | `Percentages` | `Icon` or compact `Percentages` |
@@ -154,13 +162,20 @@ In **Costs → gear → Custom prices**, add the exact model ID and its input/ou
 | `criticalThreshold` | `10` | Critical threshold in percentage remaining |
 | `costPriceOverrides` | `"{}"` | JSON string managed by Custom model prices; exact IDs mapped to USD-per-million rates |
 | `costLocalProviders` | `["claude", "codex"]` | Local cost sources, independent of quota providers |
-| `costKeeperUrl` | empty | Optional Keeper URL for last-used quota account activity |
+| `keeperUrl` | empty | Optional CPA Usage Keeper URL for CLIProxyAPI last-used account activity |
 | `costT3Servers` | `"[]"` | T3 server configurations managed in Costs settings; credentials are private file references |
 | `costFuseboxEnabled` | `false` | Include Fusebox usage history in Costs |
-| `costFuseboxUrl` | empty | Fusebox server URL for Costs, independent of Limits |
+| `costFuseboxConnection` | `limits` | `limits` reads Fusebox costs with the Limits server and key; `custom` uses the two settings below |
+| `costFuseboxUrl` | empty | Fusebox server URL for Costs when `costFuseboxConnection` is `custom` |
 | `costFuseboxKeyFile` | empty | Private Fusebox management key file for Costs |
 | `costFuseboxOverlap` | `"fusebox"` | `fusebox` replaces transcripts while readable; `transcripts` keeps transcripts for Claude/OpenAI |
-| `costKeeperPasswordFile` | empty | Private Keeper password for quota account activity (legacy setting name) |
+| `keeperPasswordFile` | empty | Private Keeper password for CLIProxyAPI account activity |
+
+Settings renamed after 1.4 are still read: `usageSource: cliproxy`, `cliproxyUrl`,
+`cliproxyKeyFile`, `costKeeperUrl`, and `costKeeperPasswordFile`. The next Save
+in either settings form writes the current names and removes the old ones.
+Scripts that run `omarchy bar set` with an old name should switch to the new name;
+once a current name is saved it takes precedence.
 
 Examples:
 
@@ -182,7 +197,7 @@ New installations use `Percentages`: one compact provider-logo chip per provider
 
 **Kimi does not appear.** Confirm `kimi login` has created `~/.kimi-code/credentials/kimi-code.json`, or set `KIMI_CODE_HOME` to the CLI's actual data directory.
 
-**CLIProxyAPI reports configuration required.** Check the server URL, enter the Management API key in settings, and check the server's remote-management policy. If using a manually configured key file, check its path and permissions. HTTP 404 can mean the management API is disabled. For an expired managed provider sign-in, sign in again through CLIProxyAPI and refresh the widget.
+**Fusebox / CLIProxyAPI reports configuration required.** Open **Limits → gear → Connection details** and click **Test connection** to see whether the URL, the key, or remote management access is the problem. If using a manually configured key file, check its path and permissions. "No Fusebox or CLIProxyAPI management API was found" means neither API answered at that URL: check the path prefix and that the management API is enabled. For an expired managed provider sign-in, sign in again through CLIProxyAPI and refresh the widget.
 
 **History is empty.** History begins after the first successful limit fetch. Errors are not recorded as zero usage.
 

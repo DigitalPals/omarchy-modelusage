@@ -89,6 +89,8 @@ Unsupported or unavailable fields are `null`; they are not overloaded with senti
 
 Provider HTTP bodies and local JSON inputs are read with a 2 MiB ceiling before parsing. An oversized HTTP response becomes a provider-local `malformed` error and cannot suppress healthy providers. Codex app-server output is read incrementally in bounded chunks with a 2 MiB ceiling per JSON-RPC line; the same request deadline remains active even when a line is incomplete.
 
+Fusebox and CLIProxyAPI connections are handled by `scripts/proxy_connection.py` for every backend: URL normalization, private key files, redirect rejection, and implementation detection. In `auto` mode Fusebox's `GET /api/accounts` is read first and CLIProxyAPI's `GET /v0/management/auth-files` second, only when the first answers 401, 403, 404, 405, or with an inventory that is not Fusebox's. Outages, timeouts, and rate limits are never reinterpreted as the other implementation. `--implementation rust|go` (passed by the widget after detection) reverses the order without removing the fallback. When both fail, an authenticated or server-side answer is reported before a missing route; two missing routes or two rejected keys get one combined message. `scripts/proxy-test.py` reads `{url, key, keyFile, requireFusebox}` as one stdin line and returns `{schemaVersion, ok, implementation, providers, accounts, message}` from the account list alone.
+
 CLIProxyAPI management responses have the same 2 MiB ceiling. The management key file is capped at 8 KiB, checked for ownership and private permissions, and opened without following symlinks or blocking on FIFOs. After listing accounts, discovery covers at most 32 providers and 32 accounts per provider, with at most four provider groups running, four account workers per group, and a shared timeout budget; queued checks do not receive fresh timeout budgets. The QML process timeout remains the final wall-clock bound. TLS verification stays enabled and management redirects are rejected.
 
 `UsageBackend.qml` streams stdout into a buffer capped at 2 MiB and terminates the backend if that ceiling is crossed. Stderr is drained without retention. This keeps the recurring collector from growing the long-lived Quickshell process even if a backend or provider CLI misbehaves.
@@ -97,8 +99,8 @@ CLIProxyAPI management responses have the same 2 MiB ceiling. The management key
 
 `UsageActivityBackend.qml` uses the shared live collector for Rust by default.
 With live disabled, or for Go/Keeper, it runs `scripts/proxy-activity.py` every 15 seconds in
-CLIProxyAPI mode when a Keeper URL is configured. It reuses `costKeeperUrl` and
-`costKeeperPasswordFile` independently of Costs source configuration. The process reads proxy
+CLIProxyAPI mode when a Keeper URL is configured. It uses `keeperUrl` and
+`keeperPasswordFile` independently of Costs source configuration. The process reads proxy
 `auth-files`, logs in to Keeper, reads `status` and `usage/identities`, and logs
 out. No quota calls, request contents, consuming queues, or history exports are
 used. Keeper must collect from the selected proxy.
@@ -222,6 +224,8 @@ existing dependency and polling behavior.
 Limits settings call the native Rust integration **Fusebox** and expose a
 keyboard-accessible repository link to `https://github.com/DigitalPals/Fusebox`.
 The Go implementation retains its CLIProxyAPI name. Before discovery, the
-source is labelled “Fusebox / CLIProxyAPI”. Saved `usageSource: cliproxy`,
-`cliproxyUrl`, `cliproxyKeyFile` and protocol `proxyImplementation: rust` remain
-compatible; branding adds no network calls or background processes.
+source is labelled “Fusebox / CLIProxyAPI”. Settings are `usageSource: proxy`,
+`proxyUrl` and `proxyKeyFile`; the earlier `cliproxy`, `cliproxyUrl` and
+`cliproxyKeyFile` are read until the next save migrates them. The contract keeps
+`source: "cliproxy"` and `proxyImplementation: rust`/`go`; branding adds no network
+calls or background processes.
