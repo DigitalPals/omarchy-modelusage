@@ -53,8 +53,9 @@ over fresh partial and stale ones, with local preferred on ties. Missing/failed
 sources cannot suppress a healthy duplicate. This identifies shared folders, not
 transcript copies on distinct computers; replicated histories can still overlap.
 
-Top-level `sources` contains `id`, `name`, `kind` (`local`/`t3`), optional `provider`,
-`status` (`ok`, `partial`, `missing`, `failed`, `stale`, `unavailable`, `duplicate`),
+Top-level `sources` contains `id`, `name`, `kind` (`local`/`t3`/`fusebox`), optional `provider`,
+`status` (`ok`, `partial`, `missing`, `failed`, `stale`, `unavailable`, `duplicate`,
+`replaced`, `excluded`),
 `included`, nullable `updatedAt` in Unix milliseconds, and safe `message`.
 Raw source hostnames, paths and server error bodies never enter the output/cache.
 
@@ -127,7 +128,7 @@ The dollar fields are API-equivalent estimates, not subscription charges. Nullab
 
 `providers` contains the same metrics as `totals`, identity fields, and the matching coverage `status`/`message`. `models` contains the metrics plus provider/model identity. `periods` contains one filled bucket for each hour in the rolling 24-hour view or each calendar day in the 7/30-day views. Every period also has a `providers` array for the stacked chart.
 
-Pricing statuses are `fresh`, `cached`, `unavailable`, or `notNeeded`. Coverage statuses are `ok`, `partial`, `missing`, or `failed`; unreadable files make coverage `partial` or `failed` rather than silently producing a complete-looking total. `scannedFiles` counts readable recent transcript files, including files with no usage-bearing rows, while `skippedFiles` counts files or directories that could not be inspected. `costSource` is `none`, `providerReported`, `modelPriced`, `customPriced`, `mixed`, or `unpriced`. Token totals always include unpriced records from readable files. `reasoningTokens` is informational and is already included in `outputTokens`; it must not be summed again.
+Pricing statuses are `fresh`, `cached`, `unavailable`, or `notNeeded`. Coverage statuses are `ok`, `partial`, `missing`, or `failed`; unreadable files make coverage `partial` or `failed` rather than silently producing a complete-looking total. `scannedFiles` counts readable recent transcript files, including files with no usage-bearing rows, while `skippedFiles` counts files or directories that could not be inspected. `costSource` is `none`, `providerReported`, `modelPriced`, `customPriced`, `fuseboxEstimated`, `mixed`, or `unpriced`. Fusebox records carry Fusebox's estimate; cells count them in `sourcePricedRecords`, which joins the other priced counts in `pricedRecords`, and an absent estimate stays unpriced. `replaced` marks transcript sources superseded by Fusebox; `excluded` marks Fusebox history left out in favour of transcripts. Token totals always include unpriced records from readable files. `reasoningTokens` is informational and is already included in `outputTokens`; it must not be summed again.
 
 ## Pricing and custom rates
 

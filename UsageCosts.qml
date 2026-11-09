@@ -80,6 +80,11 @@ Item {
   function providerColor(providerId) {
     if (providerId === "claude") return "#d97757"
     if (providerId === "kimi") return "#eab308"
+    // Fusebox can report further providers; keep their stacked bars distinguishable.
+    if (providerId === "meta") return "#3b82f6"
+    if (providerId === "antigravity" || providerId === "gemini" || providerId === "vertex") return "#22c55e"
+    if (providerId === "grok" || providerId === "xai") return "#a855f7"
+    if (providerId === "devin") return "#14b8a6"
     return foreground
   }
 
@@ -660,6 +665,7 @@ Item {
                 text: String(parent.modelData.providerName || "") + " · "
                   + root.formatTokens(parent.modelData.totalTokens) + " tokens"
                   + (Number(parent.modelData.customPricedRecords || 0) > 0 ? " · custom prices"
+                    : Number(parent.modelData.sourcePricedRecords || 0) > 0 ? " · Fusebox estimate"
                     : Number(parent.modelData.basePricedRecords || 0) > 0 ? " · base rates"
                     : parent.modelData.costSource === "providerReported" ? " · reported cost" : "")
                 anchors.right: parent.right

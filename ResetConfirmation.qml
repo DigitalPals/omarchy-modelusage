@@ -49,7 +49,7 @@ Column {
   Text {
     width: parent.width
     visible: root.backend.state === "ready"
-    text: "Use 1 of " + root.backend.details.availableCount + " available resets. The reset expiring soonest is selected first."
+    text: "Use 1 of " + root.backend.details.availableCount + " available resets. The recommended or soonest-expiring reset is selected first."
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+
+- Read Fusebox's full account snapshot: Meta and Antigravity quotas, model-scoped and spending limits, Claude extra usage, Codex credits, Claude Pro/Max/Ultra and ChatGPT Pro tier names. Feature allowances such as Code review and Cowork are informational and never drive the menu bar or warnings.
+- Show Fusebox account facts on each card: renewal date, no 5-hour limit, cooldown countdowns, paused usage checks, inactive subscriptions, session priority, resets awaiting review and the last error (emails masked). A rejected sign-in now reads as sign-in expired.
+- Apply Claude and Codex banked resets through Fusebox's reset journal, with Fusebox's recommended grant first, its refusal reasons shown, and retries that never spend twice.
+- Add an opt-in Fusebox Costs source using Fusebox's own API-price estimates, with an explicit choice between Fusebox and transcript history so the same CLI requests are never counted twice. Show Meta, Antigravity, Grok and other Fusebox providers as their own cost buckets.
+
 ## 1.3.2
 
 - Name the Rust integration Fusebox in settings, quota diagnostics and account notices. Add a keyboard-accessible link to the Fusebox repository in Limits settings.

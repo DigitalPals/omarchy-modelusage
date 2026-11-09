@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit CLIProxyAPI reset actions; never invoked by quota polling."""
+"""Explicit banked reset actions for CLIProxyAPI and Fusebox; never invoked by quota polling."""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import time
+import urllib.parse
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -71,17 +72,160 @@ def normalize_details(payload, now=None):
             "credits": credits if available > 0 else []}
 
 
-def resolve_account(client, account_id, remaining):
+FUSEBOX_OUTCOMES = {"applied": "reset", "already_used": "already_redeemed",
+                    "reconciled_used": "already_redeemed", "refused": "refused", "reconciled_unused": "refused"}
+
+
+def provider_of(entry):
+    return str(entry.get("provider") or entry.get("type") or "").lower()
+
+
+def find_account(client, account_id, remaining):
     if not isinstance(account_id, str) or not re.fullmatch(r"[0-9a-f]{16}", account_id):
         raise usage.ProviderFailure("config", "Invalid reset account.")
-    matches = [entry for entry in client.auth_files(remaining())
-               if str(entry.get("provider") or entry.get("type") or "").lower() == "codex"
-               and usage.cliproxy_account_record("codex", entry)["accountId"] == account_id]
+    entries = client.auth_files(remaining())
+    # Fusebox redeems Claude and Codex resets itself; CLIProxyAPI only Codex.
+    providers = ("claude", "codex") if client.implementation == "rust" else ("codex",)
+    matches = [entry for entry in entries if provider_of(entry) in providers
+               and usage.cliproxy_account_record(provider_of(entry), entry)["accountId"] == account_id]
     if len(matches) != 1:
         raise usage.ProviderFailure("config", "This account changed or is unavailable. Refresh its usage first.")
-    entry = matches[0]
-    if entry.get("_rust") is True:
-        raise usage.ProviderFailure("unsupported", "Banked Codex resets are unavailable through Fusebox.")
+    return matches[0]
+
+
+def fusebox_path(entry):
+    native = entry.get("_native_id")
+    if not isinstance(native, str) or not 0 < len(native) <= 512:
+        raise usage.ProviderFailure("config", "This Fusebox account has no usable identity. Refresh its usage first.")
+    return "accounts/" + urllib.parse.quote(native, safe="") + "/banked-resets"
+
+
+def fusebox_failure(error, fallback):
+    """Name Fusebox's own reason for refusing a reset read or request."""
+    status = getattr(error, "http_status", None)
+    detail = getattr(error, "detail", "")
+    if status == 404 and not detail.startswith("unknown account"):
+        return usage.ProviderFailure("unsupported", "Banked resets are turned off in Fusebox. Enable them under Config, Connections.")
+    if status == 404:
+        return usage.ProviderFailure("config", "This account changed or is unavailable. Refresh its usage first.")
+    if status in (409, 502) and detail:
+        return usage.ProviderFailure("http", detail.rstrip(".") + ".")
+    return usage.ProviderFailure(error.kind, error.message if status != 502 else fallback)
+
+
+def normalize_fusebox_view(view, provider, now=None):
+    now = time.time() if now is None else now
+    if not isinstance(view, dict):
+        raise usage.ProviderFailure("malformed", "Fusebox returned invalid reset details.")
+    operation = view.get("operation")
+    if isinstance(operation, dict) and operation.get("status") in usage.RUST_UNSETTLED_RESETS:
+        raise usage.ProviderFailure("config", "An earlier reset on this account has an unknown outcome. Review it in the Fusebox dashboard before using another.")
+    if isinstance(view.get("error"), str) and view["error"].strip():
+        raise usage.ProviderFailure("http", "Fusebox could not read this account's resets: " + usage.clean_message(view["error"])[:160])
+    inventory = view.get("inventory")
+    if not isinstance(inventory, dict) or not isinstance(inventory.get("grants", []), list) or len(inventory.get("grants", [])) > 1024:
+        raise usage.ProviderFailure("malformed", "Fusebox returned invalid reset details.")
+    available = count(inventory.get("available"))
+    quote = view.get("quote")
+    if not inventory.get("eligible") or not isinstance(quote, str):
+        reason = inventory.get("reason")
+        raise usage.ProviderFailure("unavailable", usage.clean_message(reason)[:200] if isinstance(reason, str) and reason.strip()
+                                    else "No banked reset can be applied to this account right now.")
+    try:
+        if str(uuid.UUID(quote)) != quote:
+            raise ValueError
+    except (ValueError, TypeError, AttributeError):
+        raise usage.ProviderFailure("malformed", "Fusebox returned an invalid reset confirmation.") from None
+    credits, seen = [], set()
+    for grant in inventory.get("grants", []):
+        if not isinstance(grant, dict) or grant.get("usable") is not True:
+            continue
+        grant_id = grant.get("id")
+        if not identifier(grant_id) or grant_id in seen:
+            raise usage.ProviderFailure("malformed", "Fusebox returned invalid reset identifiers.")
+        seen.add(grant_id)
+        try:
+            expiry = None if grant.get("expires_at") is None else timestamp(grant["expires_at"])
+            granted = None if grant.get("granted_at") is None else timestamp(grant["granted_at"])
+        except (ValueError, TypeError, OverflowError):
+            raise usage.ProviderFailure("malformed", "Fusebox returned invalid reset dates.") from None
+        if expiry is not None and expiry <= now:
+            continue
+        clears = [usage.clean_message(c) for c in grant.get("clears", []) if isinstance(c, str)][:8] \
+            if isinstance(grant.get("clears"), list) else []
+        remaining = count(grant.get("remaining"))
+        description = ("Clears " + ", ".join(clears) if clears and "*" not in clears else "Resets the current usage limits.")
+        if remaining is not None and remaining > 1:
+            description += f" {remaining} uses left in this grant."
+        credits.append({"id": grant_id, "expiresAt": expiry, "grantedAt": granted,
+                        "title": usage.clean_message(grant.get("label") or "Banked reset")[:80],
+                        "description": description, "recommended": grant_id == inventory.get("selected_grant")})
+    # Fusebox's recommendation first, then the grant expiring soonest.
+    credits.sort(key=lambda c: (not c["recommended"], c["expiresAt"] if c["expiresAt"] is not None else float("inf"), c["id"]))
+    if not credits and provider == "codex" and available:
+        # Codex may list no credit IDs; Fusebox then uses the one expiring first.
+        credits.append({"id": "", "expiresAt": None, "grantedAt": None, "title": "Earliest-expiring reset",
+                        "description": "Fusebox selects the reset that expires first.", "unknownExpiry": True})
+    if not credits:
+        raise usage.ProviderFailure("unavailable", "No usable banked reset was found for this account.")
+    return {"availableCount": available if available is not None else len(credits),
+            "applicableAvailableCount": count(inventory.get("applicable")),
+            "credits": credits, "requestId": quote}
+
+
+def execute_fusebox(client, entry, action, account_id, target, credit_id, request_id, retry, remaining):
+    provider = provider_of(entry)
+    if entry.get("disabled") is True:
+        raise usage.ProviderFailure("config", "This account is paused in Fusebox.")
+    if entry.get("kind") != "oauth":
+        raise usage.ProviderFailure("unsupported", "Banked resets need a Claude or Codex subscription sign-in.")
+    path = fusebox_path(entry)
+    current_target = hashlib.sha256(json.dumps([account_id, entry["_native_id"], provider, "fusebox"]).encode()).hexdigest()
+    if action == "prepare":
+        try:
+            view = client.request(path, remaining(), native=True)
+        except usage.ProviderFailure as error:
+            raise fusebox_failure(error, "Fusebox could not read this account's banked resets.") from None
+        return dict(normalize_fusebox_view(view, provider), target=current_target)
+    if action != "consume" or target != current_target or (credit_id and not identifier(credit_id)) \
+            or (not credit_id and provider != "codex"):
+        raise usage.ProviderFailure("config", "The selected account changed. Open a new reset confirmation.")
+    try:
+        if str(uuid.UUID(request_id)) != request_id:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise usage.ProviderFailure("config", "Invalid reset request identifier.") from None
+    def post(action_name):
+        body = {"action": action_name, "request_id": request_id, "grant_id": credit_id, "confirmed": True}
+        try:
+            view = client.request(path, remaining(), body, native=True)
+        except usage.ProviderFailure as error:
+            status = getattr(error, "http_status", None)
+            # 4xx refusals happen before dispatch; anything else may have spent a reset.
+            failure = fusebox_failure(error, "Fusebox could not complete the reset request.")
+            if status not in (400, 401, 403, 404, 409, 429):
+                failure.submitted = True
+            raise failure from None
+        operation = view.get("operation") if isinstance(view, dict) else None
+        return (operation.get("status") if isinstance(operation, dict) else None,
+                usage.clean_message(operation.get("message"))[:200] if isinstance(operation, dict) else "",
+                isinstance(view, dict) and view.get("retryable") is True)
+
+    # Fusebox journals each request ID before spending, so repeating "redeem"
+    # with the same ID returns the recorded outcome instead of spending again.
+    status, message, retryable = post("redeem")
+    if retry and status in usage.RUST_UNSETTLED_RESETS and provider == "claude" and retryable:
+        status, message, _ = post("retry")
+    if status not in FUSEBOX_OUTCOMES:
+        error = usage.ProviderFailure("uncertain", (message.rstrip(".") + ". " if message else "")
+                                      + ("Retry checks the same request without spending another reset." if provider == "claude"
+                                         else "Check the outcome in the Fusebox dashboard and record it there, then retry to update."))
+        error.submitted = True
+        raise error
+    return {"outcome": FUSEBOX_OUTCOMES[status], "message": message}
+
+
+def resolve_account(entry, account_id):
     if entry.get("disabled") is True or entry.get("status") == "disabled":
         raise usage.ProviderFailure("config", "This account is paused in CLIProxyAPI.")
     claims = entry.get("id_token") if isinstance(entry.get("id_token"), dict) else {}
@@ -95,7 +239,7 @@ def resolve_account(client, account_id, remaining):
     return entry, target, headers
 
 
-def execute(client, action, account_id, target="", credit_id="", request_id="", timeout=12):
+def execute(client, action, account_id, target="", credit_id="", request_id="", timeout=12, retry=False):
     deadline = time.monotonic() + timeout
 
     def remaining():
@@ -104,7 +248,10 @@ def execute(client, action, account_id, target="", credit_id="", request_id="", 
             raise usage.ProviderFailure("timeout", "The reset request timed out.")
         return seconds
 
-    entry, current_target, headers = resolve_account(client, account_id, remaining)
+    entry = find_account(client, account_id, remaining)
+    if entry.get("_rust") is True:
+        return execute_fusebox(client, entry, action, account_id, target, credit_id, request_id, retry, remaining)
+    entry, current_target, headers = resolve_account(entry, account_id)
     if action == "prepare":
         details = normalize_details(client.usage(entry, RESET_URL, headers, remaining()))
         return dict(details, target=current_target, requestId=str(uuid.uuid4()))
@@ -138,10 +285,12 @@ def main():
     parser.add_argument("--target", default="")
     parser.add_argument("--credit-id", default="")
     parser.add_argument("--request-id", default="")
+    parser.add_argument("--retry", action="store_true", help="Retry an uncertain Fusebox Claude reset")
     args = parser.parse_args()
     try:
         client = usage.CliProxyClient(args.cliproxy_url, usage.read_cliproxy_key(args.cliproxy_key_file or usage.cliproxy_key_path()))
-        result = execute(client, args.action, args.account_id, args.target, args.credit_id, args.request_id)
+        result = execute(client, args.action, args.account_id, args.target, args.credit_id, args.request_id,
+                         retry=args.retry)
         result.update(ok=True, schemaVersion=1)
     except usage.ProviderFailure as error:
         result = {"schemaVersion": 1, "ok": False, "message": error.message,

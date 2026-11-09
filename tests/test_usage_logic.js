@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "UsageLogic.js"), "utf8")
   .replace(/^\.pragma library\s*/m, "");
-const context = { Array, Math, Number, String, isFinite };
+const context = { Array, Date, Math, Number, String, isFinite };
 vm.createContext(context);
 vm.runInContext(source, context, { filename: "UsageLogic.js" });
 
@@ -115,6 +115,21 @@ for (const count of [undefined, null, -1, 1.5, true, "2", NaN, Infinity])
   assert.equal(context.accountResetLabel({ ...resetAccount, credits: { resetCreditsAvailable: count } }), "");
 assert.equal(context.accountResetLabel({ ...resetAccount, credits: null }), "");
 assert.equal(context.accountResetLabel({ ...resetAccount, id: "claude" }), "");
+assert.equal(context.accountResetLabel({ ...resetAccount, id: "claude", proxyImplementation: "rust" }), "2 banked resets");
+assert.equal(context.accountResetLabel({ ...resetAccount, id: "claude", proxyImplementation: "rust", supportsBankedReset: false }), "");
+assert.equal(context.minRemaining({ id: "claude", status: "ok", windows: [{ remaining: 5, informational: true }, { remaining: 60 }] }), 60);
+assert.equal(context.minRemaining({ id: "claude", status: "ok", windows: [{ remaining: 5, informational: true }] }), null);
+const statusNow = Date.UTC(2030, 0, 1, 0, 0, 0);
+assert.equal(context.accountStatusText({ kind: "cooldown", text: "Rate limited", at: statusNow / 1000 + 750 }, statusNow), "Rate limited · 12m");
+assert.equal(context.accountStatusText({ kind: "cooldown", text: "Rate limited", at: statusNow / 1000 - 1 }, statusNow), "");
+assert.equal(context.accountStatusText({ kind: "info", text: "No 5-hour limit", at: null }, statusNow), "No 5-hour limit");
+assert.match(context.accountStatusText({ kind: "renewal", text: "Renews", at: Date.UTC(2030, 0, 12, 12) / 1000, estimated: true }, statusNow),
+  /^Renews Jan 1[12] \(estimated\)$/);
+const statusRows = context.accountStatusItems({ statusItems: [{ kind: "error", text: "Last error: x", at: null },
+  { kind: "info", text: "Takes new sessions last", at: null }] }, statusNow);
+assert.equal(statusRows.length, 2);
+assert.equal(statusRows[0].urgent, true);
+assert.equal(statusRows[1].urgent, false);
 assert.equal(context.accountResetLabel({ ...resetAccount, status: "disabled" }), "");
 const resetFailure = { ...resetAccount, status: "error", credits: null, message: "Timeout" };
 const resetStale = context.preserveProxyReadings({ source: "cliproxy", providers: [{ ...resetAccount, accounts: [resetAccount] }] },

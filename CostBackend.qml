@@ -39,7 +39,14 @@ Item {
   readonly property var periods: payload ? UsageLogic.listOrEmpty(payload.periods) : []
   readonly property string priceOverrides: String(setting("costPriceOverrides", "{}"))
   readonly property string t3Servers: String(setting("costT3Servers", "[]"))
-  readonly property string connectionId: JSON.stringify([enabledProviderIds, t3Servers])
+  readonly property string fuseboxUrl: String(setting("costFuseboxUrl", "")).trim()
+  readonly property string fuseboxKeyFile: String(setting("costFuseboxKeyFile", ""))
+  readonly property bool fuseboxEnabled: setting("costFuseboxEnabled", false) === true && fuseboxUrl !== ""
+  // Fusebox and transcripts can contain the same CLI requests; one family supplies them.
+  readonly property string fuseboxOverlap: setting("costFuseboxOverlap", "fusebox") === "transcripts"
+    ? "transcripts" : "fusebox"
+  readonly property string connectionId: JSON.stringify([enabledProviderIds, t3Servers,
+    fuseboxEnabled ? [fuseboxUrl, fuseboxKeyFile, fuseboxOverlap] : null])
 
   signal refreshed()
 
@@ -114,6 +121,8 @@ Item {
       "--t3-servers", t3Servers,
       "--price-overrides", priceOverrides
     ]
+    if (fuseboxEnabled) command.push("--fusebox-url", fuseboxUrl,
+      "--fusebox-key-file", fuseboxKeyFile, "--fusebox-overlap", fuseboxOverlap)
     if (pendingPriceRefresh) command.push("--refresh-prices")
     pendingPriceRefresh = false
     fetchProcess.command = command

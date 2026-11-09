@@ -77,18 +77,28 @@ Reference implementations inspected during development:
 - pingdotgg/t3code: `b1e223e2b0d87124883b1410ab52dd6a1338e40d`
 - BerriAI/LiteLLM public model-price schema, fetched at runtime
 
-## CLIProxyAPI Rust
+## Fusebox
 
-CLIProxyAPI-Rust v0.3.2 at `3f937ce690d7507065a42be9ce11b26fc16eee06`
-uses authenticated `GET /api/accounts`. The adapter detects that API with the
-same management key used for Go. Cached quota lookup supports Claude and Codex
-OAuth accounts; other account types remain visible with quota unavailable.
-Absent windows, balances, Claude extra usage, and banked reset credits are
-unknown. Native `/reset` only clears cooldowns and is never a banked reset.
+Fusebox v0.14.0 at `6f0e45fabfdee0e77aac3e6500db85dd2bbf5552` (formerly
+CLIProxyAPI-Rust; v0.3.2 at `3f937ce690d7507065a42be9ce11b26fc16eee06` remains
+compatible). The adapter detects authenticated `GET /api/accounts` with the
+same management key used for Go. Cached quota windows and typed limits are read
+for Claude, Codex and Meta OAuth accounts and Antigravity quota groups; other
+account types remain visible with quota unavailable. Claude extra usage, Codex
+credits, plan names, renewals, cooldowns and banked reset counts are read from
+the same snapshot; older servers that omit them leave those values unknown.
+Banked resets use `GET`/`POST /api/accounts/{id}/banked-resets` and need
+`banked-resets: true` on the server. Native `/reset` only clears cooldowns and
+is never a banked reset.
 
-Rust quota observation times are retained and marked stale after ten minutes.
+Fusebox Costs needs `/api/usage/dashboard` (with `stack` and `provider`
+filters) and `/api/usage/observations?view=combined`; HTTP 503 means analytics
+is disabled or busy.
+
+Fusebox quota observation times are retained and marked stale after ten minutes.
 Expired windows are omitted, and duplicate observations do not extend quota
 history. Activity records the latest completed request, including failures,
 resets when the proxy restarts, and requires no Keeper. Costs still uses only
 local/T3 transcripts. Synthetic HTTP tests cover detection, invalid keys,
-malformed data, identity continuity, activity, and forbidden actions.
+malformed data, identity continuity, activity, typed limits, account facts,
+and banked-reset reads, redemption, refusals and retries.

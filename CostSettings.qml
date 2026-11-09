@@ -21,6 +21,13 @@ Column {
   property alias remoteExpanded: serverSection.expanded
   property alias pricesExpanded: priceSection.expanded
   property alias diagnosticsExpanded: scanSection.expanded
+  property alias fuseboxExpanded: fuseboxSection.expanded
+  property bool fuseboxEnabled: false
+  property string fuseboxUrl: ""
+  property string fuseboxKeyFile: ""
+  property string fuseboxKey: ""
+  property string fuseboxOverlap: "fusebox"
+  property string fuseboxPlaceholder: "http://127.0.0.1:8317"
   property var pendingValues: null
   property var pendingKeys: ({})
   property var previousPaths: ({})
@@ -35,7 +42,8 @@ Column {
 
   function sourceDetail(source) {
     var labels = {ok: "Included", partial: "Partial history", stale: "Saved history · offline",
-      missing: "No transcripts", failed: "Unavailable", unavailable: "Unavailable", duplicate: "Already included"}
+      missing: "No transcripts", failed: "Unavailable", unavailable: "Unavailable", duplicate: "Already included",
+      replaced: "Replaced by Fusebox", excluded: "Not counted · transcripts used"}
     var text = source.name + " · " + (labels[source.status] || source.status)
     if (source.status === "stale" && source.updatedAt)
       text += " · " + Qt.formatDateTime(new Date(Number(source.updatedAt)), "MMM d, HH:mm")
@@ -44,6 +52,8 @@ Column {
 
   function discardKey() {
     for (var i = 0; i < servers.count; i++) servers.setProperty(i, "token", "")
+    fuseboxKey = ""
+    fuseboxCredential.reset()
     pendingKeys = ({})
     pendingValues = null
     if (keyWriter.running && !keySaveDecided) keyWriter.running = false
@@ -65,6 +75,12 @@ Column {
     serverSection.expanded = false
     priceSection.expanded = false
     scanSection.expanded = false
+    fuseboxSection.expanded = false
+    fuseboxEnabled = settings.costFuseboxEnabled === true
+    fuseboxUrl = String(settings.costFuseboxUrl || "")
+    fuseboxKeyFile = String(settings.costFuseboxKeyFile || "")
+    fuseboxOverlap = settings.costFuseboxOverlap === "transcripts" ? "transcripts" : "fusebox"
+    fuseboxPlaceholder = String(settings.cliproxyUrl || "") || "http://127.0.0.1:8317"
     localProviders = settings.costLocalProviders === undefined ? ["claude", "codex"] : settings.costLocalProviders
     prices.begin(String(settings.costPriceOverrides || "{}"))
     try {
@@ -121,6 +137,18 @@ Column {
       })
     })
   }
+  function setFusebox(name, value) { root[name] = value; errorText = "" }
+  function focusFusebox(name) {
+    var generation = draftGeneration
+    fuseboxSection.expanded = true
+    Qt.callLater(function() {
+      if (!root.visible || generation !== root.draftGeneration) return
+      var field = root.findItem(fuseboxSection, name)
+      if (!field) return
+      if (field.focusEditor) field.focusEditor()
+      else { field.forceActiveFocus(); root.revealRequested(field) }
+    })
+  }
   function submit() {
     if (saving) return false
     if (loadError !== "") { errorText = loadError; serverSection.expanded = true; return false }
@@ -151,6 +179,31 @@ Column {
       }
     }
     values.costT3Servers = JSON.stringify(rows)
+    var fuseboxAddress = fuseboxUrl.trim(), fuseboxToken = fuseboxKey.trim()
+    if ((fuseboxEnabled || fuseboxAddress !== "") && (!/^https?:\/\/[^\s/?#@]+(?:\/[^\s?#]*)?$/.test(fuseboxAddress)
+        || /(?:^|\/)\.{1,2}(?:\/|$)/.test(fuseboxAddress))) {
+      errorText = "Enter the Fusebox server HTTP(S) URL without credentials, query, or fragment."
+      focusFusebox("costFuseboxUrl")
+      return false
+    }
+    if (fuseboxKey !== "" && (fuseboxToken === "" || /[^\x21-\x7e]/.test(fuseboxToken))) {
+      errorText = "Enter the management key without spaces."
+      focusFusebox("costFuseboxCredential")
+      return false
+    }
+    if (fuseboxEnabled && fuseboxToken === "" && fuseboxKeyFile === "") {
+      errorText = "Enter the Fusebox management key."
+      focusFusebox("costFuseboxCredential")
+      return false
+    }
+    values.costFuseboxEnabled = fuseboxEnabled
+    values.costFuseboxUrl = fuseboxAddress
+    values.costFuseboxKeyFile = fuseboxKeyFile
+    values.costFuseboxOverlap = fuseboxOverlap
+    if (fuseboxToken !== "") {
+      keys.costFuseboxKeyFile = fuseboxToken
+      previous.costFuseboxKeyFile = fuseboxKeyFile
+    }
     errorText = ""
     if (Object.keys(keys).length) {
       pendingValues = values; pendingKeys = keys; previousPaths = previous
@@ -181,13 +234,14 @@ Column {
           if (path) rows[i].tokenFile = path
         }
         values.costT3Servers = JSON.stringify(rows)
+        if (response.paths.costFuseboxKeyFile) values.costFuseboxKeyFile = response.paths.costFuseboxKeyFile
         root.saveRequested(values)
       }
     }
     stderr: SplitParser { splitMarker: "" }
     onRunningChanged: if (!running) {
       root.pendingKeys = ({})
-      if (root.pendingValues && !root.keySaveDecided) root.errorText = "Could not save the private T3 token. Check your configuration directory and try again."
+      if (root.pendingValues && !root.keySaveDecided) root.errorText = "Could not save the private credential. Check your configuration directory and try again."
       root.pendingValues = null
     }
   }
@@ -300,6 +354,45 @@ Column {
       title: "Learn more"
       Hint { text: "Use the server’s base URL and connection token. Credentials are saved privately on this device. T3 can include sessions started outside T3; matching transcript folders are counted once. Offline servers retain their last usable history with a timestamp." }
     }
+  }
+
+  Section {
+    id: fuseboxSection
+    objectName: "fuseboxCostSection"
+    title: "Fusebox"
+    summary: !root.fuseboxEnabled ? "Off"
+      : root.fuseboxOverlap === "fusebox" ? "Replaces transcripts" : "Adds other providers"
+    Row {
+      width: parent.width
+      Label { width: parent.width - fuseboxToggle.width; text: "Include Fusebox usage"; anchors.verticalCenter: parent.verticalCenter }
+      Toggle { id: fuseboxToggle; objectName: "costFuseboxEnabled"; checked: root.fuseboxEnabled; onToggled: root.setFusebox("fuseboxEnabled", !checked); Accessible.name: "Include Fusebox usage" }
+    }
+    Hint { text: "Fusebox prices every request it records. Its estimates are used as reported; unpriced requests stay unpriced." }
+    Label { text: "Server URL" }
+    Field { objectName: "costFuseboxUrl"; text: root.fuseboxUrl; placeholderText: root.fuseboxPlaceholder; maximumLength: 4096; onTextEdited: root.setFusebox("fuseboxUrl", text); Accessible.name: "Fusebox server URL" }
+    SettingsCredential {
+      id: fuseboxCredential
+      objectName: "costFuseboxCredential"
+      editorObjectName: "costFuseboxKey"
+      width: parent.width
+      label: "Management API key"
+      saved: root.fuseboxKeyFile !== ""
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onEdited: function(value) { root.setFusebox("fuseboxKey", value) }
+      onRevealRequested: function(item) { root.revealRequested(item) }
+    }
+    Row {
+      width: parent.width
+      Label { width: parent.width - fuseboxOverlapToggle.width; text: "Use Fusebox instead of transcripts"; anchors.verticalCenter: parent.verticalCenter }
+      Toggle { id: fuseboxOverlapToggle; objectName: "costFuseboxReplaces"; checked: root.fuseboxOverlap === "fusebox"; onToggled: root.setFusebox("fuseboxOverlap", checked ? "transcripts" : "fusebox"); Accessible.name: "Use Fusebox instead of transcripts" }
+    }
+    Hint {
+      text: root.fuseboxOverlap === "fusebox"
+        ? "CLIs routed through Fusebox also write transcripts, which carry no Fusebox request IDs. While Fusebox is readable, local and T3 history is left out so nothing is counted twice. Turn on Claude Code and Codex history import in Fusebox to include sessions that bypass it."
+        : "Local and T3 history supplies Claude and OpenAI. Fusebox adds only its other providers. A CLI that sends requests to another provider's model through Fusebox can still appear in both."
+    }
+    Hint { text: "Uses the same management key as the Fusebox dashboard. Saved privately on this device; blank keeps the saved key. Settings stay separate from Limits. An offline server keeps its last history with a timestamp." }
   }
 
   Section {

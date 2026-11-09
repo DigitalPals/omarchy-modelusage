@@ -68,6 +68,15 @@ quota calls and explicitly confirmed Codex banked-reset actions. Management resp
 The backend never downloads auth files or stores their raw metadata. The backend does not request client API keys or the model catalog.
 
 Banked resets use fixed upstream URLs and explicit managed account selection.
+With Fusebox, resets go only to Fusebox's own management API: the widget sends
+the account, Fusebox's short-lived confirmation ID, the selected grant and
+`confirmed: true`, and Fusebox journals the request before contacting the
+provider. Fusebox's confirmation and grant IDs are held in memory only.
+
+The Fusebox Costs key is read from a private 0600 file and sent only as a
+Bearer header to `/api/usage/*`, never across redirects. Snapshots in
+`~/.local/state/omarchy/model-usage/fusebox/` hold only provider, model,
+timestamp, token counts and estimates.
 The account identity is checked again before consumption. Each logical reset
 attempt has a UUID reused for retries; automatic polling cannot consume a reset.
 Reset credit IDs and pending retry state are held in memory, not quota history.

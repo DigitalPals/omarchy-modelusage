@@ -210,6 +210,16 @@ ShellRoot {
         root.check(!root.find(root.form, "t3Token-0").visible, "saved token does not show an empty editor")
         root.check(root.form.submit(), "blank token preserves saved credential")
         root.check(JSON.parse(root.saved.costT3Servers)[0].tokenFile === remote.tokenFile, "saved token path round trips")
+        root.form.begin({costFuseboxEnabled: true, costFuseboxUrl: "https://fusebox.example"})
+        root.check(!root.form.submit() && root.form.fuseboxExpanded, "enabled Fusebox needs a management key")
+        root.form.begin({costFuseboxEnabled: true, costFuseboxUrl: "https://fusebox.example",
+          costFuseboxKeyFile: "/private/fusebox.key", costFuseboxOverlap: "transcripts"})
+        root.check(root.find(root.form, "costFuseboxCredential").saved, "saved Fusebox key has a configured state")
+        root.check(root.form.submit() && root.saved.costFuseboxEnabled === true
+          && root.saved.costFuseboxKeyFile === "/private/fusebox.key"
+          && root.saved.costFuseboxOverlap === "transcripts", "Fusebox settings round trip; blank key keeps the saved file")
+        root.form.begin({costFuseboxUrl: "https://user:secret@fusebox.example"})
+        root.check(!root.form.submit(), "Fusebox URL credentials cannot be saved")
         console.log("Cost QML contract: passed")
         Qt.quit()
       }

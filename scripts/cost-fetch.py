@@ -25,6 +25,7 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from model_usage_common import atomic_write_json, clean_message
+import fusebox_costs
 import t3_costs
 
 
@@ -83,6 +84,8 @@ class UsageRecord:
     dedupe_key: str | None
     record_count: int = 1
     origin: str = "local"
+    # The source already priced this record (Fusebox); None means unpriced.
+    source_priced: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -1105,6 +1108,7 @@ def empty_cell() -> dict[str, Any]:
         "remoteRecords": 0,
         "pricedRecords": 0,
         "providerReportedRecords": 0,
+        "sourcePricedRecords": 0,
         "customPricedRecords": 0,
         "basePricedRecords": 0,
         "variantPricedRecords": 0,
@@ -1135,8 +1139,16 @@ def add_record(
     # User-defined exact IDs can resolve aliases that public pricing cannot.
     # parse_price_overrides already rejects synthetic/unattributed identities.
     custom = (overrides or {}).get(record.model.strip())
-    rate = custom if custom is not None else lookup_rate(record.model, rates)
-    if record.reported_cost_usd is not None and custom is None:
+    rate = custom if custom is not None or record.source_priced else lookup_rate(record.model, rates)
+    if record.source_priced and custom is None:
+        # Fusebox's estimate is authoritative: an unpriced response stays unpriced.
+        if record.reported_cost_usd is not None:
+            cell["cost"] += record.reported_cost_usd
+            cell["pricedRecords"] += record.record_count
+            cell["sourcePricedRecords"] += record.record_count
+        else:
+            cell["unpricedRecords"] += record.record_count
+    elif record.reported_cost_usd is not None and custom is None:
         cell["cost"] += record.reported_cost_usd
         cell["pricedRecords"] += record.record_count
         cell["providerReportedRecords"] += record.record_count
@@ -1190,13 +1202,15 @@ def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
             round(float(cell["cacheSavings"]), 8) if cell["rateAvailableRecords"] > 0 else None
         )
         source_kinds = sum(cell[key] > 0 for key in (
-            "providerReportedRecords", "customPricedRecords", "basePricedRecords"))
+            "providerReportedRecords", "sourcePricedRecords", "customPricedRecords", "basePricedRecords"))
         if cell["unpricedRecords"] > 0 or source_kinds > 1:
             source = "mixed"
         elif cell["customPricedRecords"] == records:
             source = "customPriced"
         elif cell["providerReportedRecords"] == records:
             source = "providerReported"
+        elif cell["sourcePricedRecords"] == records:
+            source = "fuseboxEstimated"
         else:
             source = "modelPriced"
     return {
@@ -1213,6 +1227,7 @@ def finish_cell(cell: dict[str, Any]) -> dict[str, Any]:
         "pricedRecords": priced,
         "unpricedRecords": int(cell["unpricedRecords"]),
         "providerReportedRecords": int(cell["providerReportedRecords"]),
+        "sourcePricedRecords": int(cell["sourcePricedRecords"]),
         "customPricedRecords": int(cell["customPricedRecords"]),
         "basePricedRecords": int(cell["basePricedRecords"]),
         "variantPricedRecords": int(cell["variantPricedRecords"]),
@@ -1311,12 +1326,12 @@ def aggregate_usage(
 
     providers: list[dict[str, Any]] = []
     for provider in provider_ids:
-        providers.append({"id": provider, "name": PROVIDER_NAMES.get(provider, provider.replace("-", " ").title()), **finish_cell(provider_cells[provider])})
+        providers.append({"id": provider, "name": PROVIDER_NAMES.get(provider) or fusebox_costs.provider_name(provider), **finish_cell(provider_cells[provider])})
 
     models = [
         {
             "provider": provider,
-            "providerName": PROVIDER_NAMES.get(provider, provider.replace("-", " ").title()),
+            "providerName": PROVIDER_NAMES.get(provider) or fusebox_costs.provider_name(provider),
             "model": (
                 "Unknown model" if model == "<unattributed>"
                 else "Other models" if model == "<other>"
@@ -1366,6 +1381,7 @@ def build_payload(
     now_ms: int | None = None, zone_name: str | None = None,
     rates_override=None, force_rates: bool = False, price_overrides: str = "{}",
     t3_servers: str = "[]",
+    fusebox: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     overrides = parse_price_overrides(price_overrides)
@@ -1382,10 +1398,17 @@ def build_payload(
     if days == 1:
         query.update(sinceTime=iso_timestamp(start / 1000), untilTime=iso_timestamp(stamp / 1000))
     candidates, sources = [], []
+    overlap = (fusebox or {}).get("overlap", "fusebox")
+    if fusebox is not None and overlap not in ("fusebox", "transcripts"):
+        raise ValueError("Choose whether Fusebox or transcripts supply overlapping history.")
+    fusebox_available = False
     # I/O for all servers overlaps with the local scan; one deadline per server.
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = [(server, pool.submit(t3_costs.collect, server, query, days,
                      state_path("t3", state_dir), timeout)) for server in servers]
+        fusebox_future = (pool.submit(fusebox_costs.collect, fusebox, days, start, stamp,
+                          getattr(zone, "key", "UTC"), zone, state_path("fusebox", state_dir), timeout)
+                          if fusebox is not None else None)
         local, coverage = scan_transcripts(provider_ids, state_dir, stamp)
         for item in coverage:
             provider = item["id"]
@@ -1445,6 +1468,21 @@ def build_payload(
                     "message": ("Saved snapshot; new activity and boundary hours may be missing. " + error
                                 if state == "stale" else "Includes all readable sessions on this T3 host, including non-T3 sessions."),
                     "records": records, "sessions": remote["sessions"] if state != "stale" else None})
+        if fusebox_future is not None:
+            fusebox_available = collect_fusebox(fusebox_future, start, stamp, candidates, sources)
+
+    # Fusebox and transcripts can record the same CLI requests, and transcripts
+    # carry no Fusebox response identity. One explicit source family is used.
+    transcripts_available = any(c["kind"] in ("local", "t3") and c["status"] in ("ok", "partial", "stale")
+                                for c in candidates)
+    for candidate in candidates:
+        if fusebox_available and overlap == "fusebox" and candidate["kind"] in ("local", "t3"):
+            candidate["excluded"] = ("replaced", "Fusebox replaces transcript history in Costs settings, "
+                                     "so requests it already recorded are not counted twice.")
+        elif (overlap == "transcripts" and transcripts_available and candidate["kind"] == "fusebox"
+              and candidate["provider"] in ("claude", "codex")):
+            candidate["excluded"] = ("excluded", "Transcripts supply Claude and OpenAI history in Costs settings, "
+                                     "so Fusebox's copy of the same requests is not counted.")
 
     # Prefer a complete fresh source, then partial fresh, then a stale snapshot.
     # A missing/failed source must never suppress a readable duplicate.
@@ -1453,10 +1491,13 @@ def build_payload(
     seen, records, sessions = set(), [], {}
     for candidate in candidates:
         available = candidate["status"] in ("ok", "partial", "stale")
-        included = available and candidate["fingerprint"] not in seen
-        public = {k: v for k, v in candidate.items() if k not in ("records", "sessions", "fingerprint")}
+        excluded = candidate.get("excluded")
+        included = available and not excluded and candidate["fingerprint"] not in seen
+        public = {k: v for k, v in candidate.items() if k not in ("records", "sessions", "fingerprint", "excluded")}
         public["included"] = included
-        if included:
+        if excluded:
+            public.update(status=excluded[0], message=excluded[1])
+        elif included:
             seen.add(candidate["fingerprint"])
             records.extend(candidate["records"])
             provider = candidate["provider"]
@@ -1467,10 +1508,12 @@ def build_payload(
         sources.append(public)
     if len(records) > MAX_TRANSCRIPT_RECORDS_TOTAL:
         raise ValueError("Combined transcript history exceeds the record limit. Select a shorter period.")
-    provider_ids = sorted({c["provider"] for c in candidates})
+    order = {provider: index for index, provider in enumerate(PROVIDER_ORDER)}
+    provider_ids = sorted({c["provider"] for c in candidates if not c.get("excluded")},
+                          key=lambda p: (order.get(p, len(order)), p))
     if rates_override is not None:
         rates, pricing = rates_override
-    elif force_rates or any(r.model not in overrides for r in records):
+    elif force_rates or any(not r.source_priced and r.model not in overrides for r in records):
         rates, pricing = load_rates(state_dir, timeout, stamp // 1000, force=force_rates)
     else:
         rates, pricing = {}, {"status": "notNeeded", "source": LITELLM_RATES_URL,
@@ -1478,7 +1521,8 @@ def build_payload(
     result = aggregate_usage(records, provider_ids, days, stamp, rates, zone_name, overrides)
     coverage = []
     for provider in result["providers"]:
-        relevant = [s for s in sources if s.get("provider") == provider["id"] and s["status"] != "duplicate"]
+        relevant = [s for s in sources if s.get("provider") == provider["id"]
+                    and s["status"] not in ("duplicate", "replaced", "excluded")]
         status = "ok" if relevant and all(s["status"] == "ok" for s in relevant) else "partial"
         if relevant and not any(s["included"] for s in relevant):
             status = "missing"
@@ -1493,15 +1537,56 @@ def build_payload(
         if cell["remoteRecords"]:
             cell["sessions"] = None  # Bucket sessions cannot be summed across models/days.
     included_sources = [s for s in sources if s["included"]]
-    complete = bool(included_sources) and all(s["status"] in ("ok", "duplicate", "missing") for s in sources)
+    complete = bool(included_sources) and all(s["status"] in ("ok", "duplicate", "missing", "replaced", "excluded")
+                                               for s in sources)
     observed = {bucket_for(r.timestamp_ms) for r in records}
     for cell in result["periods"]:
         cell["historyStatus"] = "recorded" if complete or cell["start"] in observed else "unavailable"
     result["totals"]["historyStatus"] = "recorded" if included_sources else "unavailable"
+    if fusebox_available:
+        pricing = {**pricing, "fusebox": fusebox_available}
     return {"schemaVersion": SCHEMA_VERSION, "source": "transcripts", "sources": sources,
         "generatedAt": iso_timestamp(stamp / 1000), "coverage": coverage,
         "pricing": {**pricing, "basis": "currentBaseRates", "customModels": len(overrides)},
         "scanDurationMs": int((time.monotonic() - started) * 1000), **result}
+
+
+def collect_fusebox(future, start: int, stamp: int, candidates: list[dict[str, Any]],
+                    sources: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Add one candidate per provider bucket; return Fusebox pricing when readable."""
+    try:
+        summary, state, error = future.result()
+    except (ValueError, OSError):
+        summary, state, error = None, "unavailable", "Check the Fusebox connection and key in Costs settings."
+    if summary is None:
+        sources.append({"id": "fusebox", "name": "Fusebox", "kind": "fusebox", "status": "unavailable",
+                        "included": False, "updatedAt": None, "message": error})
+        return None
+    status = "stale" if state == "stale" else summary["status"]
+    notes = list(summary["notes"])
+    if state == "stale":
+        notes.insert(0, "Saved Fusebox history; newer requests may be missing. " + error)
+    grouped: dict[str, list[UsageRecord]] = {}
+    for provider, timestamp, model, count, cost, uncached, cached, written, output, reasoning in summary["rows"]:
+        if start <= timestamp <= stamp:
+            grouped.setdefault(provider, []).append(UsageRecord(
+                provider=provider, timestamp_ms=timestamp, model=model, session_id="",
+                uncached_input=uncached, cached_input=cached, cache_creation=written, output=output,
+                reasoning=reasoning, reported_cost_usd=None if cost is None else cost / 1e9,
+                dedupe_key=None, record_count=count, origin="remote", source_priced=True))
+    message = " ".join(notes) or "Fusebox's own API-price estimates, one entry per provider response."
+    for provider in sorted(grouped):
+        candidates.append({"id": "fusebox-" + provider, "name": "Fusebox · " + (
+            PROVIDER_NAMES.get(provider) or fusebox_costs.provider_name(provider)),
+            "kind": "fusebox", "provider": provider, "fingerprint": "fusebox:" + provider,
+            "status": status, "updatedAt": summary["readAt"], "message": message,
+            "records": grouped[provider], "sessions": None})
+    if not grouped:
+        sources.append({"id": "fusebox", "name": "Fusebox", "kind": "fusebox", "status": status,
+                        "included": True, "updatedAt": summary["readAt"],
+                        "message": " ".join(notes) or "No Fusebox usage in this period."})
+    pricing = summary.get("pricing") or {}
+    return {"version": str(pricing.get("version") or ""), "basis": str(pricing.get("basis") or "")}
 
 
 def clean_error(value: Any) -> str:
@@ -1518,6 +1603,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh-prices", action="store_true")
     parser.add_argument("--price-overrides", default="{}", help="Exact-model rates as JSON, in USD per million tokens")
     parser.add_argument("--t3-servers", default="[]")
+    parser.add_argument("--fusebox-url", default="", help="Fusebox server URL; empty disables the Fusebox source")
+    parser.add_argument("--fusebox-key-file", default="")
+    parser.add_argument("--fusebox-overlap", default="fusebox", choices=("fusebox", "transcripts"))
     args = parser.parse_args(argv)
     try:
         payload = build_payload(
@@ -1529,6 +1617,8 @@ def main(argv: list[str] | None = None) -> int:
             force_rates=args.refresh_prices,
             price_overrides=args.price_overrides,
             t3_servers=args.t3_servers,
+            fusebox=({"url": args.fusebox_url, "keyFile": args.fusebox_key_file, "overlap": args.fusebox_overlap}
+                     if args.fusebox_url.strip() else None),
         )
     except Exception as exc:
         payload = {

@@ -42,6 +42,10 @@ PROVIDER_NAMES = {
     "github-copilot": "GitHub Copilot",
     "xai": "xAI",
     "openai": "OpenAI",
+    "meta": "Meta",
+    "devin": "Devin",
+    "vertex": "Vertex AI",
+    "openai-compat": "OpenAI-compatible",
 }
 AUTH_COMMANDS = {
     "claude": "claude auth login",
@@ -932,6 +936,14 @@ class CliProxyClient:
             with opener.open(request, timeout=timeout) as response:
                 raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as exc:
+            detail = ""
+            if native:
+                # Fusebox explains refusals as {"error": "..."}; keep only that text.
+                try:
+                    reason = json.loads(exc.read(4097)[:4096]).get("error")
+                    detail = clean_message(reason)[:200] if isinstance(reason, str) else ""
+                except (ValueError, AttributeError, OSError, RecursionError):
+                    detail = ""
             exc.close()
             if exc.code in (401, 403):
                 error = ProviderFailure("config", f"{name} rejected the management key or remote management access.")
@@ -940,6 +952,7 @@ class CliProxyClient:
             else:
                 error = ProviderFailure("http", f"{name} management endpoint returned HTTP {exc.code}.")
             error.http_status = exc.code
+            error.detail = EMAIL_PATTERN.sub("[email]", detail)
             raise error from None
         except (TimeoutError, urllib.error.URLError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
@@ -1135,14 +1148,235 @@ def rust_timestamp(value: Any, *, observed: bool = False, now: float | None = No
         raise ProviderFailure("malformed", "Fusebox returned an invalid quota or activity timestamp.") from None
 
 
+RUST_QUOTA_PROVIDERS = ("claude", "codex", "meta", "antigravity")
+RUST_UNSUPPORTED_NOTICES = {
+    "kimi": "Fusebox does not report Kimi Code subscription quotas.",
+}
+RUST_DURATIONS = {"5h": FIVE_HOURS, "week": SEVEN_DAYS, "day": 86400}
+RUST_DURATION_LABELS = {"5h": "5 hour limit", "week": "Weekly limit", "day": "Daily limit"}
+RUST_WINDOW_SCOPES = {"oauth apps": "OAuth apps", "overage": "Extra usage"}
+RUST_CODEX_SUBSCRIPTIONS = {
+    # Fusebox reads ChatGPT's active subscription SKU; usage's `pro` alone is ambiguous.
+    "chatgptprolite": ("prolite", "ChatGPT Pro Lite"),
+    "chatgptpro": ("pro", "ChatGPT Pro"),
+    "chatgptpromax": ("promax", "Codex Pro 500"),
+}
+RUST_CLAUDE_PLANS = {"pro": "Claude Pro", "max_5x": "Claude Max", "max_20x": "Claude Ultra", "ultra": "Claude Ultra"}
+RUST_COOLDOWN_TEXT = {"quota": "Usage limit used up", "rate_limit": "Rate limited", "credit": "Out of credits"}
+RUST_PRIORITY_TEXT = {"first": "Takes new sessions first", "last": "Takes new sessions last"}
+RUST_UNSETTLED_RESETS = ("pending", "unknown")
+SIGN_IN_ERROR = re.compile(
+    r"invalid_grant|refresh token|sign in again|re-?authenticat|unauthori[sz]ed|\b401\b"
+    r"|token (?:has )?expired|expired token|revoked", re.IGNORECASE)
+EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def rust_text(value: Any, limit: int = 128) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > limit:
+        raise ProviderFailure("malformed", "Fusebox returned invalid account metadata.")
+    return value.strip() or None
+
+
+def rust_percent(value: Any) -> float | None:
+    if value is None:
+        return None
+    parsed = number(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    if parsed is None or not 0 <= parsed <= 100:
+        raise ProviderFailure("malformed", "Fusebox returned an invalid quota amount or model scope.")
+    return parsed
+
+
+def rust_duration(name: str) -> tuple[str, int | None]:
+    if name in RUST_DURATION_LABELS:
+        return RUST_DURATION_LABELS[name], RUST_DURATIONS[name]
+    match = re.fullmatch(r"(\d{1,6})([dhms])", name)
+    if not match:
+        return name.title(), None
+    amount, unit = int(match[1]), match[2]
+    seconds = amount * {"d": 86400, "h": 3600, "m": 60, "s": 1}[unit]
+    noun = {"d": "day", "h": "hour", "m": "minute", "s": "second"}[unit]
+    return f"{amount} {noun} limit", seconds
+
+
+def rust_window(provider_id: str, row: Any, now: float) -> dict[str, Any] | None:
+    if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not 0 < len(row["name"]) <= 128:
+        raise ProviderFailure("malformed", "Fusebox returned an invalid quota window.")
+    used = rust_percent(row.get("used"))
+    model = row.get("model")
+    if used is None or (model is not None and (not isinstance(model, str) or not 0 < len(model) <= 128)):
+        raise ProviderFailure("malformed", "Fusebox returned an invalid quota amount or model scope.")
+    reset = rust_timestamp(row.get("resets_at"), now=now)
+    # A cached window past its reset cannot claim fresh capacity.
+    if reset is not None and reset <= now:
+        return None
+    name = row["name"]
+    # Fusebox names scoped windows "<duration> <scope>", e.g. "week opus".
+    base, _, scope = name.partition(" ")
+    label, seconds = rust_duration(base)
+    scope_label = model.title() if model else RUST_WINDOW_SCOPES.get(scope, scope.title() if scope else "")
+    if scope_label:
+        label = scope_label + " · " + label
+    window_id = None if model or scope else {
+        "5h": "session" if provider_id == "claude" else "codex-primary",
+        "week": "weekly" if provider_id == "claude" else "codex-secondary",
+    }.get(name) if provider_id in ("claude", "codex") else None
+    window_id = window_id or "rust-" + hashlib.sha256(json.dumps([name, model]).encode()).hexdigest()[:16]
+    return make_window(window_id, label, used, reset, seconds)
+
+
+def rust_limits(rows: Any, now: float) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Typed limits: account/model caps route chat; features, overage and credits inform."""
+    if rows is None:
+        return [], None
+    if not isinstance(rows, list) or len(rows) > 128:
+        raise ProviderFailure("malformed", "Fusebox returned invalid quota limits.")
+    windows, credits = [], None
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("scope"), dict):
+            raise ProviderFailure("malformed", "Fusebox returned an invalid quota limit.")
+        name, limit_id = rust_text(row.get("name")), rust_text(row.get("id"), 256)
+        kind = row["scope"].get("kind")
+        value = row["scope"].get("value")
+        if not name or not limit_id or kind not in (
+                "account", "model", "models", "model_families", "feature", "overage", "credits"):
+            raise ProviderFailure("malformed", "Fusebox returned an invalid quota limit.")
+        used_percent = rust_percent(row.get("used_percent"))
+        amounts = {key: number(row.get(key)) if isinstance(row.get(key), (int, float)) and not isinstance(row.get(key), bool) else None
+                   for key in ("used", "limit", "remaining")}
+        reset = rust_timestamp(row.get("resets_at"), now=now)
+        if reset is not None and reset <= now:
+            continue
+        unit = rust_text(row.get("unit"), 32) or ""
+        if kind == "overage":
+            if row.get("enabled") is not True:
+                continue
+            # Claude reports extra usage in USD cents.
+            scale = 100 if unit.lower() == "usd cents" else 1
+            used = amounts["used"] / scale if amounts["used"] is not None else None
+            cap = amounts["limit"] / scale if amounts["limit"] is not None else None
+            credits = {"label": "Extra usage", "currency": "USD" if scale == 100 else "", "used": used, "limit": cap,
+                       "remaining": max(0.0, cap - used) if used is not None and cap is not None else None,
+                       "total": None, "unlimited": row.get("unlimited") is True, "resetCreditsAvailable": None}
+            continue
+        if kind == "credits":
+            if amounts["remaining"] is not None or row.get("unlimited") is True:
+                credits = {"label": "Credits", "currency": "", "used": None, "limit": None,
+                           "remaining": amounts["remaining"], "total": None,
+                           "unlimited": row.get("unlimited") is True, "resetCreditsAvailable": None}
+            continue
+        if used_percent is None or row.get("unlimited") is True:
+            continue
+        # A provider gate only matters while it blocks; an open gate duplicates its windows.
+        if limit_id.endswith(":gate") and used_percent < 100:
+            continue
+        scoped = kind in ("model", "models", "model_families")
+        if scoped:
+            values = value if isinstance(value, list) else [value]
+            if not values or len(values) > 32 or not all(isinstance(v, str) and 0 < len(v) <= 128 for v in values):
+                raise ProviderFailure("malformed", "Fusebox returned an invalid quota limit scope.")
+        label = name + (" · Limit reached" if limit_id.endswith(":gate") else "")
+        detail = ""
+        if amounts["used"] is not None and amounts["limit"] is not None:
+            detail = f"{amounts['used']:g} of {amounts['limit']:g}{' ' + unit if unit else ''} used"
+        informational = kind == "feature" or row.get("enabled") is False
+        if informational:
+            detail = (detail + " · " if detail else "") + "Separate allowance; does not limit ordinary requests"
+        window = make_window("rust-limit-" + hashlib.sha256(limit_id.encode()).hexdigest()[:16],
+                             label, used_percent, reset, None, detail)
+        if informational:
+            window["informational"] = True
+        windows.append(window)
+    return windows, credits
+
+
+def rust_plan(provider_id: str, quota: dict[str, Any]) -> tuple[str, str]:
+    raw_plan = rust_text(quota.get("plan")) or ""
+    plan_name = rust_text(quota.get("plan_name")) or ""
+    subscription = rust_text(quota.get("subscription_plan")) or ""
+    if provider_id == "codex":
+        if subscription in RUST_CODEX_SUBSCRIPTIONS:
+            return RUST_CODEX_SUBSCRIPTIONS[subscription]
+        return raw_plan, CODEX_PLAN_LABELS.get(raw_plan, raw_plan.replace("_", " ").title())
+    if provider_id == "claude":
+        label = "Claude " + plan_name if plan_name else RUST_CLAUDE_PLANS.get(raw_plan, "")
+        return raw_plan, label or ("Claude " + raw_plan.replace("_", " ").title() if raw_plan else "")
+    return raw_plan, plan_name or raw_plan.replace("_", " ").title()
+
+
+def rust_status_items(entry: dict[str, Any], quota: dict[str, Any], now: float) -> list[dict[str, Any]]:
+    """Short account facts Fusebox knows beyond the quota windows."""
+    items: list[dict[str, Any]] = []
+
+    def stamp(value: Any) -> float | None:
+        try:
+            return rust_timestamp(value, now=now)
+        except ProviderFailure:
+            return None
+
+    cooldowns = entry.get("cooldowns") if isinstance(entry.get("cooldowns"), dict) else {}
+    kinds = entry.get("cooldown_kinds") if isinstance(entry.get("cooldown_kinds"), dict) else {}
+    for model in sorted(cooldowns, key=lambda key: (key != "*", key))[:4]:
+        until, kind = stamp(cooldowns[model]), kinds.get(model)
+        if until is None or until <= now or kind == "checking" or not isinstance(model, str) or len(model) > 128:
+            continue
+        text = RUST_COOLDOWN_TEXT.get(kind, "Cooling down")
+        items.append({"kind": "cooldown", "text": text if model == "*" else clean_message(model) + " · " + text, "at": until})
+    wait = stamp(quota.get("usage_wait_until"))
+    if wait is not None and wait > now:
+        items.append({"kind": "warning", "text": "Provider usage checks are rate limited", "at": wait})
+    if quota.get("subscription_inactive") is True:
+        items.append({"kind": "warning", "text": "Subscription is not active; these are the last reported limits", "at": None})
+    if quota.get("no_five_hour_limit") is True:
+        items.append({"kind": "info", "text": "No 5-hour limit", "at": None})
+    renewal = quota.get("renewal")
+    if isinstance(renewal, dict) and (at := stamp(renewal.get("at"))) is not None:
+        text = "Ends" if renewal.get("ends") is True else "Renews"
+        items.append({"kind": "renewal", "text": text, "at": at, "estimated": renewal.get("estimated") is True})
+    priority = RUST_PRIORITY_TEXT.get(entry.get("priority"))
+    if priority:
+        items.append({"kind": "info", "text": priority, "at": None})
+    resets = entry.get("banked_resets")
+    operation = resets.get("operation") if isinstance(resets, dict) else None
+    if isinstance(operation, dict) and operation.get("status") in RUST_UNSETTLED_RESETS:
+        items.append({"kind": "warning", "text": "A banked reset needs review in the Fusebox dashboard", "at": None})
+    error = entry.get("last_error")
+    if isinstance(error, str) and error.strip() and not SIGN_IN_ERROR.search(error):
+        message = EMAIL_PATTERN.sub("[email]", clean_message(error))[:160]
+        items.append({"kind": "error", "text": "Last error: " + message, "at": None})
+    return items
+
+
+def rust_reset_credits(provider_id: str, entry: dict[str, Any]) -> int | None:
+    if provider_id not in ("claude", "codex") or entry.get("kind") != "oauth":
+        return None
+    resets = entry.get("banked_resets")
+    if not isinstance(resets, dict) or resets.get("error") or not isinstance(resets.get("inventory"), dict):
+        return None
+    operation = resets.get("operation")
+    if isinstance(operation, dict) and operation.get("status") in RUST_UNSETTLED_RESETS:
+        return None
+    available = number(resets["inventory"].get("available"))
+    if available is None or available < 0 or available != int(available) or available > 10_000:
+        return None
+    # Like Fusebox's dashboard, show nothing for accounts without banked resets.
+    # An ineligible count still opens the dialog, which names Fusebox's reason.
+    return int(available) or None
+
+
 def fetch_rust_account(provider_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     result = cliproxy_account_record(provider_id, entry)
-    result.update(source="Fusebox accounts API", supportsBankedReset=False)
+    result.update(source="Fusebox accounts API", supportsBankedReset=False, statusItems=[])
     if entry.get("disabled") is True:
         result.update(status="disabled", notice="This account is paused in Fusebox.")
         return result
-    if provider_id not in ("claude", "codex") or entry.get("kind") != "oauth":
-        result.update(status="unsupported", notice="Fusebox does not expose subscription quotas for this account.")
+    if entry.get("kind") != "oauth":
+        result.update(status="unsupported", notice="API keys and service accounts have no subscription quota.")
+        return result
+    if provider_id not in RUST_QUOTA_PROVIDERS:
+        result.update(status="unsupported", notice=RUST_UNSUPPORTED_NOTICES.get(
+            provider_id, "Fusebox does not report subscription quotas for this provider."))
         return result
     try:
         quota = entry.get("quota")
@@ -1152,37 +1386,31 @@ def fetch_rust_account(provider_id: str, entry: dict[str, Any]) -> dict[str, Any
         observed = rust_timestamp(quota.get("updated_at"), observed=True, now=now)
         windows, seen = [], set()
         for row in quota["windows"]:
-            if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not 0 < len(row["name"]) <= 128:
-                raise ProviderFailure("malformed", "Fusebox returned an invalid quota window.")
-            used = number(row.get("used")) if isinstance(row.get("used"), (int, float)) else None
-            model = row.get("model")
-            if used is None or not 0 <= used <= 100 or (model is not None and (not isinstance(model, str) or not 0 < len(model) <= 128)):
-                raise ProviderFailure("malformed", "Fusebox returned an invalid quota amount or model scope.")
-            name = row["name"]
-            window_id = {"5h": "session" if provider_id == "claude" else "codex-primary",
-                         "week": "weekly" if provider_id == "claude" else "codex-secondary"}.get(name)
-            window_id = window_id if window_id and not model else "rust-" + hashlib.sha256(json.dumps([name, model]).encode()).hexdigest()[:16]
-            if window_id in seen:
-                raise ProviderFailure("malformed", "Fusebox returned duplicate quota windows.")
-            seen.add(window_id)
-            reset = rust_timestamp(row.get("resets_at"), now=now)
-            # A cached window past its reset cannot claim fresh capacity.
-            if reset is not None and reset <= now:
+            window = rust_window(provider_id, row, now)
+            if window is None:
                 continue
-            seconds = {"5h": FIVE_HOURS, "week": SEVEN_DAYS, "day": 86400}.get(name)
-            label = {"5h": "5 hour limit", "week": "Weekly limit", "day": "Daily limit"}.get(name, name.title())
-            if model:
-                label = model.title() + " · " + label
-            windows.append(make_window(window_id, label, used, reset, seconds))
+            if window["id"] in seen:
+                raise ProviderFailure("malformed", "Fusebox returned duplicate quota windows.")
+            seen.add(window["id"])
+            windows.append(window)
+        limit_windows, credits = rust_limits(quota.get("limits"), now)
+        windows.extend(window for window in limit_windows if window["id"] not in seen)
+        reset_credits = rust_reset_credits(provider_id, entry)
+        if reset_credits is not None:
+            credits = dict(credits or {"label": "Credits", "currency": "", "used": None, "limit": None,
+                                       "remaining": None, "total": None, "unlimited": False},
+                           resetCreditsAvailable=reset_credits)
+        result["statusItems"] = rust_status_items(entry, quota, now)
+        error = entry.get("last_error")
+        if isinstance(error, str) and SIGN_IN_ERROR.search(error):
+            raise ProviderFailure("expired", "Fusebox reports that this sign-in was rejected. Sign in again in the Fusebox dashboard.")
         if observed is None or not windows:
             raise ProviderFailure("quota_unavailable", "Subscription quotas are not available in the Fusebox cache yet.")
-        raw_plan = quota.get("plan")
-        if raw_plan is not None and (not isinstance(raw_plan, str) or len(raw_plan) > 128):
-            raise ProviderFailure("malformed", "Fusebox returned invalid plan metadata.")
-        result.update(windows=windows, quotaUpdatedAt=observed,
+        plan_type, plan = rust_plan(provider_id, quota)
+        result.update(windows=windows, credits=credits, quotaUpdatedAt=observed,
                       fetchedAt=datetime.fromtimestamp(observed, timezone.utc).isoformat(),
-                      planType=clean_message(raw_plan or ""),
-                      plan=clean_message(CODEX_PLAN_LABELS.get(raw_plan, raw_plan or "") if provider_id == "codex" else raw_plan or ""),
+                      planType=clean_message(plan_type), plan=clean_message(plan),
+                      supportsBankedReset=reset_credits is not None,
                       stale=now - observed > RUST_QUOTA_STALE_SECONDS)
         if result["stale"]:
             result["notice"] = "Last known reading · The Fusebox quota cache is more than 10 minutes old."
@@ -1357,7 +1585,9 @@ def dynamic_window_used(provider: dict[str, Any]) -> float | None:
     used_values = [
         clamp(value, 0, 100)
         for row in windows
-        if isinstance(row, dict) and (value := number(row.get("used"))) is not None
+        # Feature allowances are shown, but never select or limit the account.
+        if isinstance(row, dict) and row.get("informational") is not True
+        and (value := number(row.get("used"))) is not None
     ]
     if not used_values:
         return None

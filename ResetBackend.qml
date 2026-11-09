@@ -25,8 +25,7 @@ Item {
 
   function begin(account, label) {
     if (active || busy || usageBackend.usageSource !== "cliproxy" || !account
-        || account.id !== "codex" || account.status !== "ok"
-        || account.supportsBankedReset === false
+        || !UsageLogic.supportsAccountReset(account)
         || !(Number(account.credits && account.credits.resetCreditsAvailable) > 0)
         || !account.accountId) return false
     accountId = String(account.accountId)
@@ -56,18 +55,21 @@ Item {
       message = "This confirmation expired. Close it and click the badge again to refresh the reset details."
       return
     }
+    // An uncertain request is retried by ID; Fusebox needs to know it is a retry.
+    var retry = state === "uncertain"
     state = "sending"
     message = ""
-    launch("consume")
+    launch("consume", retry)
   }
 
-  function launch(action) {
+  function launch(action, retry) {
     var command = ["python3", scriptPath, "--action", action, "--account-id", accountId,
       "--cliproxy-url", usageBackend.cliproxyUrl]
     if (usageBackend.cliproxyKeyFile.trim() !== "")
       command.push("--cliproxy-key-file", usageBackend.cliproxyKeyFile)
     if (action === "consume") command.push("--target", details.target,
       "--credit-id", selectedCredit.id, "--request-id", details.requestId)
+    if (action === "consume" && retry === true) command.push("--retry")
     process.action = action
     process.generation = generation
     process.body = ""
@@ -84,7 +86,8 @@ Item {
     if (process.failed || !process.exitSeen || !result || result.schemaVersion !== 1 || result.ok !== true) {
       state = process.action === "consume" && !(result && result.uncertain === false) ? "uncertain" : "error"
       message = state === "uncertain"
-        ? "The reset outcome could not be confirmed. Retry checks the same request without spending another reset."
+        ? String(result && result.message
+          || "The reset outcome could not be confirmed. Retry checks the same request without spending another reset.")
         : String(result && result.message || "Could not load reset details. Close and try again.")
       if (process.action === "consume") finished()
       return
@@ -99,13 +102,14 @@ Item {
       selectedIndex = 0
       preparedAt = Date.now()
       state = result.credits.length > 0 ? "ready" : "error"
-      if (state === "error") message = "No available Codex resets were found for this account."
+      if (state === "error") message = "No available resets were found for this account."
     } else {
       var messages = {
         reset: "Banked reset applied. Refreshing account usage…",
         nothing_to_reset: "There is currently nothing to reset on this account.",
         no_credit: "This reset is no longer available. Refreshing account usage…",
-        already_redeemed: "This request was already redeemed. Refreshing account usage…"
+        already_redeemed: "This request was already redeemed. Refreshing account usage…",
+        refused: String(result.message || "The provider did not apply this reset. It remains available.")
       }
       state = messages[result.outcome] ? "result" : "uncertain"
       message = messages[result.outcome] || "The server returned an unknown outcome. Retry the same request to check it."

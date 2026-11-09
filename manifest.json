@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "digitalpals.model-usage",
   "name": "Model Usage",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "author": "DigitalPals",
   "license": "MIT",
   "description": "Track Claude Code, OpenAI Codex, and Kimi Code subscription limits from your Omarchy menu bar. Connect local CLIs, Fusebox, or CLIProxyAPI to monitor multiple accounts, remaining quotas, reset times, and credits. Explore 24-hour, 7-day, and 30-day token history and estimated API costs from local Codex/Claude transcripts and remote T3 Code servers, with cache-aware pricing, custom model rates, and provider/model breakdowns. Includes private account labels, quota history, and keyboard-friendly settings.",
@@ -47,6 +47,10 @@
         "codex"
       ],
       "costT3Servers": "[]",
+      "costFuseboxEnabled": false,
+      "costFuseboxUrl": "",
+      "costFuseboxKeyFile": "",
+      "costFuseboxOverlap": "fusebox",
       "liveAccountActivity": true
     },
     "schema": [
@@ -227,6 +231,38 @@
         "label": "T3 Code cost servers",
         "defaultValue": "[]",
         "description": "Managed by Costs settings. Remote servers with private token file references."
+      },
+      {
+        "key": "costFuseboxEnabled",
+        "type": "boolean",
+        "label": "Fusebox cost history",
+        "defaultValue": false,
+        "description": "Include Fusebox's own API-price estimates in Costs. Configured in Costs settings, separately from Limits."
+      },
+      {
+        "key": "costFuseboxUrl",
+        "type": "string",
+        "label": "Fusebox cost server URL",
+        "defaultValue": "",
+        "description": "Fusebox server for Costs, such as http://127.0.0.1:8317."
+      },
+      {
+        "key": "costFuseboxKeyFile",
+        "type": "string",
+        "label": "Fusebox cost key file",
+        "defaultValue": "",
+        "description": "Managed privately when saving the Fusebox management key in Costs settings."
+      },
+      {
+        "key": "costFuseboxOverlap",
+        "type": "enum",
+        "label": "Fusebox and transcript overlap",
+        "defaultValue": "fusebox",
+        "options": [
+          "fusebox",
+          "transcripts"
+        ],
+        "description": "fusebox: Fusebox replaces local and T3 transcript history while readable. transcripts: transcripts supply Claude and OpenAI; Fusebox adds other providers."
       },
       {
         "key": "liveAccountActivity",

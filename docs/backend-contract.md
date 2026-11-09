@@ -131,15 +131,53 @@ The proxy collector first tries the Go auth-file inventory. Legacy HTTP
 401/403/404/405 allows a bounded authenticated native inventory probe; a valid
 `/api/accounts` array is required to identify Rust. An outage is not treated as
 an implementation change. The payload adds `proxyImplementation: go|rust`;
-account rows add the same marker and `supportsBankedReset`. Rust is read-only:
-no `api-call`, mutation, token refresh, or model generation is invoked.
+account rows add the same marker and `supportsBankedReset`. Quota polling is
+read-only: no `api-call`, mutation, token refresh, or model generation is
+invoked. Only an explicitly confirmed banked reset posts to Fusebox.
 
 Rust quota rows retain `quotaUpdatedAt` and use it for `fetchedAt` and history
 sampling. Native amounts are percentages, reset timestamps require timezones,
 missing quota remains unknown, and observations older than ten minutes are
-`stale`. Cached windows past reset are omitted. Rust credits stay null and
-banked reset actions are refused. Switching implementations cannot restore old
-credits from a prior successful reading.
+`stale`. Cached windows and limits past reset are omitted. Switching
+implementations cannot restore old credits from a prior successful reading.
+
+Claude, Codex and Meta OAuth `quota.windows` become windows. Their names are
+`<duration>[ <scope>]` (`5h`, `week`, `3d`, `week opus`, `week oauth apps`);
+the optional `model` names the scope. `quota.limits` (tagged `scope.kind`)
+map as follows: `account`, `model`, `models` and `model_families` become
+windows, and a `:gate` limit only while it is at 100%. `feature` limits, and
+limits with `enabled: false`, become windows with `informational: true`.
+Python history and `UsageLogic.minRemaining` skip those, and they never get
+warning colors. `overage` (Claude extra usage, USD cents) and `credits` (Codex
+balance) become the account's `credits`. Antigravity has only limits. Plans
+use `quota.plan_name`, Claude's `max_5x`/`max_20x` tiers, and ChatGPT's
+`subscription_plan` SKU (`chatgptprolite`, `chatgptpro`, `chatgptpromax`).
+
+Account rows add `statusItems`: `{kind, text, at}` with `kind` one of
+`cooldown`, `renewal` (`estimated` optional), `warning`, `info` and `error`.
+`at` is Unix seconds or null. QML formats renewals as a date and other times as
+a countdown, refreshed once a minute. Expired items are dropped. A `last_error`
+that indicates a rejected sign-in makes the row `status: error`,
+`errorKind: expired`; other errors become an `error` item with emails masked.
+
+`banked_resets.inventory.available` supplies `credits.resetCreditsAvailable`
+for Claude and Codex OAuth accounts when the snapshot has no error or
+unresolved (`pending`/`unknown`) operation. Zero and absent counts set
+`supportsBankedReset: false`, so the badge stays hidden.
+
+`reset-credit.py` resolves the same account hash among native accounts and
+uses Fusebox's percent-encoded native ID. `prepare` reads
+`GET /api/accounts/{id}/banked-resets`. It requires `inventory.eligible` and a
+UUID `quote`, and lists usable unexpired grants, Fusebox's `selected_grant`
+first. Codex with no listed grants gets one empty-ID choice, letting Fusebox
+choose. `consume` posts `{action: redeem, request_id: quote, grant_id,
+confirmed: true}`. `applied` maps to outcome `reset`; `already_used` and
+`reconciled_used` map to `already_redeemed`; `refused` and `reconciled_unused`
+map to `refused` with Fusebox's message. `pending`, `unknown`, network
+failures and 5xx are uncertain. 4xx answers are refusals before dispatch and
+carry Fusebox's `error` text. `--retry` repeats `redeem` with the same ID,
+which Fusebox answers from its journal without spending. Only a still-unsettled,
+retryable Claude request then sends `action: retry`.
 
 Native account activity uses `last_used` and the same hashed filename account
 identity as quota rows. It denotes completed requests including failures;

@@ -34,6 +34,8 @@ Ui.Panel {
   property alias settingsForm: configForm
   property alias resetAction: resetBackend
   property double nowMs: Date.now()
+  // Account facts show minutes; change once a minute rather than every tick.
+  readonly property double minuteMs: Math.floor(nowMs / 60000) * 60000
 
   readonly property var viewOptions: [
     { value: "limits", label: "Limits" },
@@ -195,7 +197,8 @@ Ui.Panel {
   }
 
   function windowSeverity(window) {
-    if (!window || window.remaining === null || window.remaining === undefined) return "none"
+    if (!window || window.informational === true
+        || window.remaining === null || window.remaining === undefined) return "none"
     var remaining = Number(window.remaining)
     if (!isFinite(remaining)) return "none"
     if (remaining <= criticalThreshold) return "critical"
@@ -1146,8 +1149,7 @@ Ui.Panel {
             id: resetClick
             objectName: "accountResetAction"
             anchors.fill: parent
-            enabled: root.proxyMode && accountCard.account.status === "ok"
-              && accountCard.account.supportsBankedReset !== false
+            enabled: root.proxyMode && UsageLogic.supportsAccountReset(accountCard.account)
               && Number(accountCard.account.credits && accountCard.account.credits.resetCreditsAvailable) > 0
               && !resetBackend.active && !resetBackend.busy
             hoverEnabled: true
@@ -1182,6 +1184,20 @@ Ui.Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         elide: Text.ElideMiddle
+      }
+      Repeater {
+        model: UsageLogic.accountStatusItems(accountCard.account, root.minuteMs)
+        Text {
+          required property var modelData
+          objectName: "accountStatusItem"
+          width: accountContent.width
+          text: modelData.text
+          textFormat: Text.PlainText
+          color: modelData.urgent ? root.urgent : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
       }
       Text {
         objectName: "accountActivityDetails"
@@ -1237,6 +1253,17 @@ Ui.Panel {
             width: parent.width
             visible: text !== ""
             text: root.resetText(accountWindow.modelData)
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+          Text {
+            objectName: "proxyAccountWindowDetail"
+            width: parent.width
+            visible: text !== ""
+            text: String(accountWindow.modelData.detail || "")
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

@@ -164,7 +164,7 @@ class ManagementKeyTests(unittest.TestCase):
             self.assertEqual(list(held.iterdir()), [])
             self.assertEqual(sentinel.read_text(), "untouched")
 
-    def test_four_t3_credentials_commit_or_roll_back_together(self):
+    def test_four_t3_and_fusebox_credentials_commit_or_roll_back_together(self):
         for decision in ("commit", "abort"):
             with self.subTest(decision=decision), tempfile.TemporaryDirectory() as config:
                 process = subprocess.Popen(
@@ -173,6 +173,7 @@ class ManagementKeyTests(unittest.TestCase):
                     env={**os.environ, "XDG_CONFIG_HOME": config})
                 self.addCleanup(self.stop, process)
                 keys = {"t3Token_server-" + str(i): "t3-secret-" + str(i) for i in range(4)}
+                keys["costFuseboxKeyFile"] = "fusebox-cost-secret"
                 process.stdin.write(json.dumps({"keys": keys, "previousPaths": {}}) + "\n")
                 process.stdin.flush()
                 response = process.stdout.readline()

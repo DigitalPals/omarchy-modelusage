@@ -23,10 +23,10 @@ Cropped captures of the running widget, September 2026. Account emails are hidde
 
 ## Highlights
 
-- **Multiple subscriptions:** Fusebox and CLIProxyAPI discover managed accounts automatically. Each account gets its own quota card, plan, reset time, and supported credits. Codex banked resets can be reviewed and applied with confirmation.
+- **Multiple subscriptions:** Fusebox and CLIProxyAPI discover managed accounts automatically. Each account gets its own quota card, plan, reset time, and supported credits. Fusebox adds Meta and Antigravity quotas, model and spending limits, renewals, and cooldowns. Banked resets can be reviewed and applied with confirmation: Codex through either proxy, Claude through Fusebox.
 - **Live Fusebox activity:** a session-count badge sits in the upper-right of each account card, aligned with the subscription title. Click or hover for details. Counts represent Fusebox's recent assigned sessions and may remain after requests finish. Disconnected streams show “Sessions unknown” and keep quota readings. The menu bar shows quota percentages only. No model display or continuous animations.
 - **Usage at a glance:** compact provider percentages, configurable bar visibility, reset countdowns, warning colors, and persistent 24H/7D quota history. Fusebox reports last-used accounts directly; Go proxies can use optional [CPA Usage Keeper](docs/keeper-deployment.md) activity.
-- **Combined cost history:** local Codex/Claude transcripts and up to four [T3 Code](https://github.com/pingdotgg/t3code) servers in one 24H/7D/30D view, with API estimates, tokens, and provider/model breakdowns.
+- **Combined cost history:** local Codex/Claude transcripts and up to four [T3 Code](https://github.com/pingdotgg/t3code) servers in one 24H/7D/30D view, with API estimates, tokens, and provider/model breakdowns, plus Fusebox's priced usage history.
 - **Improved accounting:** common pricing across sources, cache-aware token costs, shared-folder deduplication, corrected handling of equal-sized Codex responses, custom model rates, and incremental scans.
 - **Cleaner UI:** Limits/Costs tabs, a compact provider menu, expandable details, separate quota and cost settings, fixed Save/Cancel controls, and square usage cards with a theme-corner option. Keyboard navigation and Omarchy theme/scaling support are built in.
 
@@ -87,13 +87,29 @@ The **Fusebox on GitHub** link in Limits settings opens [the project repository]
 
 Use the plaintext management key accepted by the proxy dashboard, not a client API key or the server's bcrypt hash. The masked field saves it to a private file; leaving a replacement blank preserves the saved key. Server URLs, `/management.html` URLs, management API URLs, and reverse-proxy prefixes are accepted. Remote servers must permit remote management access.
 
-Managed **Claude, Codex, Kimi, and Antigravity** have quota lookups. Antigravity needs the account's project ID. Other discovered providers display an unsupported-quota notice; paused and failed accounts retain their own status. **Hide account emails** is enabled by default.
+With **CLIProxyAPI**, managed **Claude, Codex, Kimi, and Antigravity** have quota lookups; Antigravity needs the account's project ID. With **Fusebox**, the widget reads Fusebox's cached account snapshot and makes no provider calls:
+
+- **Claude, Codex, and Meta** subscription windows and **Antigravity** quota groups, including model-scoped limits (Opus, Sonnet, Fable, Codex model limits) and the Codex spending limit.
+- Claude extra usage and Codex credits.
+- Plan names: Claude Pro/Max/Ultra, ChatGPT Pro tiers, Meta tiers.
+- Account facts under each account name: renewal date, no 5-hour limit, cooldown countdowns, last error, and resets awaiting review.
+- Feature allowances such as Code review and Cowork are shown as informational and never drive the menu-bar percentage or warnings.
+
+Banked resets work for Claude and Codex through Fusebox's own reset journal once banked resets are enabled in Fusebox.
+
+Other discovered providers display an unsupported-quota notice; paused and failed accounts retain their own status. **Hide account emails** is enabled by default.
 
 ### Cost history
 
 Open **Costs → gear**. Local **Codex CLI** and **Claude Code CLI** history are enabled by default. Choose **Add T3 server** to enter a name, HTTP(S) base URL, and connection token; up to four enabled servers contribute together. T3 usage contract **4 or 5** is required. Blank token replacements preserve saved credentials.
 
-**Custom prices** accepts exact model IDs and USD-per-million input/output rates, with optional cache-read/write rates. **Last scan** shows which sources were included, partial, missing, duplicate, stale, or unavailable.
+**Fusebox** adds Fusebox's own priced history. Open **Costs → gear → Fusebox**, enable **Include Fusebox usage**, and enter the server URL and management API key. The key is saved privately and is separate from Limits. Fusebox estimates are used as reported; unpriced requests stay unpriced.
+
+CLIs routed through Fusebox also write transcripts, and those carry no Fusebox request IDs, so the same request could count twice. By default **Use Fusebox instead of transcripts** leaves local and T3 history out while Fusebox is readable. To include sessions that bypass Fusebox, turn on Fusebox's Claude Code/Codex history import, which deduplicates by response ID. Turn the option off to keep transcripts for Claude and OpenAI and add only Fusebox's other providers.
+
+24H uses individual responses (up to 20,000); 7D/30D use daily totals. **Last scan** marks replaced or excluded sources.
+
+**Custom prices** accepts exact model IDs and USD-per-million input/output rates, with optional cache-read/write rates. **Last scan** shows which sources were included, partial, missing, duplicate, replaced, excluded, stale, or unavailable.
 
 Full connection, credential, settings, reset-credit, and troubleshooting details are in the [configuration reference](docs/configuration.md).
 

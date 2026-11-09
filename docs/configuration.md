@@ -39,9 +39,11 @@ omarchy bar set digitalpals.model-usage cliproxyUrl https://proxy.example.com
 
 The Go collector lists managed accounts and asks CLIProxyAPI to make read-only upstream quota calls using `$TOKEN$` substitution. Provider tokens stay on the server. All managed providers are discovered automatically, independently of the local CLI provider selection. Claude, Codex, Kimi, and Antigravity have quota lookups; other providers stay visible with an explicit unsupported-quota notice. Antigravity requires the account’s project ID. Paused accounts remain browsable without being queried. Remote servers must permit remote management access.
 
-**Limits** shows every connected account for the selected provider as a separate card, with its own account label, plan, remaining quota, and reset time. Codex defaults to the overall weekly limit, with **Codex Pro · 20×** and **Codex Pro · 5×** labels taken from the reported plan tier. A badge beside each Codex plan shows its banked manual resets, including zero; the badge is hidden when the count is unavailable. For example, three connected Codex subscriptions produce three account cards. **Show additional limits** reveals session, model-specific, and other windows. Monthly-only plans show their monthly allowance; accounts without a weekly/monthly allowance show their first reported window. Paused and failed accounts stay visible with their own status. Percentages are never added across accounts.
+**Limits** shows every connected account for the selected provider as a separate card, with its own account label, plan, remaining quota, and reset time. Codex defaults to the overall weekly limit, with **Codex Pro · 20×** and **Codex Pro · 5×** labels taken from the reported plan tier. A badge beside each Codex plan shows its banked manual resets, including zero; the badge is hidden when the count is unavailable. With Fusebox, Claude and Codex subscriptions both show the badge when Fusebox has banked resets enabled and the account has at least one; accounts with none show nothing, as in Fusebox's dashboard. For example, three connected Codex subscriptions produce three account cards. **Show additional limits** reveals session, model-specific, and other windows. Monthly-only plans show their monthly allowance; accounts without a weekly/monthly allowance show their first reported window. Paused and failed accounts stay visible with their own status. Percentages are never added across accounts.
 
 In CLIProxyAPI mode, click a nonzero **banked resets** badge to review that account's current reset credits. The confirmation shows each reset's effect and expiry, selects the earliest expiry first (non-expiring credits last), and lets you choose another credit before clicking **Apply reset**. Account labels respect **Hide account emails**. The action spends one selected credit only on that account, then refreshes usage. Confirmations expire after two minutes and are dismissed when the configured connection changes. If the outcome is uncertain, **Retry same reset** reuses the original request identifier; closing the popup preserves that retry while the widget remains loaded. The upstream reset endpoints are internal ChatGPT APIs and may change.
+
+With Fusebox, the widget never calls provider reset endpoints. It reads the account's reset inventory from Fusebox (`GET /api/accounts/{id}/banked-resets`) and redeems through Fusebox's journal (`POST` with `action: redeem` and Fusebox's two-minute confirmation). Fusebox's recommended Claude grant is selected first, then the earliest expiry; Codex without listed credit IDs lets Fusebox use the one expiring first. Fusebox's refusal reason, such as banked resets being off or a limit not yet used, is shown in the dialog. **Retry same reset** first re-sends the same request ID, which Fusebox answers from its journal without spending again; an unresolved Claude request then uses Fusebox's `retry`. An unresolved Codex request must be checked and recorded in the Fusebox dashboard, because Codex has no safe retry. Banked resets must be enabled in Fusebox (**Config, Connections**).
 
 Provider buttons wrap to fit the panel. Failed refreshes preserve the last known reading in memory with a stale-data notice; switching servers clears those readings. At most 32 accounts per provider are checked, with four concurrent checks per provider and a shared deadline. In **Percentages** menubar mode, each provider shows only its icon and remaining quota; account names appear in the tooltip. When the last-used account is known, the percentage belongs to that account. Account activity refreshes every 15 seconds through the configured CPA Usage Keeper, independently of quota refreshes and the Costs source. Configure the Keeper URL and password in settings for the same proxy. Hover for the last recorded request time. Round-robin and concurrent requests can use different accounts, so this identifies the most recently recorded request, not a guaranteed account for the next request. Without matching activity, or when account timestamps are tied, the bar still shows the best-capacity account’s quota. The tooltip identifies this pool summary and explains that the last-used account is unknown. Failed activity refreshes retain the last-known account with a tooltip notice. Icon mode includes last-used details in its tooltip.
 
@@ -75,6 +77,36 @@ is retained with a timestamp. Stale snapshots can miss new activity and boundary
 hours; empty unknown chart periods are marked as unavailable. Session counts are
 omitted when stale summaries cannot provide an accurate count. No app or provider
 filter is needed: all enabled cost sources contribute together.
+
+### Fusebox cost history
+
+**Costs → gear → Fusebox** adds Fusebox's usage database
+(`/api/usage/dashboard` and `/api/usage/observations?view=combined`) with the
+management API key. These settings are independent of Limits; the URL field
+suggests the Limits URL. 7D/30D read daily totals by model (one unfiltered read
+plus one per provider; mismatched totals mark the source partial). 24H pages
+through individual responses, 500 per page and at most 40 pages; reaching the
+cap marks it partial. Fusebox's own estimates are used as reported. Custom
+prices still take precedence; unpriced requests are never repriced. `anthropic`
+and `openai` history join the Claude and Codex buckets; other providers (Meta,
+Antigravity, Grok, …) get their own buckets. Account, client, and request IDs
+are discarded.
+
+Transcripts carry no Fusebox response ID, so overlap is an explicit choice
+(`costFuseboxOverlap`):
+
+- **`fusebox`** (default, **Use Fusebox instead of transcripts**): while Fusebox
+  is readable or has a saved snapshot, local and T3 sources are left out and
+  shown as **Replaced by Fusebox**. If Fusebox is unreadable with no snapshot,
+  transcripts are used and Fusebox shows **Unavailable** with the reason.
+- **`transcripts`**: Fusebox's Claude/OpenAI history is left out as
+  **Not counted · transcripts used** whenever a transcript source is readable;
+  its other providers are added. Requests a CLI sends through Fusebox to
+  another provider's model can still appear in both.
+
+Fusebox's count of imported entries without a response ID is shown in its
+source message. An offline server's last snapshot (up to 32 days) is reused and
+labelled stale.
 
 Costs does not read CLIProxyAPI or Keeper. Keeper remains optional for the quota
 menubar’s last-used account feature; see [deployment](keeper-deployment.md).
@@ -124,6 +156,10 @@ In **Costs → gear → Custom prices**, add the exact model ID and its input/ou
 | `costLocalProviders` | `["claude", "codex"]` | Local cost sources, independent of quota providers |
 | `costKeeperUrl` | empty | Optional Keeper URL for last-used quota account activity |
 | `costT3Servers` | `"[]"` | T3 server configurations managed in Costs settings; credentials are private file references |
+| `costFuseboxEnabled` | `false` | Include Fusebox usage history in Costs |
+| `costFuseboxUrl` | empty | Fusebox server URL for Costs, independent of Limits |
+| `costFuseboxKeyFile` | empty | Private Fusebox management key file for Costs |
+| `costFuseboxOverlap` | `"fusebox"` | `fusebox` replaces transcripts while readable; `transcripts` keeps transcripts for Claude/OpenAI |
 | `costKeeperPasswordFile` | empty | Private Keeper password for quota account activity (legacy setting name) |
 
 Examples:
@@ -160,12 +196,32 @@ New installations use `Percentages`: one compact provider-logo chip per provider
 
 **I see two AI widgets.** `digitalpals.model-usage` and `omarchy.agents` are intentionally independent. Disable whichever one you do not want.
 
-## Rust proxy support
+## Fusebox support
 
-Rust uses cached `GET /api/accounts` data for Claude and Codex OAuth quotas.
-It does not need Keeper for account activity. Missing windows, plan metadata,
-credits, and banked resets remain unavailable. Quota observation time comes
-from the server; caches older than ten minutes are marked as last-known data.
-Native account activity reflects completed requests including failures and
-resets when the server restarts. Rust does not collect durable cost history;
-Costs continues to use local/T3 transcripts.
+Fusebox (the Rust implementation) supplies quotas from its cached
+`GET /api/accounts` snapshot, without upstream calls from the widget:
+
+- **Providers:** Claude, Codex and Meta OAuth windows; Antigravity quota groups.
+  Kimi, Grok, Devin, Vertex, API keys and service accounts stay visible with an
+  unsupported-quota notice.
+- **Windows:** 5-hour, daily, weekly and other durations, plus model-scoped
+  windows (Opus, Sonnet, Fable), OAuth-app and extra-usage weekly windows.
+- **Typed limits:** account/model caps (Codex spending limit, Claude scoped
+  models, Codex model limits, Antigravity groups, a reached provider gate) count
+  toward the account's percentage like windows do. Feature allowances (Code
+  review, Cowork) are shown as informational and never select the menu-bar
+  account or set warning colors, matching Fusebox routing.
+- **Credits:** Claude monthly extra usage (USD) and Codex credit balance.
+- **Plans:** Claude Pro, Max and Ultra from Fusebox's plan names, ChatGPT Pro
+  tiers from the active subscription (Pro Lite, Pro, **Codex Pro 500**), Meta
+  tier names.
+- **Account facts:** next renewal or end date (estimated when Fusebox marks
+  it), no 5-hour limit, rate-limit and quota cooldowns with a countdown, a
+  paused provider usage check, an inactive subscription, non-normal session
+  priority, a banked reset awaiting review, and the last error. Emails in error
+  text are masked. A rejected sign-in marks the account **sign-in expired**.
+
+Quota observation time comes from the server; caches older than ten minutes
+are marked as last-known data. Expired windows and limits are omitted. Native
+account activity needs no Keeper; it reflects completed requests including
+failures and resets when the server restarts.

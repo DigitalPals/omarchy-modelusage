@@ -125,6 +125,8 @@ function minRemaining(provider) {
   var remaining = 101
   for (var i = 0; i < Number(windows.length); i++) {
     var row = windows[i]
+    // Separate feature allowances never limit ordinary requests.
+    if (row && row.informational === true) continue
     var raw = row ? row.remaining : null
     if (raw === null || raw === undefined || raw === "") continue
     var value = Number(raw)
@@ -226,11 +228,57 @@ function accountPlanLabel(account) {
   return String(account.plan || account.name || account.id || "Account")
 }
 
+function supportsAccountReset(account) {
+  if (!account || account.status !== "ok" || account.supportsBankedReset === false) return false
+  // Fusebox redeems Claude and Codex resets; CLIProxyAPI only Codex.
+  return account.id === "codex" || account.id === "claude" && account.proxyImplementation === "rust"
+}
+
 function accountResetLabel(account) {
-  if (!account || account.id !== "codex" || account.status !== "ok") return ""
+  if (!supportsAccountReset(account)) return ""
   var count = account.credits && account.credits.resetCreditsAvailable
   if (typeof count !== "number" || !isFinite(count) || count < 0 || Math.floor(count) !== count) return ""
   return count + " banked reset" + (count === 1 ? "" : "s")
+}
+
+function shortDuration(seconds) {
+  seconds = Math.floor(Number(seconds))
+  if (!isFinite(seconds)) return ""
+  if (seconds <= 0) return "now"
+  var days = Math.floor(seconds / 86400)
+  var hours = Math.floor((seconds % 86400) / 3600)
+  var minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return days + "d " + hours + "h"
+  if (hours > 0) return hours + "h " + minutes + "m"
+  return Math.max(1, minutes) + "m"
+}
+
+// Fusebox account facts: renewals as a date, cooldowns as a countdown.
+function accountStatusText(item, nowMs) {
+  if (!item || !item.text) return ""
+  var text = String(item.text)
+  var at = Number(item.at)
+  if (item.at === null || item.at === undefined || !isFinite(at) || at <= 0) return text
+  if (item.kind === "renewal") {
+    var date = new Date(at * 1000)
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return text + " " + months[date.getMonth()] + " " + date.getDate()
+      + (item.estimated === true ? " (estimated)" : "")
+  }
+  var remaining = at - Number(nowMs) / 1000
+  if (!isFinite(remaining) || remaining <= 0) return ""
+  return text + " · " + shortDuration(remaining)
+}
+
+function accountStatusItems(account, nowMs) {
+  var rows = listOrEmpty(account && account.statusItems)
+  var result = []
+  for (var i = 0; i < rows.length && result.length < 6; i++) {
+    var text = accountStatusText(rows[i], nowMs)
+    if (text !== "") result.push({ text: text, urgent: rows[i].kind === "error" || rows[i].kind === "warning"
+      || rows[i].kind === "cooldown" })
+  }
+  return result
 }
 
 function accountWindows(account, expanded) {

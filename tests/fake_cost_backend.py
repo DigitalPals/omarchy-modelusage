@@ -15,6 +15,9 @@ parser.add_argument("--state-dir")
 parser.add_argument("--price-overrides", default="{}")
 parser.add_argument("--refresh-prices", action="store_true")
 parser.add_argument("--t3-servers", default="[]")
+parser.add_argument("--fusebox-url", default="")
+parser.add_argument("--fusebox-key-file", default="")
+parser.add_argument("--fusebox-overlap", default="fusebox")
 args = parser.parse_args()
 
 if args.providers == "" and args.t3_servers == "[]":
@@ -24,7 +27,8 @@ if args.providers == "" and args.t3_servers == "[]":
 payload = json.loads(Path(os.environ["MODEL_USAGE_COST_FIXTURE"]).read_text())
 payload["source"] = "transcripts"
 payload["testRequest"] = {"force": args.refresh_prices, "prices": args.price_overrides,
-                          "servers": args.t3_servers, "providers": args.providers}
+                          "servers": args.t3_servers, "providers": args.providers,
+                          "fusebox": [args.fusebox_url, args.fusebox_key_file, args.fusebox_overlap]}
 if args.t3_servers != "[]":
     time.sleep(0.15)
 if (args.providers == "codex" and args.t3_servers == "[]") or args.price_overrides == "synthetic-failure":
