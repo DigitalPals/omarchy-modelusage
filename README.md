@@ -10,16 +10,16 @@ AI subscription limits, token activity, and estimated API costs in your Omarchy 
 
 <table>
   <tr>
-    <th>Every provider at once · CLIProxyAPI</th>
+    <th>Every provider at once · Fusebox</th>
     <th>Costs · estimated API value</th>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/model-usage-panel.png" alt="Limits with one card per provider: two Claude accounts, three Codex Pro 20× accounts with banked-reset buttons, two Kimi accounts and an unsupported Gemini provider, one line per account with weekly meter, percentage left and reset countdown" width="420"></td>
-    <td valign="top"><img src="docs/model-usage-costs.png" alt="30-day API cost estimate with a daily chart, Claude and Codex totals, and expandable token and model details" width="420"></td>
+    <td valign="top"><img src="docs/model-usage-panel.png" alt="Limits with one card per provider: two Claude Max 20x accounts, each with its Fable week on an indented line, three Codex Pro 20× accounts with banked-reset buttons, and a Meta account, one line per account with weekly meter, percentage left and reset countdown" width="420"></td>
+    <td valign="top"><img src="docs/model-usage-costs.png" alt="30-day API cost estimate from a Fusebox server with a daily chart, Claude, Codex and Meta totals, and expandable token and model details" width="420"></td>
   </tr>
 </table>
 
-Rendered from the test fixtures (synthetic data, not live accounts), November 2026. Account labels are numbered; the menu-bar capture is from September 2026.
+Rendered from synthetic fixture data (not live accounts) with version 1.5.0, November 2026: Limits from a test Fusebox server read by the real collector, Costs from the cost-contract fixture. Account labels are numbered; the menu-bar capture is from September 2026.
 
 ## Highlights
 
@@ -72,7 +72,7 @@ Sign in to each provider you want to monitor, then open **Limits → gear** and 
 The plugin reads existing CLI credentials; sign-in and credential renewal remain with the CLI. CLI-owned environment overrides are honored; see the [configuration reference](docs/configuration.md#providers-and-authentication).
 
 <p align="center">
-  <img src="docs/model-usage-local-cli.png" alt="Local CLI mode with Claude, Codex and Kimi cards: one line per session, weekly and model-specific limit, extra usage and credits, and Claude's 24-hour quota history expanded" width="420">
+  <img src="docs/model-usage-local-cli.png" alt="Local CLI mode with Claude, Codex and Kimi cards: one line per 5-hour, weekly and model-specific limit including Claude's Fable week, extra usage and credits, and Claude's 24-hour quota history expanded" width="420">
 </p>
 
 The current UI rendered with representative fixture data; this is a local CLI mode example, not a live account reading.

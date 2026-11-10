@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
 
+- Shorten the manifest description to the marketplace's 500-character limit and mention Fusebox cost history.
+- Move the optional CPA Usage Keeper service unit and environment example from `deploy/keeper/` to `docs/keeper/`. They are setup documentation for the proxy host; the plugin never installs or manages a service.
+- Re-render the README Limits, Costs and local CLI images and recompose the marketplace preview for this release: Fusebox accounts with Fable lines and banked resets, Fusebox cost history, and a layout whose title stays visible in the marketplace's cropped cards.
 - Show Claude's Fable weekly allowance on its own indented line under every account that reports one, not only once it reaches the warning level, so the percentage a Fable week gives the menu bar is visible in the card. The line is named “Fable”, uses the same meter, colors and columns as the account line, and its tooltip adds that Fable runs on extra usage once the allowance is spent. **Details** still lists every other limit.
 - Read Fusebox's `week overage` (Claude's `seven_day_overage_included`) as the Fable week, as Claude Code does, instead of “Extra usage · Weekly limit”; when Fusebox also reports `week fable`, that one is kept. Without the typed entry, the local Claude reading uses the same field. Model-scoped Fusebox weeks are named like local ones (“Fable weekly”, “Opus weekly”), and windows limited to one model carry its family in a new optional `model` field.
 - Make Costs follow Limits: when Limits reads a Fusebox server, Costs show its usage history (everything sent through that Fusebox, from any computer) without a separate switch. Until the server is detected, one without usage history is skipped quietly; a detected CLIProxyAPI is not asked. **Changes totals on upgrade:** “Include Fusebox usage” was off by default, so its saved “off” cannot be told apart from never touched, and every installation now follows Limits. To keep only this computer's history, choose **This computer** under **Cost history from** in the Costs tab.

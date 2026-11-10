@@ -15,9 +15,9 @@ Keeper is an external dependency, not vendored into this plugin.
    and point `/opt/cpa-usage-keeper/current` at `releases/v1.15.4`.
 2. Create the system account `cpa-usage-keeper` with home
    `/var/lib/cpa-usage-keeper` and no login shell. Install
-   [the service unit](../deploy/keeper/cpa-usage-keeper.service) under
+   [the service unit](keeper/cpa-usage-keeper.service) under
    `/etc/systemd/system/`.
-3. Adapt [keeper.env.example](../deploy/keeper/keeper.env.example) into
+3. Adapt [keeper.env.example](keeper/keeper.env.example) into
    `/etc/cpa-usage-keeper/keeper.env`, owned by root with mode `0600`.
    Set the existing proxy management key and a separate random Keeper login
    password. Keep authentication enabled. Keeper handles both secrets; they

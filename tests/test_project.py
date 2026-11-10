@@ -20,7 +20,12 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(manifest["barWidget"]["defaultSection"], "right")
         self.assertFalse(manifest["barWidget"]["allowMultiple"])
         self.assertNotIn("aliases", manifest)
-        keys = {entry["key"] for entry in manifest["barWidget"]["schema"]}
+        # The Omarchy plugin marketplace rejects community manifests whose
+        # trimmed string fields exceed these lengths.
+        limits = {"id": 128, "name": 120, "version": 64, "author": 120, "description": 500, "license": 120}
+        for field, limit in limits.items():
+            self.assertLessEqual(len(manifest[field].strip()), limit, field)
+        keys ={entry["key"] for entry in manifest["barWidget"]["schema"]}
         self.assertEqual(keys, {
             "refreshIntervalSec", "enabledProviders", "barDisplayMode", "barProviders",
             "warningThreshold", "criticalThreshold", "liveAccountActivity",
@@ -74,6 +79,13 @@ class ProjectContractTests(unittest.TestCase):
         width, height = struct.unpack(">II", screenshot[16:24])
         self.assertGreaterEqual(width, 500)
         self.assertGreaterEqual(height, 500)
+
+        # Example service units for optional server-side tools are documentation:
+        # the plugin never installs them, so they live under docs/.
+        for path in ROOT.rglob("*.service"):
+            relative = path.relative_to(ROOT)
+            if relative.parts[0] not in (".git", "docs"):
+                self.fail(f"{relative}: keep example service units under docs/")
 
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         self.assertIn('python-version: ["3.10"', workflow)

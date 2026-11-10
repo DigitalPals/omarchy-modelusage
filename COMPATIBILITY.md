@@ -3,8 +3,8 @@
 - Omarchy branch: `quattro`
 - Omarchy commit: `2c247e390e357ae0fee3f8565b0c816adb705e6a`
 - Development date: 2026-08-23
-- Latest release review validation: 2026-09-13
-- Plugin release: `1.1.1`
+- Latest release review validation: 2026-11-10
+- Plugin release: `1.5.0`
 - Plugin manifest schema: 1
 - Limit backend schema: 1
 - Estimated-cost backend schema: 1
@@ -49,6 +49,17 @@ a supported desktop shell restart, live Claude and three-account Codex Limits an
 refreshed Costs were visually checked with account names hidden. Quota history and
 cost caches were freshly written with mode `0600` under the private state directory;
 the new shell log contained no plugin load or QML errors.
+
+The 1.5.0 release review (2026-11-10) ran `tests/ci-qml` in a disposable Arch
+Linux container pinned to the stack above: 202 Python tests, JavaScript checks,
+QML lint, the quota/activity/live/settings/cost/reset QML contracts and the
+headless Wayland runtime contract all passed. A clean package passed
+`omarchy plugin validate` from Omarchy `quattro` at both the pinned commit and
+the current branch head, and the marketplace's own manifest validator and
+automated security baseline were run against the release commit. The README
+images and marketplace preview were rendered from synthetic fixtures in that
+container; no live desktop shell or provider sign-in was checked for this
+release review.
 
 ## Provider compatibility
 

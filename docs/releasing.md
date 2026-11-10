@@ -11,10 +11,12 @@
    hidden. Crop to the widget; never publish unrelated desktop content or account
    tooltips. Label fixture examples in the README.
    Update root `preview.png` separately: the marketplace reads this image, not
-   the README gallery. The current 1920×1080 composition uses the menu bar,
-   three Codex account cards, and Costs; it predates the one-line account rows
-   and should be recomposed with the next release. Check both the full image and a small
-   landscape crop so the marketplace card retains the title and main views.
+   the README gallery. The current 1920×1080 composition (1.5.0) has the title,
+   menu-bar chips and a short feature list on the left, and the Fusebox Limits and
+   Costs panels on the right, all rendered from synthetic fixtures. Marketplace
+   cards are 175 px tall and crop the image to fill (`object-fit: cover`), so keep
+   the title and main views inside the vertical centre; check both the full image
+   and a small landscape crop.
 6. Push the release commit, create an annotated `vX.Y.Z` tag, and publish release
    notes from `CHANGELOG.md`.
 7. Install the public repository URL on a clean user checkout:
