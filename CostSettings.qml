@@ -253,7 +253,7 @@ Column {
   function applyPaths(values, paths) {
     var next = Object.assign({}, values)
     if (next.costT3Servers !== undefined) {
-      var rows = JSON.parse(next.costT3Servers)
+      let rows = JSON.parse(next.costT3Servers)
       for (let i = 0; i < rows.length; i++) {
         let path = paths["t3Token_" + rows[i].id]
         if (path) rows[i].tokenFile = path

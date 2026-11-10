@@ -20,16 +20,16 @@ Column {
   property var sources: []
   property string tab: "limits"
   property string transactionError: ""
-  property alias limitsForm: limitsForm
-  property alias costForm: costForm
+  property alias limitsForm: limitsFormItem
+  property alias costForm: costFormItem
   property var pendingValues: null
   property var pendingKeys: ({})
   property var previousPaths: ({})
   property bool keySaveDecided: false
   readonly property bool saving: keyWriter.running
-  readonly property bool touched: limitsForm.touched || costForm.touched
+  readonly property bool touched: limitsFormItem.touched || costFormItem.touched
   readonly property string errorText: transactionError !== "" ? transactionError
-    : limitsForm.errorText !== "" ? limitsForm.errorText : costForm.errorText
+    : limitsFormItem.errorText !== "" ? limitsFormItem.errorText : costFormItem.errorText
   signal saveRequested(var values)
   signal cancelRequested()
   signal revealRequested(var item)
@@ -40,8 +40,8 @@ Column {
   function begin(settings, initialTab) {
     discardKey()
     transactionError = ""
-    limitsForm.begin(settings)
-    costForm.begin(settings)
+    limitsFormItem.begin(settings)
+    costFormItem.begin(settings)
     tab = initialTab === "costs" ? "costs" : "limits"
   }
   function selectTab(value) {
@@ -49,12 +49,12 @@ Column {
     transactionError = ""
   }
   function focusFirst() {
-    if (tab === "costs") costForm.focusFirst()
-    else limitsForm.focusFirst()
+    if (tab === "costs") costFormItem.focusFirst()
+    else limitsFormItem.focusFirst()
   }
   function discardKey() {
-    limitsForm.discardKey()
-    costForm.discardKey()
+    limitsFormItem.discardKey()
+    costFormItem.discardKey()
     pendingKeys = ({})
     pendingValues = null
     if (keyWriter.running && !keySaveDecided) keyWriter.running = false
@@ -65,16 +65,16 @@ Column {
       keyWriter.write(saved ? "commit\n" : "abort\n")
     }
     pendingValues = null
-    limitsForm.finishSave(saved)
-    costForm.finishSave(saved)
+    limitsFormItem.finishSave(saved)
+    costFormItem.finishSave(saved)
   }
   // Limits first, then Costs; the first problem opens its tab.
   function submit() {
     if (saving) return false
     transactionError = ""
-    var limits = limitsForm.collect()
+    var limits = limitsFormItem.collect()
     if (!limits) { tab = "limits"; return false }
-    var costs = costForm.collect()
+    var costs = costFormItem.collect()
     if (!costs) { tab = "costs"; return false }
     var values = Object.assign({}, limits.values, costs.values)
     var keys = Object.assign({}, limits.keys, costs.keys)
@@ -104,7 +104,7 @@ Column {
         var response = null
         try { response = JSON.parse(data) } catch (error) { response = null }
         if (!response || !response.paths) return
-        var values = root.costForm.applyPaths(root.limitsForm.applyPaths(root.pendingValues, response.paths), response.paths)
+        var values = costFormItem.applyPaths(limitsFormItem.applyPaths(root.pendingValues, response.paths), response.paths)
         root.saveRequested(values)
       }
     }
@@ -133,7 +133,7 @@ Column {
     objectName: "settingsTabs"
     width: parent.width
     options: [{ value: "limits", label: "Limits" }, { value: "costs", label: "Costs" }]
-    marked: (limitsForm.touched ? ["limits"] : []).concat(costForm.touched ? ["costs"] : [])
+    marked: (limitsFormItem.touched ? ["limits"] : []).concat(costFormItem.touched ? ["costs"] : [])
     value: root.tab
     foreground: root.foreground
     fontFamily: root.fontFamily
@@ -143,7 +143,7 @@ Column {
   Item { width: 1; height: Style.spacing.md }
 
   UsageSettings {
-    id: limitsForm
+    id: limitsFormItem
     visible: root.tab === "limits"
     width: parent.width
     foreground: root.foreground
@@ -158,7 +158,7 @@ Column {
   }
 
   CostSettings {
-    id: costForm
+    id: costFormItem
     visible: root.tab === "costs"
     width: parent.width
     foreground: root.foreground
@@ -167,9 +167,9 @@ Column {
     fontFamily: root.fontFamily
     sources: root.sources
     // The Limits tab's draft, saved or not, decides where Fusebox costs come from.
-    limitsMode: String(limitsForm.draft.usageSource || "direct")
-    limitsUrl: String(limitsForm.draft.proxyUrl || "")
-    limitsImplementation: limitsForm.knownImplementation
+    limitsMode: String(limitsFormItem.draft.usageSource || "direct")
+    limitsUrl: String(limitsFormItem.draft.proxyUrl || "")
+    limitsImplementation: limitsFormItem.knownImplementation
     onCancelRequested: root.cancelRequested()
     onRevealRequested: function(item) { root.revealRequested(item) }
   }

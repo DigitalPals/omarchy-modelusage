@@ -37,9 +37,9 @@ Ui.Panel {
   property string viewMode: "limits"
   property string settingsReturnView: "limits"
   readonly property bool configuring: viewMode === "settings"
-  property alias settingsView: settingsView
-  readonly property var settingsForm: settingsView.limitsForm
-  readonly property var costSettingsForm: settingsView.costForm
+  property alias settingsView: settingsViewItem
+  readonly property var settingsForm: settingsViewItem.limitsForm
+  readonly property var costSettingsForm: settingsViewItem.costForm
   property alias resetAction: resetBackend
   property double nowMs: Date.now()
   // Account facts show minutes; change once a minute rather than every tick.
@@ -221,11 +221,11 @@ Ui.Panel {
   // One settings page with a Limits and a Costs tab.
   function showSettings(tab) {
     if (!configuring) settingsReturnView = viewMode
-    settingsView.begin(settings, tab === "costs" ? "costs" : "limits")
+    settingsViewItem.begin(settings, tab === "costs" ? "costs" : "limits")
     viewMode = "settings"
     if (panelFlick) panelFlick.contentY = 0
     open()
-    Qt.callLater(function() { settingsView.focusFirst() })
+    Qt.callLater(function() { settingsViewItem.focusFirst() })
   }
 
   function showCostSettings() {
@@ -234,7 +234,7 @@ Ui.Panel {
   }
 
   function leaveSettings() {
-    settingsView.discardKey()
+    settingsViewItem.discardKey()
     viewMode = settingsReturnView
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -250,13 +250,13 @@ Ui.Panel {
     if (changed) {
       if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function"
           || !bar.shell.updateEntryInline(moduleName, entry)) {
-        settingsView.transactionError = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
-        settingsView.finishSave(false)
+        settingsViewItem.transactionError = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
+        settingsViewItem.finishSave(false)
         return false
       }
       settings = entry
     }
-    settingsView.finishSave(true)
+    settingsViewItem.finishSave(true)
     leaveSettings()
     return true
   }
@@ -424,7 +424,7 @@ Ui.Panel {
     if (panelFlick) panelFlick.contentY = 0
     Qt.callLater(function() {
       if (resetBackend.active) resetForm.focusFirst()
-      else if (root.configuring) settingsView.focusFirst()
+      else if (root.configuring) settingsViewItem.focusFirst()
       else keyCatcher.forceActiveFocus()
     })
   } else {
@@ -435,7 +435,7 @@ Ui.Panel {
 
   onViewModeChanged: {
     if (costsView) costsView.closeMenu()
-    if (viewMode !== "settings") settingsView.discardKey()
+    if (viewMode !== "settings") settingsViewItem.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
     if (panelFlick) panelFlick.contentY = 0
   }
@@ -698,7 +698,7 @@ Ui.Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: resetBackend.active ? resetForm : root.configuring ? settingsView : keyCatcher
+    focusTarget: resetBackend.active ? resetForm : root.configuring ? settingsViewItem : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight
       : contentColumn.implicitHeight + (root.configuring ? settingsActions.implicitHeight + Style.spacing.lg : 0))
@@ -747,9 +747,9 @@ Ui.Panel {
         foreground: root.foreground
         urgent: root.urgent
         fontFamily: root.fontFamily
-        errorText: root.configuring ? settingsView.errorText : ""
-        saving: root.configuring && settingsView.saving
-        onSaveRequested: settingsView.submit()
+        errorText: root.configuring ? settingsViewItem.errorText : ""
+        saving: root.configuring && settingsViewItem.saving
+        onSaveRequested: settingsViewItem.submit()
         onCancelRequested: root.leaveSettings()
       }
 
@@ -947,7 +947,7 @@ Ui.Panel {
           }
 
           SettingsView {
-            id: settingsView
+            id: settingsViewItem
             objectName: "settingsView"
             visible: root.configuring
             width: parent.width
