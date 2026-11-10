@@ -438,6 +438,13 @@ function urlHost(text) {
 }
 
 // The line under the Costs total naming where the history came from.
+// Text for Omarchy controls that render their label as AutoText (Ui.Button in
+// older Omarchy releases): a "<" becomes "‹", so a remote name can never be
+// read as markup there. The plugin's own Text items are plain text instead.
+function inertMarkup(text) {
+  return String(text === undefined || text === null ? "" : text).replace(/</g, "\u2039")
+}
+
 function costSourceSummary(sources, fuseboxHost) {
   var rows = listOrEmpty(sources)
   var included = {}

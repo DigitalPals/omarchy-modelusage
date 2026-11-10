@@ -4,7 +4,7 @@
 - Omarchy commit: `2c247e390e357ae0fee3f8565b0c816adb705e6a`
 - Development date: 2026-08-23
 - Latest release review validation: 2026-11-10
-- Plugin release: `1.5.0`
+- Plugin release: `1.5.1`
 - Plugin manifest schema: 1
 - Limit backend schema: 1
 - Estimated-cost backend schema: 1
@@ -23,6 +23,9 @@ together with Qt.
 - Omarchy package: `4.0.3-1`
 - Qt Declarative / `qmllint`: `6.11.2`
 - Quickshell: `0.3.1-1` (Arch Linux package)
+- wl-clipboard: `2.3.0-1` (`wl-paste` reads pasted text; Omarchy installs it)
+- Qt 6.9 or later: settings fields replace the default text context menu
+  through `ContextMenu`, added in Qt 6.9
 - Python: `3.14.7` locally; CI covers `3.10` through `3.14`
 - Node.js test runner: `26.7.0` locally; CI uses Node.js 22
 
@@ -60,6 +63,16 @@ automated security baseline were run against the release commit. The README
 images and marketplace preview were rendered from synthetic fixtures in that
 container; no live desktop shell or provider sign-in was checked for this
 release review.
+
+The 1.5.1 review fixes (2026-11-10) ran the same pinned `tests/ci-qml` suite:
+205 Python tests, JavaScript checks, QML lint, every QML contract (now
+including bounded paste, stale connection-test results and a markup-bearing
+limit name) and the headless Wayland runtime contract passed. Under headless
+sway, the real `SettingsField` was also checked with real `wl-copy`/`wl-paste`
+and `wtype` key presses: Ctrl+V and Shift+Insert pasted a copied line without
+its line break, a 100,000-character clipboard pasted nothing, and a
+9,000-character one stopped at the field's 8,191-character limit. No live
+desktop shell or provider sign-in was checked for these fixes.
 
 ## Provider compatibility
 

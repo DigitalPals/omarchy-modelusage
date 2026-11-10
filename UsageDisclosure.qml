@@ -21,6 +21,7 @@ Controls.AbstractButton {
   Accessible.description: checked ? "Expanded" : "Collapsed"
 
   contentItem: Text {
+    textFormat: Text.PlainText
     text: (root.checked ? "▾ " : "▸ ") + root.text
     color: root.foreground
     font.family: root.fontFamily

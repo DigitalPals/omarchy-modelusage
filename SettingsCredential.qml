@@ -28,6 +28,7 @@ Column {
     width: parent.width
     visible: root.saved && !root.changing && root.text === ""
     Text {
+      textFormat: Text.PlainText
       width: parent.width - changeButton.width
       anchors.verticalCenter: parent.verticalCenter
       text: root.label + " saved"

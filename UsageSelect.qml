@@ -46,6 +46,7 @@ Controls.ComboBox {
 
   contentItem: Text {
     id: selectedLabel
+    textFormat: Text.PlainText
     text: root.displayText
     color: root.foreground
     font.family: root.fontFamily
@@ -56,6 +57,7 @@ Controls.ComboBox {
 
   indicator: Text {
     id: chevron
+    textFormat: Text.PlainText
     x: root.width - width - Style.spacing.sm
     anchors.verticalCenter: parent.verticalCenter
     text: root.popup.visible ? "▴" : "▾"
@@ -132,6 +134,7 @@ Controls.ComboBox {
     text: modelData.label
     Accessible.name: text
     contentItem: Text {
+      textFormat: Text.PlainText
       text: optionDelegate.text
       color: optionDelegate.modelData.value === root.value ? Commons.Color.accent : root.foreground
       font.family: root.fontFamily

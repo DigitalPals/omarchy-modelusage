@@ -237,6 +237,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       visible: root.loading && !root.hasResult
       width: parent.width
       topPadding: Style.spacing.huge
@@ -260,6 +261,7 @@ Item {
 
       Text {
         id: errorText
+        textFormat: Text.PlainText
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -280,6 +282,7 @@ Item {
       spacing: Style.spacing.labelGap
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         objectName: "costSummaryValue"
         text: root.primaryValue(root.totals)
@@ -290,6 +293,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         text: root.summaryDetail()
         color: root.dim
@@ -329,7 +333,7 @@ Item {
       Ui.Button {
         objectName: "costSourceLink"
         visible: root.sourceSummary !== ""
-        text: root.sourceSummary + " ›"
+        text: UsageLogic.inertMarkup(root.sourceSummary) + " ›"
         tooltipText: "Where Costs come from: open the Costs settings"
         Accessible.name: root.sourceSummary + ". Open the Costs settings"
         focusable: true
@@ -342,6 +346,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         visible: root.metric === "cost"
         width: parent.width
         text: "Estimated API value, not subscription spend"
@@ -353,6 +358,7 @@ Item {
 
       Text {
         objectName: "costPricingNotice"
+        textFormat: Text.PlainText
         visible: root.metric === "cost" && root.incompletePricing
         width: parent.width
         text: root.pricingNotice()
@@ -377,6 +383,7 @@ Item {
 
     Text {
       objectName: "costEmptyState"
+      textFormat: Text.PlainText
       visible: root.hasResult && !root.hasData
       width: parent.width
       topPadding: Style.spacing.xl
@@ -412,6 +419,7 @@ Item {
         Text {
           id: chartPeak
           objectName: "costChartPeak"
+          textFormat: Text.PlainText
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           text: root.chartPeakText()
@@ -474,6 +482,7 @@ Item {
               border.width: Style.spacing.hairline
               border.color: root.alpha(root.foreground, 0.15)
               Text {
+                textFormat: Text.PlainText
                 anchors.centerIn: parent
                 text: "—"
                 color: root.dim
@@ -482,7 +491,7 @@ Item {
             }
 
             HoverHandler { id: bucketHover }
-            Ui.PanelToolTip {
+            PlainToolTip {
               visible: bucketHover.hovered
               fontFamily: root.fontFamily
               text: root.axisLabel(bucket.modelData) + " · " + root.primaryValue(bucket.modelData)
@@ -527,6 +536,7 @@ Item {
 
         Text {
           id: axisStart
+          textFormat: Text.PlainText
           anchors.left: parent.left
           text: root.periods.length > 0 ? root.axisLabel(root.periods[0]) : ""
           color: root.dim
@@ -536,6 +546,7 @@ Item {
 
         Text {
           id: axisMiddle
+          textFormat: Text.PlainText
           anchors.horizontalCenter: parent.horizontalCenter
           text: root.periods.length > 0
             ? root.axisLabel(root.periods[Math.floor(root.periods.length / 2)]) : ""
@@ -546,6 +557,7 @@ Item {
 
         Text {
           id: axisEnd
+          textFormat: Text.PlainText
           anchors.right: parent.right
           text: "now"
           color: root.dim
@@ -555,6 +567,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         visible: root.hasGaps
         width: parent.width
         text: "Outlined gaps: history unavailable"
@@ -616,6 +629,7 @@ Item {
 
               Text {
                 id: providerName
+                textFormat: Text.PlainText
                 anchors.left: parent.left
                 anchors.leftMargin: Style.space(14)
                 anchors.right: providerValue.left
@@ -630,6 +644,7 @@ Item {
 
               Text {
                 id: providerMeta
+                textFormat: Text.PlainText
                 visible: parent.modelData.status === "missing" || parent.modelData.status === "failed"
                   || parent.modelData.historyStatus === "unavailable"
                 anchors.right: parent.right
@@ -645,6 +660,7 @@ Item {
 
               Text {
                 id: providerValue
+                textFormat: Text.PlainText
                 anchors.right: parent.right
                 anchors.top: parent.top
                 text: root.primaryValue(parent.modelData)
@@ -698,12 +714,14 @@ Item {
             spacing: Style.spacing.labelGap
 
             Text {
+              textFormat: Text.PlainText
               text: parent.modelData.label
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
             Text {
+              textFormat: Text.PlainText
               text: parent.modelData.value
               color: root.foreground
               font.family: root.fontFamily
@@ -798,6 +816,7 @@ Item {
 
               Text {
                 id: modelMeta
+                textFormat: Text.PlainText
                 anchors.left: parent.left
                 anchors.top: modelName.bottom
                 anchors.topMargin: Style.spacing.labelGap
@@ -816,6 +835,7 @@ Item {
 
               Text {
                 id: modelValue
+                textFormat: Text.PlainText
                 anchors.right: parent.right
                 anchors.top: parent.top
                 text: root.primaryValue(parent.modelData)

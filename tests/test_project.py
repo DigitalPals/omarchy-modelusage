@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 import unittest
 from pathlib import Path
@@ -127,6 +128,48 @@ class ProjectContractTests(unittest.TestCase):
         self.assertNotIn('document.get("prompt")', cost_collector)
         self.assertIn("MAX_TRANSCRIPT_LINE_BYTES + 1", cost_collector)
         self.assertIn("MAX_TRANSCRIPT_RECORDS_TOTAL", cost_collector)
+
+    def test_every_text_item_renders_plain_text(self):
+        # Limit names, account labels and errors come from servers and local
+        # files. Qt's default AutoText would style markup in them and load any
+        # image it names, so every Text item opts out explicitly.
+        opening = re.compile(r"^\s*(?:(?:component\s+)?\w+:\s*)?Text\s*\{")
+        for path in sorted(ROOT.glob("*.qml")):
+            lines = path.read_text().splitlines()
+            for index, line in enumerate(lines):
+                if not opening.match(line):
+                    continue
+                depth, block = 0, []
+                for following in lines[index:]:
+                    block.append(following)
+                    depth += following.count("{") - following.count("}")
+                    if depth <= 0:
+                        break
+                self.assertIn("textFormat: Text.PlainText", "\n".join(block), f"{path.name}:{index + 1}")
+        # Omarchy's own tooltip rendered AutoText before it chose plain text.
+        for path in sorted(ROOT.glob("*.qml")):
+            if path.name != "PlainToolTip.qml":
+                self.assertNotIn("Ui.PanelToolTip", path.read_text(), path.name)
+        self.assertIn("UsageLogic.inertMarkup(option.modelData.title)", (ROOT / "ResetConfirmation.qml").read_text())
+        self.assertIn("UsageLogic.inertMarkup(root.sourceSummary)", (ROOT / "UsageCosts.qml").read_text())
+
+    def test_settings_fields_never_use_the_native_clipboard_read(self):
+        # Qt's paste reads the clipboard synchronously in the shell; every
+        # editable field is a SettingsField, which routes paste through a
+        # bounded wl-paste process (exercised by tests/qml/settings-shell.qml).
+        for path in sorted(ROOT.glob("*.qml")):
+            source = path.read_text()
+            if path.name != "SettingsField.qml":
+                for native in ("Ui.TextField", "TextInput {", "TextArea {", "TextField {"):
+                    self.assertNotIn(native, source, f"{path.name}: {native}")
+            # Selectable read-only text (Costs model IDs) cannot paste.
+            for block in source.split("TextEdit {")[1:]:
+                self.assertIn("readOnly: true", block.split("}")[0], path.name)
+            self.assertNotIn(".paste()", source, path.name)
+        field = (ROOT / "SettingsField.qml").read_text()
+        for guard in ("event.matches(StandardKey.Paste)", "acceptedButtons: Qt.MiddleButton", "ContextMenu.menu: Menu",
+                      '"wl-paste"', "pasteCharLimit", "pasteDeadline", "request.generation !== pasteGeneration"):
+            self.assertIn(guard, field)
 
     def test_namespaced_ipc_and_no_builtin_alias_collision(self):
         panel = (ROOT / "Panel.qml").read_text()

@@ -106,6 +106,7 @@ Ui.BorderSurface {
         }
 
         Text {
+          textFormat: Text.PlainText
           anchors.centerIn: parent
           visible: logoImage.status !== Image.Ready
           text: UsageLogic.providerMark(root.providerId)
@@ -136,6 +137,7 @@ Ui.BorderSurface {
       Text {
         id: captionText
         objectName: "providerCardCaption"
+        textFormat: Text.PlainText
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         text: root.caption

@@ -14,6 +14,7 @@ Item {
   implicitHeight: Math.max(titleLabel.implicitHeight, closeButton.implicitHeight)
   Text {
     id: titleLabel
+    textFormat: Text.PlainText
     anchors.left: parent.left
     anchors.right: closeButton.left
     anchors.verticalCenter: parent.verticalCenter

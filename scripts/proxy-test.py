@@ -5,15 +5,17 @@ Reads one JSON request on stdin so that a draft management key never appears
 in process arguments:
 
     {"url": "...", "key": "draft key or empty", "keyFile": "saved key file or empty",
-     "requireFusebox": false}
+     "requireFusebox": false, "requestId": "panel run ID"}
 
-Prints one JSON result. Only the account inventory is read; no provider or
+Prints one JSON result that echoes `requestId`, so the panel can tell it from
+the answer to an earlier test. Only the account inventory is read; no provider or
 upstream calls are made, and the key is never printed.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 
@@ -22,6 +24,7 @@ import fusebox_costs
 import proxy_connection as connection
 
 MAX_REQUEST_BYTES = 65536
+REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 
 
 def plural(count: int, word: str) -> str:
@@ -92,7 +95,11 @@ def main() -> int:
             raise ValueError
     except (ValueError, UnicodeDecodeError, RecursionError):
         request = {}
-    print(json.dumps(run(request)), flush=True)
+    result = run(request)
+    request_id = request.get("requestId")
+    if isinstance(request_id, str) and REQUEST_ID.fullmatch(request_id):
+        result["requestId"] = request_id
+    print(json.dumps(result), flush=True)
     return 0
 
 

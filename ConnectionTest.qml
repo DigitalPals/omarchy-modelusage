@@ -26,37 +26,64 @@ Column {
   // Fusebox usage history, reported beside the account result; empty elsewhere.
   property string usageMessage: ""
   property bool usageOk: false
-  // The draft request for the run being started. It is written to stdin once
-  // and cleared; a late stop notice from an earlier run never touches it.
-  property var request: null
+  // Every test is a generation with its own process and request ID. Editing
+  // a tested value or starting another test retires the running process, and
+  // a result is accepted only from the current generation's process when it
+  // echoes that generation's request ID, so a late answer about an earlier
+  // URL or key can never be shown as the result for the current draft.
+  property int generation: 0
+  property string requestId: ""
+  property var run: null
   readonly property bool testing: status === "testing"
   signal revealRequested(var item)
   spacing: Style.spacing.sm
 
+  function retire() {
+    if (run) run.retire()
+    run = null
+    exitGrace.stop()
+  }
   function reset() {
-    if (process.running) process.running = false
-    request = null
+    generation++
+    requestId = ""
+    retire()
     status = "idle"
     message = ""
     implementation = ""
     usageMessage = ""
     usageOk = false
   }
+  function fail(text) {
+    retire()
+    status = "failed"
+    message = text
+  }
   function test() {
     if (testing || url.trim() === "") return
     reset()
-    request = { url: url.trim(), key: key, keyFile: keyFile, requireFusebox: requireFusebox }
+    requestId = generation + "-" + Math.floor(Math.random() * 0x7fffffff).toString(36) + Date.now().toString(36)
+    var started = runComponent.createObject(root, {
+      generation: generation,
+      requestId: requestId,
+      request: { url: url.trim(), key: key, keyFile: keyFile, requireFusebox: requireFusebox, requestId: requestId }
+    })
+    if (!started) {
+      status = "failed"
+      message = "Could not run the connection test."
+      return
+    }
+    run = started
     status = "testing"
-    process.body = ""
-    exitGrace.stop()
-    process.running = true
+    started.running = true
   }
-  function settle(data) {
+  // Applies one stdout line from the run of `forGeneration` / `forRequest`.
+  function settle(data, forGeneration, forRequest) {
+    if (forGeneration !== generation || forRequest !== requestId || status !== "testing") return
     var result = null
     try { result = JSON.parse(data) } catch (e) { result = null }
-    if (!result || result.schemaVersion !== 1 || typeof result.message !== "string") {
-      status = "failed"
-      message = "Could not test the connection."
+    if (!result || result.schemaVersion !== 1 || typeof result.message !== "string"
+        || result.requestId !== forRequest) {
+      fail("Could not test the connection.")
       return
     }
     implementation = result.implementation === "go" || result.implementation === "rust" ? result.implementation : ""
@@ -70,46 +97,64 @@ Column {
   onKeyFileChanged: reset()
   onKeyChanged: reset()
   onRequireFuseboxChanged: reset()
-  Component.onDestruction: if (process.running) process.running = false
+  Component.onDestruction: retire()
 
-  Process {
-    id: process
-    property string body: ""
-    command: ["python3", "-u", root.scriptPath]
-    stdinEnabled: true
-    onStarted: {
-      write(JSON.stringify(root.request) + "\n")
-      root.request = null
-    }
-    stdout: SplitParser {
-      onRead: function(data) {
-        if (root.status !== "testing") return
-        root.settle(data)
+  Component {
+    id: runComponent
+
+    Process {
+      id: runProcess
+      property int generation: -1
+      property string requestId: ""
+      // The draft request, written to stdin once and then cleared.
+      property var request: null
+      property bool retired: false
+      command: ["python3", "-u", root.scriptPath]
+      stdinEnabled: true
+
+      // Stops this run for good; its output is ignored from now on.
+      function retire() {
+        retired = true
+        request = null
+        if (running) running = false
+        else destroy()
+      }
+
+      onStarted: {
+        write(JSON.stringify(request) + "\n")
+        request = null
+      }
+      stdout: SplitParser {
+        onRead: function(data) {
+          if (!runProcess.retired) root.settle(data, runProcess.generation, runProcess.requestId)
+        }
+      }
+      stderr: SplitParser { splitMarker: "" }
+      onRunningChanged: {
+        if (running) return
+        if (retired) {
+          destroy()
+        } else if (root.run === runProcess && root.testing) {
+          // The process can report that it stopped before its last stdout
+          // line is delivered; give that line a moment before failing.
+          exitGrace.restart()
+        } else if (root.run !== runProcess) {
+          destroy()
+        }
       }
     }
-    stderr: SplitParser { splitMarker: "" }
-    // The process can report that it stopped before its last stdout line is
-    // delivered; give that line a moment before calling the run a failure.
-    onRunningChanged: if (!running && root.status === "testing") exitGrace.restart()
   }
 
   Timer {
     id: exitGrace
     interval: 500
-    onTriggered: if (root.status === "testing" && !process.running) {
-      root.status = "failed"
-      root.message = "Could not run the connection test. Check that python3 is available."
-    }
+    onTriggered: if (root.testing) root.fail("Could not run the connection test. Check that python3 is available.")
   }
 
   Timer {
     interval: 15000
     running: root.testing
-    onTriggered: {
-      process.running = false
-      root.status = "failed"
-      root.message = "The connection test timed out."
-    }
+    onTriggered: root.fail("The connection test timed out.")
   }
 
   Ui.Button {

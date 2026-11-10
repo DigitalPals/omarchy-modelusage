@@ -142,6 +142,19 @@ class ConnectionProbeTests(unittest.TestCase):
                 self.assertIn(text, result["message"])
                 self.assertNotIn("secret", output)
 
+    def test_result_echoes_only_a_well_formed_request_id(self):
+        # The panel accepts a result only for the run that asked for it.
+        with fusebox_server() as (url, requests):
+            result, _ = probe({"url": url, "key": "test-management-key", "requestId": "7-k3x9a"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["requestId"], "7-k3x9a")
+        failed, _ = probe({"url": "", "requestId": "8-z1"})
+        self.assertEqual(failed["requestId"], "8-z1", "failures are attributed too")
+        for request_id in ("", "x" * 65, "1 2", "<b>", 7, None):
+            with self.subTest(request_id=request_id):
+                result, _ = probe({"url": "", "requestId": request_id})
+                self.assertNotIn("requestId", result)
+
 
 if __name__ == "__main__":
     unittest.main()

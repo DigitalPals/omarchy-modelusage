@@ -3,6 +3,7 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
+import "UsageLogic.js" as UsageLogic
 
 Column {
   id: root
@@ -22,6 +23,7 @@ Column {
   function focusFirst() { cancelButton.forceActiveFocus() }
 
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     text: root.backend.state === "result" ? "Banked reset" : "Apply a banked reset?"
     color: root.foreground
@@ -40,6 +42,7 @@ Column {
     wrapMode: Text.WrapAnywhere
   }
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     visible: root.backend.state === "loading" || root.backend.state === "sending"
     text: root.backend.state === "loading" ? "Checking available resets…" : "Applying reset…"
@@ -48,6 +51,7 @@ Column {
     font.pixelSize: Style.font.bodySmall
   }
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     visible: root.backend.state === "ready"
     text: (root.backend.details.availableCount === 1 ? "Use the 1 available reset."
@@ -71,7 +75,7 @@ Column {
         spacing: Style.spacing.sm
         Ui.Button {
           objectName: "resetCreditOption"
-          text: option.modelData.title
+          text: UsageLogic.inertMarkup(option.modelData.title)
           width: Math.min(implicitWidth, parent.width)
           bordered: true
           focusable: true

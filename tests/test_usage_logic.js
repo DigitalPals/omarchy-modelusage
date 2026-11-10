@@ -260,6 +260,10 @@ assert.equal(context.costSourceSummary([fuseboxRow, { ...localRow, status: "repl
 assert.equal(context.costSourceSummary([fuseboxRow, localRow], "f.lan"), "From this computer and Fusebox · f.lan");
 assert.equal(context.costSourceSummary([localRow, t3Row], ""), "From this computer and T3 servers");
 assert.equal(context.costSourceSummary([localRow], ""), "From this computer");
+assert.equal(context.inertMarkup('<img src="file:///x.png">Full reset'), '\u2039img src="file:///x.png">Full reset',
+  "labels for Omarchy's AutoText buttons cannot open a tag");
+assert.equal(context.inertMarkup("Full reset"), "Full reset");
+assert.equal(context.inertMarkup(null), "");
 assert.equal(context.costSourceSummary([t3Row], ""), "From T3 servers");
 assert.equal(context.costSourceSummary([], ""), "");
 assert.equal(context.fuseboxFailure([fuseboxRow, localRow]), null);

@@ -128,6 +128,7 @@ Item {
 
       Text {
         id: axisStart
+        textFormat: Text.PlainText
         anchors.left: parent.left
         text: root.mode === "h24" ? "−24h" : "−7d"
         color: UsageLogic.dimColor(root.foreground)
@@ -137,6 +138,7 @@ Item {
 
       Text {
         id: axisMiddle
+        textFormat: Text.PlainText
         anchors.horizontalCenter: parent.horizontalCenter
         text: root.mode === "h24" ? "−12h" : "−3d"
         color: UsageLogic.dimColor(root.foreground)
@@ -146,6 +148,7 @@ Item {
 
       Text {
         id: axisEnd
+        textFormat: Text.PlainText
         anchors.right: parent.right
         text: "now"
         color: UsageLogic.dimColor(root.foreground)
@@ -156,6 +159,7 @@ Item {
 
     Text {
       objectName: "quotaHistorySummary"
+      textFormat: Text.PlainText
       width: parent.width
       text: root.summary()
       color: UsageLogic.dimColor(root.foreground)

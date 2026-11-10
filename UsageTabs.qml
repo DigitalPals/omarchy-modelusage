@@ -50,6 +50,7 @@ Controls.TabBar {
       Accessible.name: text + (root.marked.indexOf(modelData.value) >= 0 ? ", unsaved changes" : "")
 
       contentItem: Text {
+        textFormat: Text.PlainText
         text: viewTab.text + (root.marked.indexOf(viewTab.modelData.value) >= 0 ? " •" : "")
         color: viewTab.checked ? Commons.Color.accent : root.foreground
         font.family: root.fontFamily

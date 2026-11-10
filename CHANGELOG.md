@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.1
+
+Fixes from the Omarchy marketplace's review of 1.5.0.
+
+- Paste into settings fields through a separate `wl-paste` process, at most 16,384 characters within 2 seconds, instead of Qt's built-in paste, which reads the clipboard synchronously inside the desktop shell with no size or time limit. Ctrl+V, Shift+Insert, middle click (primary selection) and the field's own context menu all use it. Larger or slower clipboards paste nothing; line breaks are dropped and the field's length limit still applies. The text goes only into the field that asked, while it is still focused, and only for the latest paste: typing, moving to another field or pasting again discards an earlier one. `wl-paste` comes from `wl-clipboard`, which Omarchy installs.
+- Bind each **Test connection** run to its own process and request ID, which the helper echoes. A result is accepted only from the current run with a matching ID, and editing the URL or key, or testing again, retires the earlier process, so a late answer about a previous URL or key can no longer be shown, or set the detected server type, for the current draft.
+- Render every piece of plugin text as plain text. A limit name or other text from a server can no longer be read as markup, for example the card header caption, which used Qt's AutoText and would load an image named in an `<img>` tag. Tooltips use a plain-text wrapper because Omarchy releases before its own plain-text tooltip render AutoText, and the two remote labels shown on Omarchy buttons (banked reset titles and the Costs source line) show a `<` as `‹`.
+
 ## 1.5.0
 
 - Shorten the manifest description to the marketplace's 500-character limit and mention Fusebox cost history.

@@ -87,7 +87,7 @@ Item {
 
   HoverHandler { id: hover }
 
-  Ui.PanelToolTip {
+  PlainToolTip {
     visible: hover.hovered && root.tooltipText !== ""
     text: root.tooltipText
     fontFamily: root.fontFamily
@@ -174,6 +174,7 @@ Item {
       Text {
         id: sessionCount
         objectName: "accountSessionBadge"
+        textFormat: Text.PlainText
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         visible: root.sessions >= 0
@@ -239,6 +240,7 @@ Item {
           Text {
             id: resetLabel
             objectName: "accountResetLabel"
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: UsageLogic.RESET_ICON + " " + Math.max(0, root.resetCount)
             color: resetClick.enabled && (resetClick.containsMouse || resetBadge.activeFocus)
@@ -268,6 +270,7 @@ Item {
       Text {
         id: reset
         objectName: "usageRowReset"
+        textFormat: Text.PlainText
         anchors.right: resetSlot.left
         anchors.rightMargin: resetSlot.width > 0 ? Style.spacing.sm : 0
         anchors.verticalCenter: parent.verticalCenter
@@ -283,6 +286,7 @@ Item {
       Text {
         id: percent
         objectName: "usageRowPercent"
+        textFormat: Text.PlainText
         anchors.right: reset.left
         anchors.rightMargin: Style.spacing.md
         anchors.verticalCenter: parent.verticalCenter

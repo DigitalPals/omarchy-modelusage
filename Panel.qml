@@ -666,6 +666,7 @@ Ui.Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 anchors.centerIn: parent
                 visible: providerMarkImage.status !== Image.Ready
                 text: UsageLogic.providerMark(String(providerChip.modelData.id))
@@ -678,6 +679,7 @@ Ui.Panel {
 
             Text {
               objectName: "barAccountRemaining"
+              textFormat: Text.PlainText
               y: Math.round((parent.height - height) / 2)
               text: providerChip.remainingText
               color: providerChip.contentColor
@@ -815,6 +817,7 @@ Ui.Panel {
 
               Text {
                 id: panelTitle
+                textFormat: Text.PlainText
                 anchors.left: parent.left
                 anchors.right: headerActions.left
                 anchors.rightMargin: Style.spacing.md
@@ -983,6 +986,7 @@ Ui.Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             visible: root.viewMode === "limits" && root.providers.length === 0
             width: parent.width
             topPadding: Style.spacing.huge
@@ -1074,8 +1078,9 @@ Ui.Panel {
 
             Text {
               id: footerLeft
+              textFormat: Text.PlainText
               HoverHandler { id: footerHover }
-              Ui.PanelToolTip {
+              PlainToolTip {
                 visible: footerHover.hovered && text !== ""
                 text: root.footerTooltip()
                 fontFamily: root.fontFamily
@@ -1097,6 +1102,7 @@ Ui.Panel {
             Text {
               id: footerRight
               objectName: "footerRefresh"
+              textFormat: Text.PlainText
               anchors.right: parent.right
               text: root.footerRight()
               color: root.dim

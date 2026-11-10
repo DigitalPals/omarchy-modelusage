@@ -506,6 +506,25 @@ ShellRoot {
         "meter keeps a partially filled boundary block")
     }
 
+    // A proxy's limit names are remote data: markup in one stays literal text
+    // and never loads the image it names.
+    var markupLabel = '<img src="file:///nonexistent/model-usage-markup-probe.png">Probe'
+    var markupCard = loadComponent(panelUrl.replace(/Panel\.qml$/, "ProviderCard.qml"), {
+      width: 420, proxyMode: true,
+      provider: { id: "claude", name: "Claude", status: "ok", accounts: [{
+        accountId: "markup", account: "markup@example.invalid", status: "ok",
+        windows: [{ id: "probe", label: markupLabel, remaining: 50, resetsAt: Date.now() / 1000 + 3600 }]
+      }] }
+    }, "ProviderCard.qml")
+    if (markupCard) {
+      var caption = namedChild(markupCard, "providerCardCaption")
+      assertTrue(caption !== null, "provider card caption exists")
+      if (caption) {
+        assertEqual(caption.text, markupLabel + " · resets", "a remote limit name reaches the caption unchanged")
+        assertEqual(caption.textFormat, Text.PlainText, "the caption renders remote names as plain text")
+      }
+    }
+
     if (costView) costChartSettle.restart()
     else startLastGoodCheck()
   }

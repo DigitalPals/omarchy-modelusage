@@ -10,6 +10,9 @@ ShellRoot {
   property var form: null
   property var saved: null
   property var connectionTest: null
+  property var keyField: null
+  property int pasteEdits: 0
+  property double pasteStarted: 0
   property int phase: 0
   readonly property string serverUrl: Quickshell.env("MODEL_USAGE_FUSEBOX_URL")
 
@@ -73,10 +76,21 @@ ShellRoot {
           && root.find(root.form, "connectionTestUsage").visible, "the test reports Fusebox usage history for Costs")
         root.check(root.view.costForm.usesFusebox && root.view.costForm.limitsUrl === root.serverUrl,
           "the Costs tab follows the tested, unsaved Fusebox connection")
+        var earlierGeneration = root.connectionTest.generation
+        var earlierRequest = root.connectionTest.requestId
+        root.check(earlierRequest !== "", "each test carries a request ID")
         root.form.managementKey = "synthetic-wrong-key"
         root.check(root.connectionTest.status === "idle" && root.form.knownImplementation === "",
           "editing the key discards the earlier result")
         root.connectionTest.test()
+        root.check(root.connectionTest.testing && root.connectionTest.requestId !== earlierRequest,
+          "a new test is a new request")
+        // A late answer from the earlier run, even one naming its own request,
+        // never settles the test of the changed key.
+        root.connectionTest.settle(JSON.stringify({ schemaVersion: 1, ok: true, implementation: "rust",
+          message: "Connected to Fusebox · stale", requestId: earlierRequest }), earlierGeneration, earlierRequest)
+        root.check(root.connectionTest.testing && root.connectionTest.message === ""
+          && root.form.knownImplementation === "", "a stale result is ignored")
         root.phase++
       } else if (root.phase === 1) {
         root.check(root.connectionTest.status === "failed"
@@ -109,6 +123,63 @@ ShellRoot {
         root.view.selectTab("costs")
         root.check(!root.view.submit() && root.view.errorText.indexOf("Keeper") >= 0 && root.view.tab === "limits",
           "visible Keeper settings are validated, and their tab opens")
+        // Paste goes through a separate, bounded wl-paste process (a fake on
+        // PATH): a newer request retires an older one that never finishes.
+        root.keyField = root.find(root.form, "managementKeyField")
+        root.check(root.keyField !== null && root.keyField.pasteMenuItem !== undefined, "the key field pastes boundedly")
+        root.keyField.textEdited.connect(function() { root.pasteEdits++ })
+        root.form.managementKey = ""
+        // The key is saved now: open its editor, as "Change" does.
+        root.keyField.parent.changing = true
+        root.phase++
+      } else if (root.phase === 2) {
+        // A tick later: the failed Save above focuses its invalid field late.
+        root.keyField.forceActiveFocus()
+        root.check(root.keyField.visible && root.keyField.focus, "the key field takes focus")
+        root.keyField.pasteFromClipboard(true)
+        root.check(root.keyField.pasting, "a primary-selection paste starts")
+        root.keyField.pasteFromClipboard(false)
+        root.check(root.keyField.pasting && root.keyField.text === "", "a newer paste replaces it")
+        root.phase++
+      } else if (root.phase === 3) {
+        if (root.keyField.pasting) return
+        root.check(root.keyField.text === "synthetic-pasted-key" && root.pasteEdits === 1,
+          "the clipboard line is pasted once, without its line break: " + root.keyField.text + " " + root.pasteEdits)
+        root.check(root.form.managementKey === "synthetic-pasted-key", "a paste edits the draft")
+        root.form.managementKey = ""
+        root.keyField.pasteCharLimit = 8
+        root.keyField.pasteFromClipboard(false)
+        root.phase++
+      } else if (root.phase === 4) {
+        if (root.keyField.pasting) return
+        root.check(root.keyField.text === "", "a clipboard over the limit is not pasted")
+        root.keyField.pasteCharLimit = 16384
+        root.keyField.pasteTimeoutMs = 300
+        root.pasteStarted = Date.now()
+        root.keyField.pasteFromClipboard(true)
+        root.phase++
+      } else if (root.phase === 5) {
+        if (root.keyField.pasting) return
+        root.check(Date.now() - root.pasteStarted < 2000 && root.keyField.text === "",
+          "a clipboard owner that never finishes is abandoned at the deadline")
+        root.keyField.pasteFromClipboard(false)
+        var urlField = root.find(root.form, "proxyUrlField")
+        var urlText = urlField.text
+        urlField.forceActiveFocus()
+        root.check(!root.keyField.pasting, "moving to another field retires the paste")
+        root.pasteStarted = Date.now()
+        root.phase++
+        root.check(urlField.text === urlText, "nothing is pasted into the newly focused field")
+      } else if (root.phase === 6) {
+        if (Date.now() - root.pasteStarted < 400) return
+        root.check(root.keyField.text === "", "a retired paste never arrives")
+        root.keyField.forceActiveFocus()
+        root.keyField.pasteMenuItem.triggered()
+        root.check(root.keyField.pasting, "the context menu's Paste uses the bounded read")
+        root.phase++
+      } else if (root.phase === 7) {
+        if (root.keyField.pasting) return
+        root.check(root.keyField.text === "synthetic-pasted-key", "the context menu pastes: " + root.keyField.text)
         console.log("Settings QML contract: passed")
         Qt.quit()
       }

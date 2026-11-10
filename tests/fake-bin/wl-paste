@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Synthetic clipboard for the settings QML contract: the clipboard holds a
+# copied key line; the primary selection's owner never finishes sending.
+set -euo pipefail
+for arg in "$@"; do
+  [[ $arg == --primary ]] && exec sleep 30
+done
+printf '%s\n' "${MODEL_USAGE_FAKE_CLIPBOARD:-synthetic-pasted-key}"
