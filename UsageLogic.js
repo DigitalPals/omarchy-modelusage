@@ -739,18 +739,31 @@ function primaryAccountWindows(rows) {
   return firstItems(rows, 1)
 }
 
+// Model allowances every account line shows at any level. Claude's Fable week
+// is a budget of its own beside the all-models week: Claude Code lists it as
+// "Current week (Fable)", and the bar chip may already be showing it.
+var PINNED_MODELS = ["fable"]
+
+function pinnedWindow(window) {
+  return !!window && window.informational !== true && typeof window.model === "string"
+    && PINNED_MODELS.indexOf(window.model.toLowerCase()) >= 0
+}
+
 // The compact account view shows the main weekly/monthly allowance. A shorter
 // window at warning or critical level that is tighter than that allowance is
 // what actually limits requests (e.g. a spent 5-hour limit), so it is shown
-// too, first and tightest first.
+// too, tightest first. Pinned model allowances (Fable) always follow.
 function accountWindows(account, expanded, warningThreshold, criticalThreshold) {
   return selectAccountWindows(listOrEmpty(account && account.windows), expanded, warningThreshold, criticalThreshold)
 }
 
 function selectAccountWindows(rows, expanded, warningThreshold, criticalThreshold) {
   if (expanded) return rows
-  var shown = primaryAccountWindows(rows)
-  if (warningThreshold === undefined || warningThreshold === null) return shown
+  var shown = Array.prototype.slice.call(primaryAccountWindows(rows))
+  var pinned = []
+  for (var p = 0; p < rows.length; p++)
+    if (pinnedWindow(rows[p]) && !contains(shown, rows[p])) pinned.push(rows[p])
+  if (warningThreshold === undefined || warningThreshold === null) return shown.concat(pinned)
   var shownMinimum = 101
   for (var i = 0; i < shown.length; i++) {
     var value = windowRemaining(shown[i])
@@ -759,14 +772,14 @@ function selectAccountWindows(rows, expanded, warningThreshold, criticalThreshol
   var binding = []
   for (var j = 0; j < rows.length; j++) {
     var row = rows[j]
-    if (contains(shown, row) || row.informational === true) continue
+    if (contains(shown, row) || contains(pinned, row) || row.informational === true) continue
     var remaining = windowRemaining(row)
     var level = windowSeverity(row, warningThreshold, criticalThreshold)
     if (remaining !== null && remaining < shownMinimum && (level === "warning" || level === "critical"))
       binding.push(row)
   }
   binding.sort(function(a, b) { return windowRemaining(a) - windowRemaining(b) })
-  return binding.concat(Array.prototype.slice.call(shown))
+  return binding.concat(shown, pinned)
 }
 
 // Whether "Additional limits" would reveal anything for these accounts.
@@ -794,6 +807,17 @@ var SESSION_ICON = String.fromCodePoint(0xF018D)
 function shortLimitLabel(label) {
   var text = String(label || "").replace(/\s+limit$/i, "").trim()
   return text === "" ? "Usage" : text
+}
+
+// The name on an account's indented line. A model's weekly allowance is named
+// by its model ("Fable"); its tooltip line keeps the full "Fable weekly".
+function accountWindowLabel(window) {
+  var model = window && typeof window.model === "string" ? window.model.trim() : ""
+  if (model !== "" && Number(window.windowSeconds) === 604800)
+    return limitLabel(model.replace(/(^|[\s-])([a-z])/g, function(match, gap, letter) {
+      return gap + letter.toUpperCase()
+    }))
+  return limitLabel(shortLimitLabel(window && window.label))
 }
 
 // The meter an account row shows (its first weekly/monthly allowance, or its
@@ -914,7 +938,17 @@ function resetClause(window, nowMs, refreshing) {
   return text + " (in " + resetShort(window, nowMs) + ")"
 }
 
-// One tooltip line per limit: "Weekly limit: 85% left · resets 17:00 (in 3h 2m)".
+// What happens when a model's allowance runs out, indented under its tooltip
+// line. Claude moves Fable to usage credits, which the widget calls extra usage.
+var MODEL_NOTES = { fable: "Beyond it, Fable runs on extra usage, if enabled" }
+
+function windowNote(window) {
+  var model = window && typeof window.model === "string" ? window.model.toLowerCase() : ""
+  return Object.prototype.hasOwnProperty.call(MODEL_NOTES, model) ? MODEL_NOTES[model] : ""
+}
+
+// One tooltip line per limit: "Weekly limit: 85% left · resets 17:00 (in 3h 2m)",
+// and its note on an indented line below.
 function windowSummary(window, nowMs, refreshing) {
   if (!window) return ""
   var remaining = windowRemaining(window)
@@ -924,6 +958,8 @@ function windowSummary(window, nowMs, refreshing) {
   if (reset !== "") text += " · " + reset.charAt(0).toLowerCase() + reset.slice(1)
   if (window.detail) text += " · " + String(window.detail)
   if (window.informational === true) text += " · informational"
+  var note = windowNote(window)
+  if (note !== "") text += "\n  " + note
   return text
 }
 

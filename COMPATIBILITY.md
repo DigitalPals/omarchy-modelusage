@@ -96,6 +96,10 @@ for Claude, Codex and Meta OAuth accounts and Antigravity quota groups; other
 account types remain visible with quota unavailable. Claude extra usage, Codex
 credits, plan names, renewals, cooldowns and banked reset counts are read from
 the same snapshot; older servers that omit them leave those values unknown.
+Claude's Fable week needs Fusebox `main` at
+`45b0f66090c6fdf12bd8a4220e0727097311adb1` or later (after v0.15.0). Older
+servers report an inactive Fable entry as just renewed, so its window is
+omitted as past its reset.
 Banked resets use `GET`/`POST /api/accounts/{id}/banked-resets` and need
 `banked-resets: true` on the server. Native `/reset` only clears cooldowns and
 is never a banked reset.

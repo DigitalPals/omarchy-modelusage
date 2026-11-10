@@ -368,6 +368,26 @@ class FuseboxQuotaTests(unittest.TestCase):
         self.assertIn("Kimi", kimi["notice"])
         self.assertEqual(usage.fetch_rust_account("grok", account(provider="grok"))["status"], "unsupported")
 
+    def test_claude_overage_included_week_is_the_fable_week(self):
+        week = {"name": "week", "used": 25, "resets_at": "2030-01-08T00:00:00Z"}
+        overage = {"name": "week overage", "used": 40, "resets_at": "2030-01-08T00:00:00Z"}
+        fable = {"name": "week fable", "model": "fable", "used": 61, "resets_at": "2030-01-08T00:00:00Z"}
+        alone = usage.fetch_rust_account("claude", account(quota=dict(account()["quota"], windows=[week, overage])))
+        self.assertEqual([(w["label"], w.get("model")) for w in alone["windows"]],
+                         [("Weekly limit", None), ("Fable weekly", "fable")],
+                         "Claude Code calls seven_day_overage_included the Fable limit")
+        both = usage.fetch_rust_account("claude", account(quota=dict(account()["quota"], windows=[week, overage, fable])))
+        self.assertEqual([(w["label"], w["remaining"]) for w in both["windows"]],
+                         [("Weekly limit", 75), ("Fable weekly", 39)], "the typed Fable entry wins over the flat field")
+        opus = usage.fetch_rust_account("claude", account(quota=dict(account()["quota"], windows=[
+            {"name": "5h opus", "model": "opus", "used": 10, "resets_at": "2030-01-01T05:00:00Z"}])))
+        self.assertEqual(opus["windows"][0]["label"], "Opus · 5 hour limit", "other durations keep their length")
+        self.assertEqual(opus["windows"][0]["model"], "opus")
+        codex = usage.fetch_rust_account("codex", account(provider="codex", quota=dict(account()["quota"], windows=[
+            {"name": "week overage", "used": 40, "resets_at": "2030-01-08T00:00:00Z"}])))
+        self.assertEqual(codex["windows"][0]["label"], "Extra usage · Weekly limit", "only Claude's overage week is Fable")
+        self.assertNotIn("model", codex["windows"][0])
+
     def test_scoped_window_names_and_invalid_limits(self):
         quota = dict(account()["quota"], windows=[
             {"name": "week oauth apps", "used": 30, "resets_at": "2030-01-08T00:00:00Z"},
@@ -375,7 +395,9 @@ class FuseboxQuotaTests(unittest.TestCase):
             {"name": "3d", "used": 5, "resets_at": "2030-01-03T00:00:00Z"}])
         row = usage.fetch_rust_account("claude", account(quota=quota))
         self.assertEqual([w["label"] for w in row["windows"]],
-                         ["OAuth apps · Weekly limit", "Fable · Weekly limit", "3 day limit"])
+                         ["OAuth apps · Weekly limit", "Fable weekly", "3 day limit"])
+        self.assertEqual([w.get("model") for w in row["windows"]], [None, "fable", None])
+        self.assertEqual(row["windows"][1]["windowSeconds"], usage.SEVEN_DAYS)
         self.assertEqual(row["windows"][2]["windowSeconds"], 3 * 86400)
         for bad in ([{"id": "x", "name": "X", "scope": "account"}], [{"id": "x", "name": "X", "scope": {"kind": "nope"}}],
                     [{"id": "x", "name": "X", "scope": {"kind": "model", "value": 3}, "used_percent": 5}], {}):

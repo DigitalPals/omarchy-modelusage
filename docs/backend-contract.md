@@ -56,6 +56,8 @@ History uses a separate `cliproxy-<SHA-256 server prefix>/history.json` director
 
 Percentages are numbers in the inclusive range 0–100. `resetsAt` is a Unix timestamp in seconds or `null`. `windowSeconds` is the known window duration or `null`. Additional windows require no UI schema change.
 
+A window limited to one model family adds `model`, its lowercase family name (`fable`, `opus`, `sonnet`); other windows omit it. Claude sets it for `seven_day_opus`/`seven_day_sonnet` and for `limits` entries whose `scope.model` names a known family, and Fusebox for its `model` windows. Claude's Fable week comes from the `weekly_scoped` `limits` entry scoped to Fable (labeled “Fable weekly”, also when `is_active` is false, which only marks the binding limit); without it, `seven_day_overage_included` supplies the same window. The proxy Limits view always gives the models in `UsageLogic.PINNED_MODELS` (Fable) their own line under each account, named by the model, and the tooltip adds a note on what happens once the allowance is spent.
+
 History records the binding active quota window: the highest `used` percentage among the provider's current windows. For proxy pools this is independent of the last-used menubar account and prevents an idle model-specific window from hiding usage in another active window.
 
 `credits`, when present, has this stable shape:
@@ -145,7 +147,10 @@ implementations cannot restore old credits from a prior successful reading.
 
 Claude, Codex and Meta OAuth `quota.windows` become windows. Their names are
 `<duration>[ <scope>]` (`5h`, `week`, `3d`, `week opus`, `week oauth apps`);
-the optional `model` names the scope. `quota.limits` (tagged `scope.kind`)
+the optional `model` names the scope and becomes the window's `model`; a model
+week is labeled `<Model> weekly`. Claude's `week overage`
+(`seven_day_overage_included`) is the Fable week and is dropped when `week
+fable` is also present. `quota.limits` (tagged `scope.kind`)
 map as follows: `account`, `model`, `models` and `model_families` become
 windows, and a `:gate` limit only while it is at 100%. `feature` limits, and
 limits with `enabled: false`, become windows with `informational: true`.

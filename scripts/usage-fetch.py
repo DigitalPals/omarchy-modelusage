@@ -161,9 +161,10 @@ def make_window(
     resets_at: Any = None,
     window_seconds: int | None = None,
     detail: str = "",
+    model: str | None = None,
 ) -> dict[str, Any]:
     normalized = clamp(float(used), 0.0, 100.0)
-    return {
+    window = {
         "id": window_id,
         "label": label,
         "used": round(normalized, 2),
@@ -172,6 +173,10 @@ def make_window(
         "windowSeconds": window_seconds,
         "detail": clean_message(detail),
     }
+    # A window limited to one model family names it, lowercase ("fable").
+    if model:
+        window["model"] = model
+    return window
 
 
 # ---------------------------------------------------------------- Claude
@@ -203,6 +208,24 @@ def claude_scope_name(entry: dict[str, Any]) -> str:
     return ""
 
 
+CLAUDE_MODEL_FAMILY = re.compile(r"\b(fable|mythos|opus|sonnet|haiku)\b", re.IGNORECASE)
+
+
+def claude_scope_model(entry: dict[str, Any]) -> str | None:
+    """The model family a structured limit is scoped to, if it names a known one."""
+    scope = entry.get("scope")
+    model = scope.get("model") if isinstance(scope, dict) else None
+    if isinstance(model, dict):
+        names = [model.get(key) for key in ("display_name", "name", "id")]
+    else:
+        names = [model]
+    for name in names:
+        match = CLAUDE_MODEL_FAMILY.search(name) if isinstance(name, str) else None
+        if match:
+            return match[1].lower()
+    return None
+
+
 def parse_claude_usage(payload: Any) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     if not isinstance(payload, dict):
         raise ProviderFailure("malformed", "Claude returned an unexpected usage payload.")
@@ -228,19 +251,19 @@ def parse_claude_usage(payload: Any) -> tuple[list[dict[str, Any]], dict[str, An
             windows.append(window)
 
     flat_rows = (
-        ("five_hour", "session", "5 hour limit", FIVE_HOURS),
-        ("seven_day_oauth_apps", "weekly", "Weekly limit", SEVEN_DAYS),
-        ("seven_day", "weekly", "Weekly limit", SEVEN_DAYS),
-        ("seven_day_opus", "opus-weekly", "Opus weekly", SEVEN_DAYS),
-        ("seven_day_sonnet", "sonnet-weekly", "Sonnet weekly", SEVEN_DAYS),
+        ("five_hour", "session", "5 hour limit", FIVE_HOURS, None),
+        ("seven_day_oauth_apps", "weekly", "Weekly limit", SEVEN_DAYS, None),
+        ("seven_day", "weekly", "Weekly limit", SEVEN_DAYS, None),
+        ("seven_day_opus", "opus-weekly", "Opus weekly", SEVEN_DAYS, "opus"),
+        ("seven_day_sonnet", "sonnet-weekly", "Sonnet weekly", SEVEN_DAYS, "sonnet"),
     )
-    for key, window_id, label, seconds in flat_rows:
+    for key, window_id, label, seconds, model in flat_rows:
         row = payload.get(key)
         if not isinstance(row, dict):
             continue
         used = used_percent(row.get("utilization"))
         if used is not None:
-            add(make_window(window_id, label, used, row.get("resets_at"), seconds))
+            add(make_window(window_id, label, used, row.get("resets_at"), seconds, model=model))
 
     if isinstance(structured, list):
         for index, row in enumerate(structured):
@@ -269,7 +292,19 @@ def parse_claude_usage(payload: Any) -> tuple[list[dict[str, Any]], dict[str, An
                 suffix = kind.replace("_", " ") or "limit"
                 label = scope or suffix.title()
             window_id = re.sub(r"[^a-z0-9]+", "-", f"{scope}-{suffix}".lower()).strip("-")
-            add(make_window(window_id or f"limit-{index}", label, used, row.get("resets_at"), seconds))
+            add(make_window(window_id or f"limit-{index}", label, used, row.get("resets_at"), seconds,
+                            model=claude_scope_model(row)))
+
+    # `seven_day_overage_included` is the weekly allowance of the models that
+    # continue on extra usage once it is spent: Fable. Claude Code calls it the
+    # "Fable limit" and lists the `limits` entry as "Current week (Fable)", so
+    # that entry wins when both are present.
+    overage = payload.get("seven_day_overage_included")
+    if isinstance(overage, dict) and not any(window.get("model") == "fable" for window in windows):
+        used = used_percent(overage.get("utilization"))
+        if used is not None:
+            add(make_window("fable-weekly", "Fable weekly", used, overage.get("resets_at"), SEVEN_DAYS,
+                            model="fable"))
 
     credits = None
     extra = payload.get("extra_usage")
@@ -937,6 +972,10 @@ RUST_UNSUPPORTED_NOTICES = {
 RUST_DURATIONS = {"5h": FIVE_HOURS, "week": SEVEN_DAYS, "day": 86400}
 RUST_DURATION_LABELS = {"5h": "5 hour limit", "week": "Weekly limit", "day": "Daily limit"}
 RUST_WINDOW_SCOPES = {"oauth apps": "OAuth apps", "overage": "Extra usage"}
+# Fusebox's name for Claude's `seven_day_overage_included`: the Fable week,
+# read from the flat usage field. `week fable` reads the same allowance from
+# the typed limits and wins when both are present.
+RUST_CLAUDE_FABLE_OVERAGE = "week overage"
 RUST_CODEX_SUBSCRIPTIONS = {
     # Fusebox reads ChatGPT's active subscription SKU; usage's `pro` alone is ambiguous.
     "chatgptprolite": ("prolite", "ChatGPT Pro Lite"),
@@ -996,15 +1035,25 @@ def rust_window(provider_id: str, row: Any, now: float) -> dict[str, Any] | None
     # Fusebox names scoped windows "<duration> <scope>", e.g. "week opus".
     base, _, scope = name.partition(" ")
     label, seconds = rust_duration(base)
-    scope_label = model.title() if model else RUST_WINDOW_SCOPES.get(scope, scope.title() if scope else "")
-    if scope_label:
-        label = scope_label + " · " + label
     window_id = None if model or scope else {
         "5h": "session" if provider_id == "claude" else "codex-primary",
         "week": "weekly" if provider_id == "claude" else "codex-secondary",
     }.get(name) if provider_id in ("claude", "codex") else None
     window_id = window_id or "rust-" + hashlib.sha256(json.dumps([name, model]).encode()).hexdigest()[:16]
-    return make_window(window_id, label, used, reset, seconds)
+    if rust_is_fable_overage(provider_id, row):
+        model = "fable"
+    if model:
+        # "Fable weekly", like the local Claude reading; other durations keep theirs.
+        label = model.title() + (" weekly" if base == "week" else " · " + label)
+    else:
+        scope_label = RUST_WINDOW_SCOPES.get(scope, scope.title() if scope else "")
+        if scope_label:
+            label = scope_label + " · " + label
+    return make_window(window_id, label, used, reset, seconds, model=model.lower() if model else None)
+
+
+def rust_is_fable_overage(provider_id: str, row: dict[str, Any]) -> bool:
+    return provider_id == "claude" and row.get("name") == RUST_CLAUDE_FABLE_OVERAGE and not row.get("model")
 
 
 def rust_limits(rows: Any, now: float) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -1165,7 +1214,7 @@ def fetch_rust_account(provider_id: str, entry: dict[str, Any]) -> dict[str, Any
             raise ProviderFailure("malformed", "Fusebox returned invalid quota data.")
         now = time.time()
         observed = rust_timestamp(quota.get("updated_at"), observed=True, now=now)
-        windows, seen = [], set()
+        windows, seen, fable_overage = [], set(), None
         for row in quota["windows"]:
             window = rust_window(provider_id, row, now)
             if window is None:
@@ -1174,6 +1223,12 @@ def fetch_rust_account(provider_id: str, entry: dict[str, Any]) -> dict[str, Any
                 raise ProviderFailure("malformed", "Fusebox returned duplicate quota windows.")
             seen.add(window["id"])
             windows.append(window)
+            if rust_is_fable_overage(provider_id, row):
+                fable_overage = window
+        if fable_overage is not None and any(
+                window is not fable_overage and window.get("model") == "fable" and window["windowSeconds"] == SEVEN_DAYS
+                for window in windows):
+            windows.remove(fable_overage)
         limit_windows, credits = rust_limits(quota.get("limits"), now)
         windows.extend(window for window in limit_windows if window["id"] not in seen)
         reset_credits = rust_reset_credits(provider_id, entry)

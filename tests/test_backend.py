@@ -42,6 +42,33 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(credits["remaining"], 37.5)
         self.assertEqual(credits["currency"], "USD")
 
+    def test_claude_fable_week_names_its_model(self):
+        windows, _ = usage.parse_claude_usage(fixture("claude-usage.json"))
+        self.assertEqual([row.get("model") for row in windows], [None, None, "fable"])
+        live = {
+            "seven_day": {"utilization": 25, "resets_at": "2030-01-08T00:00:00Z"},
+            "seven_day_sonnet": {"utilization": 5},
+            "seven_day_overage_included": {"utilization": 40, "resets_at": "2030-01-08T00:00:00Z"},
+            "limits": [
+                {"kind": "weekly_all", "group": "weekly", "percent": 25, "scope": None, "is_active": True},
+                {"kind": "weekly_scoped", "group": "weekly", "percent": 61, "resets_at": "2030-01-08T00:00:00Z",
+                 "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None}, "is_active": False},
+            ],
+        }
+        windows, _ = usage.parse_claude_usage(live)
+        self.assertEqual([(row["label"], row["used"], row.get("model")) for row in windows],
+                         [("Weekly limit", 25, None), ("Sonnet weekly", 5, "sonnet"), ("Fable weekly", 61, "fable")],
+                         "the inactive typed Fable entry still counts, and wins over the flat field")
+        del live["limits"]
+        windows, _ = usage.parse_claude_usage(live)
+        fable = windows[-1]
+        self.assertEqual((fable["id"], fable["label"], fable["used"], fable["model"], fable["windowSeconds"]),
+                         ("fable-weekly", "Fable weekly", 40, "fable", usage.SEVEN_DAYS),
+                         "without the typed entry, seven_day_overage_included is the Fable week")
+        surface = {"limits": [{"kind": "weekly_scoped", "group": "weekly", "percent": 3,
+                               "scope": {"surface": {"display_name": "Claude Design"}}}]}
+        self.assertNotIn("model", usage.parse_claude_usage(surface)[0][0], "a surface scope names no model")
+
     def test_claude_low_percentages_are_not_misread_as_fractions(self):
         windows, _ = usage.parse_claude_usage({
             "five_hour": {"utilization": 0.5},

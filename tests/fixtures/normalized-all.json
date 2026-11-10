@@ -15,7 +15,7 @@
       "windows": [
         { "id": "session", "label": "5 hour limit", "used": 42, "remaining": 58, "resetsAt": 1893474000, "windowSeconds": 18000, "detail": "" },
         { "id": "weekly", "label": "Weekly limit", "used": 74, "remaining": 26, "resetsAt": 1893974400, "windowSeconds": 604800, "detail": "" },
-        { "id": "fable-weekly", "label": "Fable 1M — an intentionally long model label weekly", "used": 91, "remaining": 9, "resetsAt": 1893931200, "windowSeconds": 604800, "detail": "" }
+        { "id": "fable-weekly", "label": "Fable 1M — an intentionally long model label weekly", "used": 91, "remaining": 9, "resetsAt": 1893931200, "windowSeconds": 604800, "detail": "", "model": "fable" }
       ],
       "credits": { "label": "Extra usage", "currency": "USD", "used": 12.5, "limit": 50, "remaining": 37.5, "total": null, "unlimited": false, "resetCreditsAvailable": null },
       "notice": "",

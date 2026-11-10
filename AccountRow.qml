@@ -85,7 +85,7 @@ Column {
       objectName: "accountWindowRow"
       width: root.width
       sub: true
-      label: UsageLogic.limitLabel(UsageLogic.shortLimitLabel(modelData.label))
+      label: UsageLogic.accountWindowLabel(modelData)
       window: modelData
       stale: root.account.stale === true
       tooltipText: UsageLogic.windowSummary(modelData, root.nowMs, root.refreshing)

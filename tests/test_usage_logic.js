@@ -504,3 +504,57 @@ console.log("UsageLogic.js stale readings and resets: passed");
   assert.equal(context.hasQuotaHistory({status: "error", history: {h24: [1]}}), false);
   console.log("UsageLogic.js compact rows: passed");
 }
+
+// Claude's Fable week: its own line under every account that reports one.
+{
+  const weekly = {id: "weekly", label: "Weekly limit", windowSeconds: 604800, remaining: 74, resetsAt: at(54 * 3600)};
+  const session = {id: "session", label: "5 hour limit", windowSeconds: 18000, remaining: 8, resetsAt: at(42 * 60)};
+  const fable = {id: "fable", label: "Fable weekly", model: "fable", windowSeconds: 604800, remaining: 39,
+    resetsAt: at(54 * 3600)};
+  const opus = {id: "opus", label: "Opus weekly", model: "opus", windowSeconds: 604800, remaining: 70,
+    resetsAt: at(54 * 3600)};
+  const account = (windows) => ({id: "claude", status: "ok", plan: "Claude Ultra", windows});
+  const ids = (rows) => json(rows.map((row) => row.id));
+
+  const healthy = context.accountRowWindows(account([weekly, fable, opus]), false, 25, 10);
+  assert.equal(healthy.main.id, "weekly", "the all-models week stays the account meter");
+  assert.equal(ids(healthy.extra), json(["fable"]), "a healthy Fable week keeps its line; Opus stays in the tooltip");
+  assert.equal(ids(context.accountRowWindows(account([fable, session, weekly]), false, 25, 10).extra),
+    json(["session", "fable"]), "a spent shorter window comes first and Fable keeps its place below");
+  assert.equal(ids(context.accountRowWindows(account([weekly, {...fable, remaining: 17}]), false, 25, 10).extra),
+    json(["fable"]), "an urgent Fable week is listed once");
+  const onlyFable = context.accountRowWindows(account([session, fable]), false, 25, 10);
+  assert.equal(onlyFable.main.id, "fable", "without an all-models week, Fable can be the meter");
+  assert.equal(ids(onlyFable.extra), json(["session"]), "the meter's window is not repeated below it");
+  assert.equal(context.accountRowWindows(account([weekly, {...fable, informational: true}]), false, 25, 10).extra.length,
+    0, "an informational allowance is not pinned");
+  assert.equal(context.accountRowWindows(account([weekly, {...fable, model: undefined}]), false, 25, 10).extra.length,
+    0, "a window without a model is not pinned");
+  assert.equal(ids(context.accountWindows(account([weekly, fable]), false)), json(["weekly", "fable"]),
+    "Fable is pinned without thresholds too");
+  assert.equal(ids(context.accountRowWindows(account([weekly, fable, opus]), true, 25, 10).extra),
+    json(["fable", "opus"]), "Details still lists every other window");
+  assert.equal(context.hasAdditionalWindows([account([weekly, fable])], 25, 10), false,
+    "Details reveals nothing new when Fable is already shown");
+  assert.equal(context.hasAdditionalWindows([account([weekly, fable, opus])], 25, 10), true);
+  assert.equal(context.accountsCaption([account([weekly, fable])]), "weekly · resets", "the caption names the meter");
+  assert.equal(context.minRemaining({status: "ok", windows: [weekly, fable]}), 39, "the bar chip counts the Fable week");
+
+  assert.equal(context.accountWindowLabel(fable), "Fable", "a model week is named by its model");
+  assert.equal(context.accountWindowLabel(opus), "Opus");
+  assert.equal(context.accountWindowLabel({label: "Fable · 5 hour limit", model: "fable", windowSeconds: 18000}),
+    "Fable\u00a0· 5\u00a0hour", "other durations keep their full name");
+  assert.equal(context.accountWindowLabel(session), "5\u00a0hour");
+  assert.equal(context.accountWindowLabel(null), "Usage");
+
+  assert.match(context.windowSummary(fable, now),
+    /^Fable weekly: 39% left · resets [A-Z][a-z]{2} \d+, \d\d:\d\d \(in 2d 6h\)\n {2}Beyond it, Fable runs on extra usage, if enabled$/,
+    "the Fable line explains what happens once it is spent");
+  assert.equal(context.windowSummary(opus, now).indexOf("\n"), -1, "other model weeks add no note");
+  assert.equal(context.windowNote({model: "toString"}), "", "only listed models have notes");
+  const tip = context.accountDetails(account([weekly, fable]), {label: "Account 1", nowMs: now}).split("\n");
+  assert.equal(tip[0], "Account 1 · Claude Ultra");
+  assert.match(tip[2], /^Fable weekly: 39% left/);
+  assert.equal(tip[3], "  Beyond it, Fable runs on extra usage, if enabled", "the note sits indented under its line");
+  console.log("UsageLogic.js Fable week: passed");
+}

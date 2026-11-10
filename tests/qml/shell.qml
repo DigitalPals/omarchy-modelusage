@@ -275,6 +275,15 @@ ShellRoot {
         assertTrue(namedChild(cards[0], "usageRowDetail").visible, "Details shows the reset time inline")
       }
       proxyWidget.expandedAccountLimits = false
+      var claudeRows = accountRowsOf(proxyWidget.providerCard("claude"))
+      var fableRow = claudeRows.length > 0 ? namedChild(claudeRows[0], "accountWindowRow") : null
+      assertTrue(fableRow !== null && fableRow.visible, "a Claude account shows its Fable week on its own line")
+      assertEqual(fableRow ? fableRow.label : "", "Fable", "the Fable line is named by its model")
+      assertEqual(fableRow ? namedChild(fableRow, "usageRowPercent").text : "", "9%", "the Fable line shows what is left")
+      assertTrue(fableRow !== null && fableRow.tooltipText.indexOf("\n  Beyond it, Fable runs on extra usage, if enabled") > 0,
+        "the Fable line's tooltip explains what happens once it is spent")
+      assertEqual(claudeRows.length > 0 ? claudeRows[0].rowWindows.extra.length : -1, 1,
+        "the Fable week is listed once, though it is also the tightest limit")
       var gemini = proxyWidget.providerCard("gemini")
       assertTrue(gemini !== null && gemini.provider.status === "unsupported", "unsupported quota keeps its own card")
       assertEqual(gemini ? namedChild(gemini, "providerCardNotice").text : "", "Quota lookup unavailable",
@@ -354,6 +363,8 @@ ShellRoot {
         assertTrue(fable.stressed, "a critical limit row uses the urgent color")
         assertTrue(fable.tooltipText.indexOf("Fable 1M — an intentionally long model label weekly: 9% left") === 0,
           "the tooltip carries the full limit name")
+        assertTrue(fable.tooltipText.indexOf("\n  Beyond it, Fable runs on extra usage, if enabled") > 0,
+          "the Fable tooltip explains what happens once it is spent")
         assertTrue(namedChild(claudeCard, "providerCreditsRow").visible, "Claude extra usage renders")
       }
       assertEqual(widget.percentageMode, true, "percentages show with meaningful horizontal data")
