@@ -648,8 +648,11 @@ ShellRoot {
       var costReady = root.richCostBackend && root.richCostBackend.providers.length === 2
       var malformedCostReady = root.malformedCostBackend && root.malformedCostBackend.fetchError !== ""
       var lastGoodReady = root.backendErrorCostBackend && root.backendErrorCostBackend.providers.length === 2
+      // The shared name column is measured on a later event-loop turn
+      // (Qt.callLater), after the account rows exist; wait for it too.
       var proxyReady = root.proxyBackend && root.proxyBackend.providers.length === 4
         && root.proxyWidget && root.proxyWidget.providers.length === 4
+        && root.proxyWidget.labelColumnWidth > 0
       if ((richReady && malformedReady && costReady && malformedCostReady && lastGoodReady && proxyReady)
           || root.waitAttempts >= 120) {
         stop()
