@@ -30,10 +30,9 @@ has not been updated.
    If it is a separate copy or points elsewhere, resolve the installation
    mismatch first; do not assume that editing this checkout changes that copy.
 
-2. Finish the changes and run checks appropriate to their scope. `./tests/run`
-   runs portable tests, QML lint, and invisible runtime checks when available.
-   For a small presentation-only change, lint the affected QML and inspect the
-   live result. The optional `MODEL_USAGE_LIVE_TESTS=1 ./tests/run` opens an
+2. Finish the changes and run `fast-test` (see Testing below): Python and JS
+   tests run here, QML lint and the QML contracts on The Beast. For a small
+   presentation-only change, also inspect the live result. The optional `MODEL_USAGE_LIVE_TESTS=1 ./tests/run` opens an
    isolated test instance; passing it is not proof that the desktop's running
    plugin was updated.
 
@@ -119,3 +118,15 @@ Use `pkexec` only if sudo explicitly requires password authentication and no
 interactive terminal is available. Leave commands that handle their own
 privilege elevation unwrapped. The plugin's collectors and shell restart do
 not need root.
+
+## Testing (fast testing)
+- After a change, run `fast-test` in the repository folder. It tests only what changed since `main` (commits,
+  staged and unstaged edits, new files): quick tests here on The Dragon, heavy ones (VMs, Nix, databases, wide
+  changes) on The Beast by itself. `fast-test --dry-run` shows what it would run and why.
+- Exit 0 passed, 1 failed, 2 couldn't run (say so; don't run the full suite here instead). When it fails, its output
+  ends with the failing step's last lines; the whole log is in `.git/fast-test/`.
+- Don't run the full test suite and don't wait for GitHub CI. `fast-test --full` runs everything on The Beast, only
+  when someone asks for it.
+- A failing test runs once more before it counts as failing (fast-test does this itself). Never skip or weaken a test
+  to make it pass.
+- Every night The Beast runs the full suite of `main`; failures are reported in the morning.

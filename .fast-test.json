@@ -1,0 +1,53 @@
+{
+  "about": "What `fast-test` runs for a change (see ~/Code/fast-test). Python and JS tests run here; QML lint and the QML contracts need Quickshell, so they run on The Beast in the Arch container CI uses.",
+  "steps": [
+    {
+      "name": "unit",
+      "about": "The Python test modules that mention a changed file, and changed test modules.",
+      "unless": [
+        "*.md",
+        "docs/**",
+        "assets/**"
+      ],
+      "run": "tests/related {files}"
+    },
+    {
+      "name": "compile",
+      "about": "The changed collectors still compile.",
+      "when": [
+        "scripts/*.py"
+      ],
+      "run": "python3 -m py_compile {files}"
+    },
+    {
+      "name": "js",
+      "about": "The usage logic's Node tests.",
+      "when": [
+        "*.js"
+      ],
+      "run": "node tests/test_usage_logic.js"
+    },
+    {
+      "name": "qml",
+      "about": "Every check, including QML lint and the offscreen and headless Wayland QML contracts (tests/ci-qml).",
+      "when": [
+        "*.qml",
+        "*.js",
+        "manifest.json",
+        "tests/qml/**",
+        "tests/run",
+        "tests/ci-qml",
+        "tests/fake*",
+        "tests/fixtures/**"
+      ],
+      "where": "beast",
+      "run": "tests/ci-qml /opt/omarchy"
+    }
+  ],
+  "full": "tests/ci-qml /opt/omarchy",
+  "beast": {
+    "image": "docker.io/library/archlinux:base",
+    "prepare": "tests/beast-prepare",
+    "network": "internet"
+  }
+}

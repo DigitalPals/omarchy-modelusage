@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Runs the Python test modules that mention a changed file by name, plus the
+# changed test modules themselves. fast-test passes the changed files.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+mods=()
+for f in "$@"; do
+  name=$(basename -- "$f")
+  case $f in tests/test_*.py) mods+=("${name%.py}"); continue ;; esac
+  for t in test_*.py; do
+    if grep -qF -e "${name%.*}" "$t"; then mods+=("${t%.py}"); fi
+  done
+done
+if [[ ${#mods[@]} -eq 0 ]]; then
+  echo "No Python test mentions these files."
+  exit 0
+fi
+mapfile -t mods < <(printf '%s\n' "${mods[@]}" | sort -u)
+echo "Running: ${mods[*]}"
+exec python3 -m unittest "${mods[@]}"
