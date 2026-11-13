@@ -1,5 +1,10 @@
 # Working on Model Usage
 
+## How to answer
+
+- Always answer concisely and in plain English: short sentences, everyday words, the answer first. Leave out filler,
+  jargon and long lists unless someone asks for more detail.
+
 ## Apply changes to the live widget
 
 This checkout is the installed Model Usage plugin on John's computer:
