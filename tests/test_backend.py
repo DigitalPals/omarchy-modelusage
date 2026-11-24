@@ -134,7 +134,7 @@ class FailureAndIsolationTests(unittest.TestCase):
             root = Path(directory)
             (root / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "synthetic"}}))
             for metadata in (b" " * (usage.MAX_LOCAL_JSON_BYTES + 1), b"\xff", b"[" * 2000 + b"0" + b"]" * 2000):
-                with self.subTest(size=len(metadata)), mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory}), \
+                with self.subTest(size=len(metadata)), mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory, "CLAUDE_CODE_OAUTH_TOKEN": ""}), \
                         mock.patch.object(usage.Path, "home", return_value=root), \
                         mock.patch.object(usage, "http_json", return_value=fixture("claude-usage.json")):
                     (root / ".claude.json").write_bytes(metadata)
@@ -155,8 +155,9 @@ class FailureAndIsolationTests(unittest.TestCase):
             kimi_dir = root / "kimi"
             with mock.patch.dict(os.environ, {
                 "CLAUDE_CONFIG_DIR": str(claude_dir),
+                "CLAUDE_CODE_OAUTH_TOKEN": "",
                 "KIMI_CODE_HOME": str(kimi_dir),
-            }):
+            }), mock.patch.object(usage.shutil, "which", return_value=None):
                 self.assertEqual(usage.fetch_claude(1)["errorKind"], "no_credentials")
                 self.assertEqual(usage.fetch_kimi(1)["errorKind"], "no_credentials")
 
@@ -176,6 +177,86 @@ class FailureAndIsolationTests(unittest.TestCase):
             result = usage.fetch_codex(1)
         self.assertEqual(result["errorKind"], "cli_unavailable")
         self.assertEqual(result["authCommand"], "codex login")
+
+    def codex_probe(self, responses, env=None):
+        with mock.patch.object(usage, "runtime_environment", return_value=env or {}), \
+                mock.patch.object(usage.shutil, "which", return_value="/fixture/codex"), \
+                mock.patch.object(usage.subprocess, "Popen") as start, \
+                mock.patch.object(usage, "CodexRpcStream"), \
+                mock.patch.object(usage, "rpc_request", side_effect=responses) as rpc:
+            result = usage.fetch_codex(1)
+        return result, rpc, start
+
+    def test_codex_checks_sign_in_before_requesting_subscription_limits(self):
+        result, rpc, _ = self.codex_probe([{}, {"result": {"account": None}}])
+        self.assertEqual(result["errorKind"], "no_credentials")
+        self.assertEqual([call.args[2] for call in rpc.call_args_list], ["initialize", "account/read"])
+
+    def test_codex_api_key_has_no_subscription_quota_and_is_not_an_rpc_error(self):
+        result, rpc, _ = self.codex_probe([{}, {"result": {"account": {"type": "apiKey"}}}])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["plan"], "API key")
+        self.assertIn("ChatGPT", result["notice"])
+        self.assertEqual(rpc.call_count, 2)
+
+    def test_codex_probe_uses_saved_account_without_changing_parent_api_key(self):
+        env = {"OPENAI_API_KEY": "fixture-api-key", "CODEX_HOME": "/fixture/codex-home", "PATH": "/fixture"}
+        account = {"result": {"account": {"type": "chatgpt", "planType": "pro"}}}
+        result, _, start = self.codex_probe([{}, account, {"result": fixture("codex-rate-limits.json")}], env.copy())
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["windows"])
+        child_env = start.call_args.kwargs["env"]
+        self.assertNotIn("OPENAI_API_KEY", child_env)
+        self.assertEqual(child_env["CODEX_HOME"], "/fixture/codex-home")
+        self.assertEqual(env["OPENAI_API_KEY"], "fixture-api-key")
+
+    def test_codex_managed_sign_in_refreshes_once_after_authentication_failure(self):
+        account = {"result": {"account": {"type": "chatgpt", "planType": "pro"}}}
+        failure = usage.ProviderFailure("expired", "Saved sign-in expired")
+        result, rpc, _ = self.codex_probe([{}, account, failure, account, {"result": fixture("codex-rate-limits.json")}])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(rpc.call_args_list[3].args[2], "account/read")
+        self.assertEqual(rpc.call_args_list[3].args[4], {"refreshToken": True})
+        result, rpc, _ = self.codex_probe([{}, account, failure, account, failure])
+        self.assertEqual(result["errorKind"], "expired")
+        self.assertEqual(rpc.call_count, 5)
+
+    def test_claude_oauth_environment_sign_in_needs_no_credentials_file(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory, "CLAUDE_CODE_OAUTH_TOKEN": "fixture-oauth"}), \
+                mock.patch.object(usage, "http_json", return_value=fixture("claude-usage.json")) as fetch:
+            result = usage.fetch_claude(1)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["windows"])
+        self.assertEqual(fetch.call_args.args[1]["Authorization"], "Bearer fixture-oauth")
+        self.assertNotIn("fixture-oauth", json.dumps(result))
+
+    def test_claude_reads_tokens_refreshed_by_its_cli_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            credentials = Path(directory) / ".credentials.json"
+            credentials.write_text(json.dumps({"claudeAiOauth": {"accessToken": "expired-fixture", "expiresAt": 1}}))
+            def refreshed(*args, **kwargs):
+                credentials.write_text(json.dumps({"claudeAiOauth": {"accessToken": "fresh-fixture", "expiresAt": int(time.time()) + 600}}))
+            with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": directory, "CLAUDE_CODE_OAUTH_TOKEN": ""}), \
+                    mock.patch.object(usage.shutil, "which", return_value="/fixture/claude"), \
+                    mock.patch.object(usage.subprocess, "run", side_effect=refreshed) as run, \
+                    mock.patch.object(usage, "http_json", return_value=fixture("claude-usage.json")) as fetch:
+                result = usage.fetch_claude(1)
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(run.call_args.args[0], ["/fixture/claude", "auth", "status"])
+            self.assertEqual(fetch.call_args.args[1]["Authorization"], "Bearer fresh-fixture")
+
+    def test_codex_rpc_sign_in_errors_name_the_fix(self):
+        stream = usage.CodexRpcStream.__new__(usage.CodexRpcStream)
+        for message, kind in (("Authentication required", "no_credentials"),
+                              ("Request failed: 401 Unauthorized", "expired"),
+                              ("Provider exploded", "rpc")):
+            with self.subTest(message=message), \
+                    mock.patch.object(stream, "read_line", return_value=json.dumps(
+                        {"id": 3, "error": {"message": message}}).encode(), create=True):
+                with self.assertRaises(usage.ProviderFailure) as raised:
+                    stream.receive(3, "account/rateLimits/read", 1)
+                self.assertEqual(raised.exception.kind, kind)
 
     def test_http_expiry_rate_limit_timeout_and_malformed(self):
         cases = [

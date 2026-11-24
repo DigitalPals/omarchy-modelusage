@@ -331,19 +331,42 @@ def fetch_claude(timeout: float) -> dict[str, Any]:
     provider_id = "claude"
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")).expanduser()
     credentials_path = config_dir / ".credentials.json"
-    if not credentials_path.is_file():
+    # `claude setup-token` sign-ins live in the environment, not in a file.
+    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if not oauth_token and not credentials_path.is_file():
         return error_provider(provider_id, "no_credentials", "No Claude Code sign-in was found.")
     try:
-        raw = read_json(credentials_path)
-        login = raw.get("claudeAiOauth") if isinstance(raw, dict) else None
-        if not isinstance(login, dict) or not isinstance(login.get("accessToken"), str):
+        if oauth_token:
+            login = {"accessToken": oauth_token}
+        else:
+            raw = read_json(credentials_path)
+            login = raw.get("claudeAiOauth") if isinstance(raw, dict) else None
+        if not isinstance(login, dict) or not isinstance(login.get("accessToken"), str) \
+                or not login["accessToken"].strip():
             raise ValueError("missing OAuth record")
     except (OSError, ValueError, json.JSONDecodeError):
         return error_provider(provider_id, "no_credentials", "Claude Code credentials could not be read.")
 
+    # Claude Code maintains its own tokens. A status query sends no model
+    # prompt; if it refreshed an expired sign-in, read the replacement.
     expires_at = epoch_seconds(login.get("expiresAt"))
-    if expires_at is not None and expires_at <= int(time.time()):
-        return error_provider(provider_id, "expired", "The Claude Code sign-in has expired.")
+    if not oauth_token and expires_at is not None and expires_at <= int(time.time()):
+        claude = shutil.which("claude", path=runtime_environment().get("PATH"))
+        if claude:
+            try:
+                subprocess.run([claude, "auth", "status"], env=runtime_environment(),
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=min(timeout, 6), check=False)
+                updated = read_json(credentials_path).get("claudeAiOauth")
+                if isinstance(updated, dict) and isinstance(updated.get("accessToken"), str) \
+                        and updated["accessToken"].strip():
+                    login = updated
+            except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+                pass
+        expires_at = epoch_seconds(login.get("expiresAt"))
+        if expires_at is not None and expires_at <= int(time.time()):
+            return error_provider(provider_id, "expired",
+                                  "The Claude Code sign-in has expired. Sign in again with Claude Code, then refresh.")
 
     try:
         payload = http_json(
@@ -352,6 +375,7 @@ def fetch_claude(timeout: float) -> dict[str, Any]:
                 "Authorization": "Bearer " + login["accessToken"],
                 "anthropic-beta": "oauth-2025-04-20",
                 "Accept": "application/json",
+                "User-Agent": "claude-code/2.1.0 (external, cli)",
             },
             timeout,
         )
@@ -361,7 +385,9 @@ def fetch_claude(timeout: float) -> dict[str, Any]:
 
     account = ""
     try:
-        account_data = read_json(Path.home() / ".claude.json")
+        # Claude Code keeps its account file inside CLAUDE_CONFIG_DIR when set.
+        account_data = read_json(config_dir / ".claude.json" if os.environ.get("CLAUDE_CONFIG_DIR")
+                                 else Path.home() / ".claude.json")
         oauth_account = account_data.get("oauthAccount") if isinstance(account_data, dict) else None
         if isinstance(oauth_account, dict):
             account = str(oauth_account.get("emailAddress") or "")
@@ -485,6 +511,14 @@ class CodexRpcStream:
             if message.get("error"):
                 raw_error = message["error"]
                 detail = raw_error.get("message") if isinstance(raw_error, dict) else raw_error
+                detail = str(detail or "Unknown RPC error")
+                lower = detail.lower()
+                if "authentication required" in lower or "not authenticated" in lower:
+                    raise ProviderFailure("no_credentials",
+                                          "Codex needs a ChatGPT account sign-in to read subscription limits.")
+                if "401" in lower or "unauthorized" in lower or "token has expired" in lower:
+                    raise ProviderFailure("expired", "The saved Codex sign-in is no longer accepted. "
+                                                     "Sign in again with Codex, then refresh.")
                 raise ProviderFailure("rpc", f"Codex RPC failed: {detail}")
             return message
 
@@ -626,6 +660,10 @@ def parse_codex_rate_limits(
 def fetch_codex(timeout: float) -> dict[str, Any]:
     provider_id = "codex"
     env = runtime_environment()
+    # Subscription quotas belong to the saved ChatGPT account. A shell-wide
+    # API key can shadow that account in Codex but cannot supply its quotas.
+    # Only this read-only probe loses the variable; Codex sessions keep it.
+    env.pop("OPENAI_API_KEY", None)
     codex = shutil.which("codex", path=env.get("PATH"))
     if not codex:
         return error_provider(provider_id, "cli_unavailable", "The Codex CLI was not found in PATH.")
@@ -651,19 +689,32 @@ def fetch_codex(timeout: float) -> dict[str, Any]:
         rpc_request(rpc, 1, "initialize", timeout, initialize)
         rpc.send({"method": "initialized", "params": {}})
 
+        # Check the sign-in first: limits need a ChatGPT account.
         account_message = rpc_request(rpc, 2, "account/read", min(timeout, 6))
-        limits_message = rpc_request(rpc, 3, "account/rateLimits/read", min(timeout, 6))
         account_result = account_message.get("result") or {}
         account = account_result.get("account") if isinstance(account_result, dict) else None
         if not isinstance(account, dict):
             return error_provider(provider_id, "no_credentials", "Codex is not signed in.")
+        if account.get("type") == "apiKey":
+            result = base_provider(provider_id)
+            result.update(plan="API key", source="Codex app-server RPC",
+                          notice="API key sign-in has no ChatGPT subscription limits. "
+                                 "Sign in with ChatGPT in Codex to see them.")
+            return result
+
+        try:
+            limits_message = rpc_request(rpc, 3, "account/rateLimits/read", min(timeout, 6))
+        except ProviderFailure as exc:
+            if exc.kind not in ("no_credentials", "expired") or account.get("type") != "chatgpt":
+                raise
+            # Ask Codex to refresh its own sign-in once; never copy its tokens.
+            rpc_request(rpc, 4, "account/read", min(timeout, 6), {"refreshToken": True})
+            limits_message = rpc_request(rpc, 5, "account/rateLimits/read", min(timeout, 6))
 
         limits_result = limits_message.get("result") or {}
         windows, credits, limits_plan, reached = parse_codex_rate_limits(limits_result)
         raw_plan = str(account.get("planType") or "")
         plan = limits_plan or CODEX_PLAN_LABELS.get(raw_plan, raw_plan.replace("_", " ").title())
-        if account.get("type") == "apiKey" and not plan:
-            plan = "API key"
 
         result = base_provider(provider_id)
         result.update(
