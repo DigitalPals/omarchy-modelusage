@@ -479,7 +479,6 @@ Ui.Panel {
     usageBackend: backend
     onFinished: backend.refresh()
     onStateChanged: {
-      root.ensurePopup()
       if (root.popupFlick) root.popupFlick.contentY = 0
       Qt.callLater(function() {
         if (resetBackend.active && root.popupReset) root.popupReset.focusFirst()
