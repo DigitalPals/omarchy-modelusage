@@ -41,9 +41,16 @@ Ui.Panel {
   property string viewMode: "limits"
   property string settingsReturnView: "limits"
   readonly property bool configuring: viewMode === "settings"
-  property alias settingsView: settingsViewItem
-  readonly property var settingsForm: settingsViewItem.limitsForm
-  readonly property var costSettingsForm: settingsViewItem.costForm
+  readonly property var popup: popupLoader.item
+  readonly property bool popupLoaded: popupLoader.status === Loader.Ready
+  // Null until the popup is first built (ensurePopup()).
+  readonly property var settingsView: popup ? popup.settingsPage : null
+  readonly property var settingsForm: settingsView ? settingsView.limitsForm : null
+  readonly property var costSettingsForm: settingsView ? settingsView.costForm : null
+  readonly property var popupFlick: popup ? popup.flick : null
+  readonly property var popupKeys: popup ? popup.keyTarget : null
+  readonly property var popupReset: popup ? popup.resetConfirmation : null
+  readonly property var popupCosts: popup ? popup.costs : null
   property alias resetAction: resetBackend
   property double nowMs: Date.now()
   // Account facts show minutes; change once a minute rather than every tick.
@@ -91,7 +98,7 @@ Ui.Panel {
   // Every card's name column is as wide as the widest name, so meters line up.
   readonly property real labelColumnWidth: Math.ceil(labelRegistry.widest)
   readonly property bool bankedResetColumn: UsageLogic.hasBankedResets(providers)
-  property alias providerCards: providerRepeater
+  readonly property var providerCards: popup ? popup.cardRepeater : null
   property alias usageBackend: backend
 
   function alpha(color, opacity) {
@@ -110,9 +117,12 @@ Ui.Panel {
     return false
   }
 
+  function ensurePopup() { popupLoader.active = true }
+
   function providerCard(providerId) {
-    for (let i = 0; i < providerRepeater.count; i++) {
-      const card = providerRepeater.itemAt(i)
+    if (!providerCards) return null
+    for (let i = 0; i < providerCards.count; i++) {
+      const card = providerCards.itemAt(i)
       if (card && card.providerId === providerId) return card
     }
     return null
@@ -121,10 +131,10 @@ Ui.Panel {
   // Scroll so the provider's card starts at the top of the panel.
   function scrollToProvider(providerId) {
     const card = providerCard(providerId)
-    if (!card || !panelFlick) return false
-    const point = card.mapToItem(panelFlick.contentItem, 0, 0)
-    panelFlick.contentY = clamp(point.y - Style.spacing.sm, 0,
-      Math.max(0, panelFlick.contentHeight - panelFlick.height))
+    if (!card || !popupFlick) return false
+    const point = card.mapToItem(popupFlick.contentItem, 0, 0)
+    popupFlick.contentY = clamp(point.y - Style.spacing.sm, 0,
+      Math.max(0, popupFlick.contentHeight - popupFlick.height))
     return true
   }
 
@@ -224,12 +234,13 @@ Ui.Panel {
 
   // One settings page with a Limits and a Costs tab.
   function showSettings(tab) {
+    ensurePopup()
     if (!configuring) settingsReturnView = viewMode
-    settingsViewItem.begin(settings, tab === "costs" ? "costs" : "limits")
+    settingsView.begin(settings, tab === "costs" ? "costs" : "limits")
     viewMode = "settings"
-    if (panelFlick) panelFlick.contentY = 0
+    if (popupFlick) popupFlick.contentY = 0
     open()
-    Qt.callLater(function() { settingsViewItem.focusFirst() })
+    Qt.callLater(function() { if (root.settingsView) root.settingsView.focusFirst() })
   }
 
   function showCostSettings() {
@@ -238,9 +249,9 @@ Ui.Panel {
   }
 
   function leaveSettings() {
-    settingsViewItem.discardKey()
+    if (settingsView) settingsView.discardKey()
     viewMode = settingsReturnView
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { if (root.popupKeys) root.popupKeys.forceActiveFocus() })
   }
 
   function saveSettings(values) {
@@ -254,13 +265,13 @@ Ui.Panel {
     if (changed) {
       if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function"
           || !bar.shell.updateEntryInline(moduleName, entry)) {
-        settingsViewItem.transactionError = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
-        settingsViewItem.finishSave(false)
+        settingsView.transactionError = "Could not save settings. Make sure Model Usage is enabled in the bar, then try again."
+        settingsView.finishSave(false)
         return false
       }
       settings = entry
     }
-    settingsViewItem.finishSave(true)
+    settingsView.finishSave(true)
     leaveSettings()
     return true
   }
@@ -410,7 +421,7 @@ Ui.Panel {
 
   function contextText() {
     if (viewMode === "costs")
-      return costBackend.loading && costsView.hasResult ? "Refreshing…" : ""
+      return costBackend.loading && popupCosts && popupCosts.hasResult ? "Refreshing…" : ""
     // Before the first reading the body shows the loading state.
     if (providers.length === 0) return ""
     const context = UsageLogic.limitsContext(providers, proxyMode)
@@ -423,25 +434,26 @@ Ui.Panel {
 
   onProvidersChanged: resetRefreshTimer.schedule()
   onOpenedChanged: if (opened) {
+    ensurePopup()
     nowMs = Date.now()
     if (viewMode === "costs") costBackend.ensureLoaded()
-    if (panelFlick) panelFlick.contentY = 0
+    if (popupFlick) popupFlick.contentY = 0
     Qt.callLater(function() {
-      if (resetBackend.active) resetForm.focusFirst()
-      else if (root.configuring) settingsViewItem.focusFirst()
-      else keyCatcher.forceActiveFocus()
+      if (resetBackend.active && root.popupReset) root.popupReset.focusFirst()
+      else if (root.configuring && root.settingsView) root.settingsView.focusFirst()
+      else if (root.popupKeys) root.popupKeys.forceActiveFocus()
     })
   } else {
     scrollTimer.stop()
-    if (costsView) costsView.closeMenu()
+    if (popupCosts) popupCosts.closeMenu()
     if (configuring) viewMode = settingsReturnView
   }
 
   onViewModeChanged: {
-    if (costsView) costsView.closeMenu()
-    if (viewMode !== "settings") settingsViewItem.discardKey()
+    if (popupCosts) popupCosts.closeMenu()
+    if (viewMode !== "settings" && settingsView) settingsView.discardKey()
     if (viewMode === "costs") costBackend.ensureLoaded()
-    if (panelFlick) panelFlick.contentY = 0
+    if (popupFlick) popupFlick.contentY = 0
   }
 
   // Handles on workers shared by every bar showing the widget.
@@ -467,10 +479,11 @@ Ui.Panel {
     usageBackend: backend
     onFinished: backend.refresh()
     onStateChanged: {
-      if (panelFlick) panelFlick.contentY = 0
+      root.ensurePopup()
+      if (root.popupFlick) root.popupFlick.contentY = 0
       Qt.callLater(function() {
-        if (resetBackend.active) resetForm.focusFirst()
-        else keyCatcher.forceActiveFocus()
+        if (resetBackend.active && root.popupReset) root.popupReset.focusFirst()
+        else if (root.popupKeys) root.popupKeys.forceActiveFocus()
       })
     }
   }
@@ -704,420 +717,436 @@ Ui.Panel {
     }
   }
 
-  Ui.KeyboardPanel {
-    id: panel
-    anchorItem: root.percentageMode ? percentageGroup : iconButton
-    owner: root
-    bar: root.bar
-    open: root.opened
-    focusTarget: resetBackend.active ? resetForm : root.configuring ? settingsViewItem : keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight
-      : contentColumn.implicitHeight + (root.configuring ? settingsActions.implicitHeight + Style.spacing.lg : 0))
+  // The bar and the shared data are ready at once; the popup's cards, forms
+  // and menus are built the first time it opens, then kept for focus and
+  // drafts. With a widget on every output, closed popups cost nothing.
+  Loader {
+    id: popupLoader
+    active: false
+    sourceComponent: Component {
+      Ui.KeyboardPanel {
+        id: panel
+        // What the bar side reaches inside the popup once it exists.
+        property alias settingsPage: settingsViewItem
+        property alias flick: panelFlick
+        property alias keyTarget: keyCatcher
+        property alias resetConfirmation: resetForm
+        property alias costs: costsView
+        property alias cardRepeater: providerRepeater
+        anchorItem: root.percentageMode ? percentageGroup : iconButton
+        owner: root
+        bar: root.bar
+        open: root.opened
+        focusTarget: resetBackend.active ? resetForm : root.configuring ? settingsViewItem : keyCatcher
+        contentWidth: panel.fittedContentWidth(Style.space(420))
+        contentHeight: panel.fittedContentHeight(resetBackend.active ? resetForm.implicitHeight
+          : contentColumn.implicitHeight + (root.configuring ? settingsActions.implicitHeight + Style.spacing.lg : 0))
 
-    Ui.PanelKeyCatcher {
-      id: keyCatcher
-      anchors.fill: parent
-      blocked: root.configuring || resetBackend.active || costsView.menuOpen
+        Ui.PanelKeyCatcher {
+          id: keyCatcher
+          anchors.fill: parent
+          blocked: root.configuring || resetBackend.active || costsView.menuOpen
 
-      onMoveRequested: function(dx, dy) {
-        if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
-          root.stepProvider(dx)
-        }
-        if (dy !== 0) {
-          let target = panelFlick.contentY + dy * Style.space(56)
-          panelFlick.contentY = root.clamp(target, 0,
-            Math.max(0, panelFlick.contentHeight - panelFlick.height))
-        }
-      }
-      onActivateRequested: root.refreshNow()
-      onCloseRequested: root.close()
-      onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(text) {
-        if (text === "r" || text === "R") root.refreshNow()
-        else if (text === "c" || text === "C") root.showCosts()
-        else if (text === "u" || text === "U") root.showLimits()
-        else if (root.viewMode === "costs" && (text === "m" || text === "M")) costsView.openMetricMenu()
-        else if (root.viewMode === "costs" && (text === "d" || text === "D")) costsView.tokenDetailsExpanded = !costsView.tokenDetailsExpanded
-        else if (root.viewMode === "costs" && (text === "b" || text === "B")) costsView.modelsExpanded = !costsView.modelsExpanded
-        else if (text === "s" || text === "S") root.showViewSettings()
-        else if (text === "[") root.stepRange(-1)
-        else if (text === "]") root.stepRange(1)
-        else if (text === "?") root.shortcutsVisible = !root.shortcutsVisible
-        else if ((text === "a" || text === "A") && root.viewMode === "limits"
-            && (root.detailsAvailable || root.expandedAccountLimits))
-          root.expandedAccountLimits = !root.expandedAccountLimits
-      }
-
-      SettingsActions {
-        id: settingsActions
-        objectName: "settingsActions"
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        visible: root.configuring && !resetBackend.active
-        foreground: root.foreground
-        urgent: root.urgent
-        fontFamily: root.fontFamily
-        errorText: root.configuring ? settingsViewItem.errorText : ""
-        saving: root.configuring && settingsViewItem.saving
-        onSaveRequested: settingsViewItem.submit()
-        onCancelRequested: root.leaveSettings()
-      }
-
-      // Expanded sections and new delegates must be laid out before their
-      // coordinates can be used to scroll the focused field into view.
-      Timer {
-        id: settingsRevealTimer
-        property var item: null
-        interval: 0
-        onTriggered: {
-          if (!root.configuring || !root.opened || !item || !item.visible) return
-          for (let ancestor = item.parent; ancestor && ancestor !== panelFlick; ancestor = ancestor.parent)
-            if (ancestor.forceLayout) ancestor.forceLayout()
-          var point = item.mapToItem(panelFlick.contentItem, 0, 0)
-          var bottom = point.y + item.height + Style.spacing.md
-          var target = panelFlick.contentY
-          if (point.y < target) target = point.y
-          else if (bottom > target + panelFlick.height) target = bottom - panelFlick.height
-          panelFlick.contentY = root.clamp(target, 0, Math.max(0, panelFlick.contentHeight - panelFlick.height))
-        }
-      }
-
-      Flickable {
-        id: panelFlick
-        anchors.fill: parent
-        anchors.bottomMargin: settingsActions.visible ? settingsActions.implicitHeight + Style.spacing.lg : 0
-        contentWidth: width
-        contentHeight: resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        ResetConfirmation {
-          id: resetForm
-          width: panelFlick.width
-          visible: resetBackend.active
-          backend: resetBackend
-          foreground: root.foreground
-          background: root.surface
-          fontFamily: root.fontFamily
-          onCloseRequested: {
-            if (resetBackend.state === "sending" || resetBackend.state === "uncertain") root.close()
-            else resetBackend.cancel()
+          onMoveRequested: function(dx, dy) {
+            if (dx !== 0 && root.viewMode === "limits" && root.providers.length > 1) {
+              root.stepProvider(dx)
+            }
+            if (dy !== 0) {
+              let target = panelFlick.contentY + dy * Style.space(56)
+              panelFlick.contentY = root.clamp(target, 0,
+                Math.max(0, panelFlick.contentHeight - panelFlick.height))
+            }
           }
-        }
+          onActivateRequested: root.refreshNow()
+          onCloseRequested: root.close()
+          onTabRequested: function(direction) { root.switchPanel(direction) }
+          onTextKey: function(text) {
+            if (text === "r" || text === "R") root.refreshNow()
+            else if (text === "c" || text === "C") root.showCosts()
+            else if (text === "u" || text === "U") root.showLimits()
+            else if (root.viewMode === "costs" && (text === "m" || text === "M")) costsView.openMetricMenu()
+            else if (root.viewMode === "costs" && (text === "d" || text === "D")) costsView.tokenDetailsExpanded = !costsView.tokenDetailsExpanded
+            else if (root.viewMode === "costs" && (text === "b" || text === "B")) costsView.modelsExpanded = !costsView.modelsExpanded
+            else if (text === "s" || text === "S") root.showViewSettings()
+            else if (text === "[") root.stepRange(-1)
+            else if (text === "]") root.stepRange(1)
+            else if (text === "?") root.shortcutsVisible = !root.shortcutsVisible
+            else if ((text === "a" || text === "A") && root.viewMode === "limits"
+                && (root.detailsAvailable || root.expandedAccountLimits))
+              root.expandedAccountLimits = !root.expandedAccountLimits
+          }
 
-        Column {
-          id: contentColumn
-          visible: !resetBackend.active
-          width: panelFlick.width
-          spacing: Style.spacing.xxl
+          SettingsActions {
+            id: settingsActions
+            objectName: "settingsActions"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            visible: root.configuring && !resetBackend.active
+            foreground: root.foreground
+            urgent: root.urgent
+            fontFamily: root.fontFamily
+            errorText: root.configuring ? settingsViewItem.errorText : ""
+            saving: root.configuring && settingsViewItem.saving
+            onSaveRequested: settingsViewItem.submit()
+            onCancelRequested: root.leaveSettings()
+          }
 
-          Column {
-            visible: !root.configuring
-            width: parent.width
-            spacing: Style.spacing.md
-
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(panelTitle.implicitHeight, headerActions.implicitHeight)
-
-              Text {
-                id: panelTitle
-                textFormat: Text.PlainText
-                anchors.left: parent.left
-                anchors.right: headerActions.left
-                anchors.rightMargin: Style.spacing.md
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Model Usage"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-              }
-
-              Row {
-                id: headerActions
-                anchors.right: parent.right
-                spacing: Style.spacing.xs
-
-                Ui.PanelActionButton {
-                  objectName: root.viewMode === "costs" ? "costSettingsButton" : "usageSettingsButton"
-                  iconText: "󰒓"
-                  tooltipText: "Settings (s)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.body
-                  onClicked: root.showViewSettings()
-                }
-
-                Ui.PanelActionButton {
-                  objectName: "shortcutsButton"
-                  iconText: "?"
-                  tooltipText: root.shortcutsVisible ? "Hide keyboard shortcuts (?)" : "Keyboard shortcuts (?)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.body
-                  onClicked: root.shortcutsVisible = !root.shortcutsVisible
-                }
-
-                Ui.PanelActionButton {
-                  iconText: "󰑐"
-                  tooltipText: root.viewMode === "costs" ? "Refresh estimated costs" : "Refresh usage"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.body
-                  enabled: !(root.viewMode === "costs" ? costBackend.loading : backend.loading)
-                  onClicked: root.refreshNow()
-                }
-              }
+          // Expanded sections and new delegates must be laid out before their
+          // coordinates can be used to scroll the focused field into view.
+          Timer {
+            id: settingsRevealTimer
+            property var item: null
+            interval: 0
+            onTriggered: {
+              if (!root.configuring || !root.opened || !item || !item.visible) return
+              for (let ancestor = item.parent; ancestor && ancestor !== panelFlick; ancestor = ancestor.parent)
+                if (ancestor.forceLayout) ancestor.forceLayout()
+              var point = item.mapToItem(panelFlick.contentItem, 0, 0)
+              var bottom = point.y + item.height + Style.spacing.md
+              var target = panelFlick.contentY
+              if (point.y < target) target = point.y
+              else if (bottom > target + panelFlick.height) target = bottom - panelFlick.height
+              panelFlick.contentY = root.clamp(target, 0, Math.max(0, panelFlick.contentHeight - panelFlick.height))
             }
+          }
 
-            UsageNavigation {
-              id: navigation
-              width: parent.width
-              viewMode: root.viewMode
-              viewOptions: root.viewOptions
+          Flickable {
+            id: panelFlick
+            anchors.fill: parent
+            anchors.bottomMargin: settingsActions.visible ? settingsActions.implicitHeight + Style.spacing.lg : 0
+            contentWidth: width
+            contentHeight: resetBackend.active ? resetForm.implicitHeight : contentColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            ResetConfirmation {
+              id: resetForm
+              width: panelFlick.width
+              visible: resetBackend.active
+              backend: resetBackend
               foreground: root.foreground
+              background: root.surface
               fontFamily: root.fontFamily
-              onViewRequested: function(value) { root.viewMode = value }
+              onCloseRequested: {
+                if (resetBackend.state === "sending" || resetBackend.state === "uncertain") root.close()
+                else resetBackend.cancel()
+              }
             }
 
-            // "7 accounts · 3 providers", with the Details toggle beside it.
-            Item {
-              width: parent.width
-              visible: panelContext.text !== "" || detailsToggle.visible
-              implicitHeight: Math.max(panelContext.implicitHeight, detailsToggle.visible ? detailsToggle.implicitHeight : 0)
+            Column {
+              id: contentColumn
+              visible: !resetBackend.active
+              width: panelFlick.width
+              spacing: Style.spacing.xxl
 
+              Column {
+                visible: !root.configuring
+                width: parent.width
+                spacing: Style.spacing.md
+
+                Item {
+                  width: parent.width
+                  implicitHeight: Math.max(panelTitle.implicitHeight, headerActions.implicitHeight)
+
+                  Text {
+                    id: panelTitle
+                    textFormat: Text.PlainText
+                    anchors.left: parent.left
+                    anchors.right: headerActions.left
+                    anchors.rightMargin: Style.spacing.md
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Model Usage"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+
+                  Row {
+                    id: headerActions
+                    anchors.right: parent.right
+                    spacing: Style.spacing.xs
+
+                    Ui.PanelActionButton {
+                      objectName: root.viewMode === "costs" ? "costSettingsButton" : "usageSettingsButton"
+                      iconText: "󰒓"
+                      tooltipText: "Settings (s)"
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.body
+                      onClicked: root.showViewSettings()
+                    }
+
+                    Ui.PanelActionButton {
+                      objectName: "shortcutsButton"
+                      iconText: "?"
+                      tooltipText: root.shortcutsVisible ? "Hide keyboard shortcuts (?)" : "Keyboard shortcuts (?)"
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.body
+                      onClicked: root.shortcutsVisible = !root.shortcutsVisible
+                    }
+
+                    Ui.PanelActionButton {
+                      iconText: "󰑐"
+                      tooltipText: root.viewMode === "costs" ? "Refresh estimated costs" : "Refresh usage"
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.body
+                      enabled: !(root.viewMode === "costs" ? costBackend.loading : backend.loading)
+                      onClicked: root.refreshNow()
+                    }
+                  }
+                }
+
+                UsageNavigation {
+                  id: navigation
+                  width: parent.width
+                  viewMode: root.viewMode
+                  viewOptions: root.viewOptions
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onViewRequested: function(value) { root.viewMode = value }
+                }
+
+                // "7 accounts · 3 providers", with the Details toggle beside it.
+                Item {
+                  width: parent.width
+                  visible: panelContext.text !== "" || detailsToggle.visible
+                  implicitHeight: Math.max(panelContext.implicitHeight, detailsToggle.visible ? detailsToggle.implicitHeight : 0)
+
+                  Text {
+                    id: panelContext
+                    objectName: "panelContext"
+                    anchors.left: parent.left
+                    anchors.right: detailsToggle.visible ? detailsToggle.left : parent.right
+                    anchors.rightMargin: detailsToggle.visible ? Style.spacing.md : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.contextText()
+                    textFormat: Text.PlainText
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+
+                  Ui.Button {
+                    id: detailsToggle
+                    objectName: "additionalLimitsToggle"
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.viewMode === "limits" && (root.detailsAvailable || root.expandedAccountLimits)
+                    text: "Details " + (root.expandedAccountLimits ? "▴" : "▾")
+                    focusable: true
+                    horizontalPadding: Style.spacing.sm
+                    verticalPadding: Style.spacing.xxs
+                    tooltipText: root.expandedAccountLimits ? "Hide details (a)"
+                      : "Show every limit, reset time and account fact (a)"
+                    Accessible.name: root.expandedAccountLimits ? "Hide details" : "Show details"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    onClicked: root.expandedAccountLimits = !root.expandedAccountLimits
+                  }
+                }
+              }
+
+              Grid {
+                objectName: "shortcutLegend"
+                visible: root.shortcutsVisible && !root.configuring
+                width: parent.width
+                columns: 4
+                columnSpacing: Style.spacing.md
+                rowSpacing: Style.spacing.xs
+                Accessible.role: Accessible.StaticText
+                Accessible.name: "Keyboard shortcuts"
+
+                Repeater {
+                  // Key and action cells, two shortcuts per line.
+                  model: root.shortcutRows().reduce(function(cells, row) {
+                    return cells.concat([{ text: row.key, key: true }, { text: row.action, key: false }])
+                  }, [])
+                  delegate: Text {
+                    required property var modelData
+                    width: modelData.key ? Style.space(64)
+                      : Math.max(0, (parent.width - Style.space(64) * 2 - Style.spacing.md * 3) / 2)
+                    text: modelData.text
+                    textFormat: Text.PlainText
+                    color: modelData.key ? root.foreground : root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: modelData.key
+                    elide: Text.ElideRight
+                  }
+                }
+              }
+
+              SettingsView {
+                id: settingsViewItem
+                objectName: "settingsView"
+                visible: root.configuring
+                width: parent.width
+                foreground: root.foreground
+                urgent: root.urgent
+                surface: root.surface
+                fontFamily: root.fontFamily
+                accountDetails: root.accountDiagnostics()
+                proxyProviders: root.proxyMode ? backend.providers : []
+                proxyImplementation: backend.proxyImplementation
+                sources: costBackend.payload ? UsageLogic.listOrEmpty(costBackend.payload.sources) : []
+                onSaveRequested: function(values) { root.saveSettings(values) }
+                onCancelRequested: root.leaveSettings()
+                onRevealRequested: function(item) {
+                  settingsRevealTimer.item = item
+                  settingsRevealTimer.restart()
+                }
+              }
+
+              // Session counts need Fusebox's live feed; while it is down, one line
+              // says so instead of every account row.
               Text {
-                id: panelContext
-                objectName: "panelContext"
-                anchors.left: parent.left
-                anchors.right: detailsToggle.visible ? detailsToggle.left : parent.right
-                anchors.rightMargin: detailsToggle.visible ? Style.spacing.md : 0
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.contextText()
+                objectName: "liveActivityStatus"
+                width: parent.width
+                visible: root.viewMode === "limits" && activityBackend.useLive
+                  && activityBackend.liveState !== "live" && root.providers.length > 0
+                text: activityBackend.liveNotice + " Session counts are hidden until it reconnects."
                 textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
+                wrapMode: Text.WordWrap
               }
 
-              Ui.Button {
-                id: detailsToggle
-                objectName: "additionalLimitsToggle"
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.viewMode === "limits" && (root.detailsAvailable || root.expandedAccountLimits)
-                text: "Details " + (root.expandedAccountLimits ? "▴" : "▾")
-                focusable: true
-                horizontalPadding: Style.spacing.sm
-                verticalPadding: Style.spacing.xxs
-                tooltipText: root.expandedAccountLimits ? "Hide details (a)"
-                  : "Show every limit, reset time and account fact (a)"
-                Accessible.name: root.expandedAccountLimits ? "Hide details" : "Show details"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
-                onClicked: root.expandedAccountLimits = !root.expandedAccountLimits
-              }
-            }
-          }
-
-          Grid {
-            objectName: "shortcutLegend"
-            visible: root.shortcutsVisible && !root.configuring
-            width: parent.width
-            columns: 4
-            columnSpacing: Style.spacing.md
-            rowSpacing: Style.spacing.xs
-            Accessible.role: Accessible.StaticText
-            Accessible.name: "Keyboard shortcuts"
-
-            Repeater {
-              // Key and action cells, two shortcuts per line.
-              model: root.shortcutRows().reduce(function(cells, row) {
-                return cells.concat([{ text: row.key, key: true }, { text: row.action, key: false }])
-              }, [])
-              delegate: Text {
-                required property var modelData
-                width: modelData.key ? Style.space(64)
-                  : Math.max(0, (parent.width - Style.space(64) * 2 - Style.spacing.md * 3) / 2)
-                text: modelData.text
+              Text {
                 textFormat: Text.PlainText
-                color: modelData.key ? root.foreground : root.dim
+                visible: root.viewMode === "limits" && root.providers.length === 0
+                width: parent.width
+                topPadding: Style.spacing.huge
+                bottomPadding: Style.spacing.huge
+                text: backend.loading
+                  ? "Loading AI subscription usage…"
+                  : root.proxyMode ? "No enabled managed accounts found. Check the accounts configured in " + UsageLogic.proxyName(backend.proxyImplementation) + "."
+                  : "No connected providers found. Enable a provider in the widget settings and sign in to its CLI."
+                color: root.dim
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: modelData.key
-                elide: Text.ElideRight
+                font.pixelSize: Style.font.body
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
               }
-            }
-          }
 
-          SettingsView {
-            id: settingsViewItem
-            objectName: "settingsView"
-            visible: root.configuring
-            width: parent.width
-            foreground: root.foreground
-            urgent: root.urgent
-            surface: root.surface
-            fontFamily: root.fontFamily
-            accountDetails: root.accountDiagnostics()
-            proxyProviders: root.proxyMode ? backend.providers : []
-            proxyImplementation: backend.proxyImplementation
-            sources: costBackend.payload ? UsageLogic.listOrEmpty(costBackend.payload.sources) : []
-            onSaveRequested: function(values) { root.saveSettings(values) }
-            onCancelRequested: root.leaveSettings()
-            onRevealRequested: function(item) {
-              settingsRevealTimer.item = item
-              settingsRevealTimer.restart()
-            }
-          }
+              // Every provider at once, one card each.
+              Column {
+                id: providerSection
+                visible: root.viewMode === "limits" && root.providers.length > 0
+                width: parent.width
+                spacing: Style.spacing.lg
 
-          // Session counts need Fusebox's live feed; while it is down, one line
-          // says so instead of every account row.
-          Text {
-            objectName: "liveActivityStatus"
-            width: parent.width
-            visible: root.viewMode === "limits" && activityBackend.useLive
-              && activityBackend.liveState !== "live" && root.providers.length > 0
-            text: activityBackend.liveNotice + " Session counts are hidden until it reconnects."
-            textFormat: Text.PlainText
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
+                Repeater {
+                  id: providerRepeater
+                  model: root.providers
 
-          Text {
-            textFormat: Text.PlainText
-            visible: root.viewMode === "limits" && root.providers.length === 0
-            width: parent.width
-            topPadding: Style.spacing.huge
-            bottomPadding: Style.spacing.huge
-            text: backend.loading
-              ? "Loading AI subscription usage…"
-              : root.proxyMode ? "No enabled managed accounts found. Check the accounts configured in " + UsageLogic.proxyName(backend.proxyImplementation) + "."
-              : "No connected providers found. Enable a provider in the widget settings and sign in to its CLI."
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-          }
+                  ProviderCard {
+                    required property var modelData
+                    width: providerSection.width
+                    provider: modelData
+                    expanded: root.expandedAccountLimits
+                    liveActivity: activityBackend.useLive
+                    activity: activityBackend
+                    proxyMode: root.proxyMode
+                    resetAllowed: !resetBackend.active && !resetBackend.busy
+                    hideAccountEmails: root.hideAccountEmails
+                    historyOpen: root.historyOpen[String(modelData.id)] === true
+                    historyMode: root.historyMode
+                    labelWidth: root.labelColumnWidth
+                    labelColumn: labelRegistry
+                    reserveResetSlot: root.bankedResetColumn
+                    iconSource: root.iconUrl(modelData)
+                    nowMs: root.nowMs
+                    minuteMs: root.minuteMs
+                    refreshing: backend.loading
+                    warningThreshold: root.warningThreshold
+                    criticalThreshold: root.criticalThreshold
+                    foreground: root.foreground
+                    urgent: root.urgent
+                    fontFamily: root.fontFamily
+                    cardRadius: root.usageCardRadius
+                    onResetRequested: function(account, label) { resetBackend.begin(account, label) }
+                    onHistoryToggled: function(open) {
+                      if (open !== (root.historyOpen[String(modelData.id)] === true)) root.toggleHistory(String(modelData.id))
+                    }
+                    onRangeRequested: function(mode) { root.historyMode = mode }
+                  }
+                }
+              }
 
-          // Every provider at once, one card each.
-          Column {
-            id: providerSection
-            visible: root.viewMode === "limits" && root.providers.length > 0
-            width: parent.width
-            spacing: Style.spacing.lg
-
-            Repeater {
-              id: providerRepeater
-              model: root.providers
-
-              ProviderCard {
-                required property var modelData
-                width: providerSection.width
-                provider: modelData
-                expanded: root.expandedAccountLimits
-                liveActivity: activityBackend.useLive
-                activity: activityBackend
-                proxyMode: root.proxyMode
-                resetAllowed: !resetBackend.active && !resetBackend.busy
-                hideAccountEmails: root.hideAccountEmails
-                historyOpen: root.historyOpen[String(modelData.id)] === true
-                historyMode: root.historyMode
-                labelWidth: root.labelColumnWidth
-                labelColumn: labelRegistry
-                reserveResetSlot: root.bankedResetColumn
-                iconSource: root.iconUrl(modelData)
-                nowMs: root.nowMs
-                minuteMs: root.minuteMs
-                refreshing: backend.loading
-                warningThreshold: root.warningThreshold
-                criticalThreshold: root.criticalThreshold
+              UsageCosts {
+                id: costsView
+                visible: root.viewMode === "costs"
+                width: parent.width
+                payload: costBackend.payload
+                loading: costBackend.loading
+                errorText: costBackend.fetchError
+                periodDays: costBackend.periodDays
                 foreground: root.foreground
                 urgent: root.urgent
+                surface: root.surface
                 fontFamily: root.fontFamily
                 cardRadius: root.usageCardRadius
-                onResetRequested: function(account, label) { resetBackend.begin(account, label) }
-                onHistoryToggled: function(open) {
-                  if (open !== (root.historyOpen[String(modelData.id)] === true)) root.toggleHistory(String(modelData.id))
+                fuseboxHost: costBackend.fuseboxHost
+                onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
+                onSourceSettingsRequested: root.showCostSettings()
+                onMenuClosed: Qt.callLater(function() {
+                  if (root.opened && !root.configuring && !resetBackend.active)
+                    keyCatcher.forceActiveFocus()
+                })
+              }
+
+              Ui.PanelSeparator { visible: !root.configuring; foreground: root.foreground }
+
+              Item {
+                visible: !root.configuring
+                width: parent.width
+                implicitHeight: Math.max(footerLeft.implicitHeight, footerRight.implicitHeight)
+
+                Text {
+                  id: footerLeft
+                  textFormat: Text.PlainText
+                  HoverHandler { id: footerHover }
+                  PlainToolTip {
+                    visible: footerHover.hovered && text !== ""
+                    text: root.footerTooltip()
+                    fontFamily: root.fontFamily
+                  }
+                  anchors.left: parent.left
+                  anchors.right: footerRight.left
+                  anchors.rightMargin: Style.spacing.controlGap
+                  objectName: "footerStatus"
+                  text: root.footerLeft()
+                  Accessible.name: root.footerTooltip() || text
+                  color: (root.viewMode === "costs" ? costBackend.fetchError !== ""
+                      : backend.fetchError !== "" || UsageLogic.anyStaleReading(root.providers))
+                    ? root.urgent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
                 }
-                onRangeRequested: function(mode) { root.historyMode = mode }
+
+                Text {
+                  id: footerRight
+                  objectName: "footerRefresh"
+                  textFormat: Text.PlainText
+                  anchors.right: parent.right
+                  text: root.footerRight()
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
               }
-            }
-          }
-
-          UsageCosts {
-            id: costsView
-            visible: root.viewMode === "costs"
-            width: parent.width
-            payload: costBackend.payload
-            loading: costBackend.loading
-            errorText: costBackend.fetchError
-            periodDays: costBackend.periodDays
-            foreground: root.foreground
-            urgent: root.urgent
-            surface: root.surface
-            fontFamily: root.fontFamily
-            cardRadius: root.usageCardRadius
-            fuseboxHost: costBackend.fuseboxHost
-            onPeriodRequested: function(days) { costBackend.selectPeriod(days) }
-            onSourceSettingsRequested: root.showCostSettings()
-            onMenuClosed: Qt.callLater(function() {
-              if (root.opened && !root.configuring && !resetBackend.active)
-                keyCatcher.forceActiveFocus()
-            })
-          }
-
-          Ui.PanelSeparator { visible: !root.configuring; foreground: root.foreground }
-
-          Item {
-            visible: !root.configuring
-            width: parent.width
-            implicitHeight: Math.max(footerLeft.implicitHeight, footerRight.implicitHeight)
-
-            Text {
-              id: footerLeft
-              textFormat: Text.PlainText
-              HoverHandler { id: footerHover }
-              PlainToolTip {
-                visible: footerHover.hovered && text !== ""
-                text: root.footerTooltip()
-                fontFamily: root.fontFamily
-              }
-              anchors.left: parent.left
-              anchors.right: footerRight.left
-              anchors.rightMargin: Style.spacing.controlGap
-              objectName: "footerStatus"
-              text: root.footerLeft()
-              Accessible.name: root.footerTooltip() || text
-              color: (root.viewMode === "costs" ? costBackend.fetchError !== ""
-                  : backend.fetchError !== "" || UsageLogic.anyStaleReading(root.providers))
-                ? root.urgent : root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
-            }
-
-            Text {
-              id: footerRight
-              objectName: "footerRefresh"
-              textFormat: Text.PlainText
-              anchors.right: parent.right
-              text: root.footerRight()
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
             }
           }
         }
