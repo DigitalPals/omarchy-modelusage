@@ -9,6 +9,10 @@ Item {
   visible: false
 
   property var settings: ({})
+  // False while nobody needs fresh readings (idle session); manual refreshes
+  // still run. stop() ends the worker for good before it is destroyed.
+  property bool automaticRefreshEnabled: true
+  property bool stopped: false
   property var payload: ({ schemaVersion: 1, generatedAt: "", providers: [] })
   property bool loading: false
   property string fetchError: ""
@@ -16,6 +20,7 @@ Item {
   property double lastAttemptAt: 0
   property bool pendingRefresh: false
   property bool launchPending: false
+  property bool requestManual: false
 
   readonly property int refreshIntervalSec: Math.max(60, Math.min(3600,
     Math.round(Number(setting("refreshIntervalSec", 900)) || 900)))
@@ -29,11 +34,11 @@ Item {
   readonly property var providers: payload ? UsageLogic.listOrEmpty(payload.providers) : []
   readonly property string proxyImplementation: String(payload && payload.proxyImplementation || "")
   readonly property string connectionId: JSON.stringify([usageSource, proxyUrl, proxyKeyFile])
-  readonly property string scriptPath: localPath(Qt.resolvedUrl("scripts/usage-fetch.py"))
+  property string scriptPath: localPath(Qt.resolvedUrl("scripts/usage-fetch.py"))
   readonly property double nextRefreshAt: lastAttemptAt > 0
     ? lastAttemptAt + refreshIntervalSec * 1000 : 0
 
-  signal refreshed()
+  signal refreshed(bool manual)
 
   function setting(name, fallback) {
     return UsageLogic.setting(settings, name, fallback)
@@ -61,20 +66,30 @@ Item {
   }
 
   function requestRefresh(manual) {
-    if (manual) refreshTimer.restart()
+    if (stopped || (!manual && !automaticRefreshEnabled)) return
+    if (manual && automaticRefreshEnabled) refreshTimer.restart()
+    // A manual request waits for the running fetch; automatic ones (timer,
+    // settings) are dropped. A changed connection queues its own follow-up.
     if (fetchProcess.running || launchPending || pendingRefresh) {
-      pendingRefresh = true
+      pendingRefresh = pendingRefresh || !!manual
       return
     }
-    startFetch()
+    startFetch(manual)
   }
 
   function refresh() { requestRefresh(true) }
   function refreshForSettings() { requestRefresh(false) }
+  function stop() {
+    stopped = true
+    pendingRefresh = false
+    refreshTimer.stop()
+    fetchProcess.running = false
+  }
 
-  function startFetch() {
-    if (fetchProcess.running || launchPending) return
+  function startFetch(manual) {
+    if (stopped || fetchProcess.running || launchPending) return
     launchPending = true
+    requestManual = !!manual
     loading = true
     pendingRefresh = false
     lastAttemptAt = Date.now()
@@ -93,6 +108,7 @@ Item {
   function settle() {
     launchPending = false
     loading = false
+    if (stopped) return
     if (fetchProcess.connectionId !== connectionId) {
       pendingRefresh = true
     } else if (fetchProcess.outputTooLarge) {
@@ -117,12 +133,12 @@ Item {
           fetchError = ""
           let generated = new Date(String(parsed.generatedAt || "")).getTime()
           lastSuccessAt = isFinite(generated) ? generated : Date.now()
-          refreshed()
+          refreshed(requestManual)
         }
       }
     }
     if (pendingRefresh) Qt.callLater(function() {
-      if (root.pendingRefresh) root.startFetch()
+      if (root.pendingRefresh) root.startFetch(true)
     })
   }
 
@@ -198,7 +214,8 @@ Item {
   Timer {
     id: refreshTimer
     interval: root.refreshIntervalSec * 1000
-    running: true
+    // Starting again (after idle) fetches at once: triggeredOnStart.
+    running: root.automaticRefreshEnabled && !root.stopped
     repeat: true
     triggeredOnStart: true
     onTriggered: root.requestRefresh(false)

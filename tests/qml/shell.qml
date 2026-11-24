@@ -294,33 +294,33 @@ ShellRoot {
       assertTrue(proxyWidget.accountTooltip({account: "secret@example.invalid"}).indexOf("secret") < 0, "settings cannot reveal hidden account identity")
       proxyWidget.settings = Object.assign({}, proxyWidget.settings,
         {barDisplayMode: "Percentages", barProviders: ["codex"]})
-      proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ok", accountId: "0", lastUsedAt: 123}]
+      proxyWidget.accountActivity.connection.legacyProviders = [{id: "codex", status: "ok", accountId: "0", lastUsedAt: 123}]
       var barLabel = namedChild(proxyWidget, "barAccountLabel")
       var barRemaining = namedChild(proxyWidget, "barAccountRemaining")
       assertTrue(barLabel === null, "bar contains no account name label")
       assertEqual(proxyWidget.lastAccount(providerById(proxyWidget, "codex")).label, "Account 1", "tooltip respects hidden account emails")
       assertEqual(barRemaining ? barRemaining.text : "", "20%", "bar quota belongs to last-used account")
-      proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ok", accountId: "1", lastUsedAt: 124}]
+      proxyWidget.accountActivity.connection.legacyProviders = [{id: "codex", status: "ok", accountId: "1", lastUsedAt: 124}]
       assertEqual(proxyWidget.lastAccount(providerById(proxyWidget, "codex")).label, "Account 2", "tooltip follows account switches")
       assertEqual(barRemaining.text, "55%", "account switch updates quota together with label")
       proxyWidget.settings = Object.assign({}, proxyWidget.settings, {hideAccountEmails: false})
       assertEqual(proxyWidget.accountDisplayName({account: "secret@example.invalid"}, 2), "secret@example.invalid", "privacy setting can reveal account labels")
       assertEqual(proxyWidget.lastAccount(providerById(proxyWidget, "codex")).label, "codex-1@example.invalid", "tooltip reveals email only when requested")
       assertTrue(namedChild(proxyWidget, "barAccountLabel") === null, "emails stay out of the bar when privacy is disabled")
-      proxyWidget.accountActivity.legacyProviders = []
+      proxyWidget.accountActivity.connection.legacyProviders = []
       assertEqual(barRemaining.text, "9%", "missing activity still shows the known pool quota")
       assertTrue(barRemaining.parent.parent.tooltipText.indexOf("most remaining capacity") >= 0,
         "fallback tooltip identifies the pool quota rather than claiming a last-used account")
-      proxyWidget.accountActivity.legacyProviders = [{id: "codex", status: "ambiguous", lastUsedAt: 125}]
+      proxyWidget.accountActivity.connection.legacyProviders = [{id: "codex", status: "ambiguous", lastUsedAt: 125}]
       assertEqual(barRemaining.text, "9%", "ambiguous activity still shows the known pool quota")
-      var freshPayload = proxyWidget.usageBackend.payload
+      var freshPayload = proxyWidget.usageBackend.connection.payload
       var stalePayload = JSON.parse(JSON.stringify(freshPayload))
       for (var p = 0; p < stalePayload.providers.length; p++) {
         if (stalePayload.providers[p].id !== "codex") continue
         stalePayload.providers[p].accounts[2].stale = true
         stalePayload.providers[p].accounts[2].notice = "Last known reading · Proxy offline"
       }
-      proxyWidget.usageBackend.payload = stalePayload
+      proxyWidget.usageBackend.connection.payload = stalePayload
       var staleRemaining = namedChild(proxyWidget, "barAccountRemaining")
       assertEqual(staleRemaining ? staleRemaining.text : "", "9%?", "a pool reading with a last-known account is marked")
       assertTrue(staleRemaining && staleRemaining.parent.parent.active, "a last-known reading activates its chip")
@@ -333,7 +333,7 @@ ShellRoot {
         "a last-known account row is marked like its chip")
       assertTrue(staleRows.length === 3 && staleRows[2].mainRow.tooltipText.indexOf("Proxy offline") >= 0,
         "the row tooltip explains the last-known reading")
-      proxyWidget.usageBackend.payload = freshPayload
+      proxyWidget.usageBackend.connection.payload = freshPayload
     }
     if (widget) {
       assertEqual(widget.moduleName, "digitalpals.model-usage", "moduleName injection")

@@ -20,6 +20,10 @@ Ui.Panel {
   readonly property color dim: UsageLogic.dimColor(foreground)
   readonly property color surface: Commons.Color.popups.background
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  // Background refreshes pause while the session is idle; opening the panel,
+  // `r` and IPC refresh still work. A host may bind this to its own state.
+  readonly property bool sessionIdle: idleWatch.item ? idleWatch.item.isIdle === true : false
+  property bool automaticRefreshEnabled: !sessionIdle
 
   readonly property bool proxyMode: backend.usageSource === "proxy"
   readonly property var providers: UsageLogic.availableProviders(proxyMode
@@ -440,16 +444,22 @@ Ui.Panel {
     if (panelFlick) panelFlick.contentY = 0
   }
 
-  UsageBackend {
+  // Handles on workers shared by every bar showing the widget.
+  UsageSharedBackend {
     id: backend
     settings: root.settings
-    onRefreshed: activityBackend.refresh()
+    automaticRefreshEnabled: root.automaticRefreshEnabled
   }
 
-  UsageActivityBackend {
+  UsageSharedActivityBackend {
     id: activityBackend
     usageBackend: backend
     settings: root.settings
+  }
+
+  Loader {
+    id: idleWatch
+    source: "IdleWatch.qml"
   }
 
   ResetBackend {

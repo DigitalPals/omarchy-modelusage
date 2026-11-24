@@ -8,6 +8,8 @@ Item {
   visible: false
   required property var usageBackend
   property var settings: ({})
+  property bool automaticRefreshEnabled: true
+  property bool stopped: false
   property var legacyProviders: []
   readonly property var providers: useLive ? (liveConnection ? liveConnection.providers : []) : legacyProviders
   property string legacyError: ""
@@ -16,6 +18,7 @@ Item {
   readonly property double lastSuccessAt: useLive ? (liveConnection ? liveConnection.lastSuccessAt : 0) : legacySuccessAt
   property bool pendingRefresh: false
   property bool launchPending: false
+  property double lastAttemptAt: 0
   property string scriptPath: usageBackend.localPath(Qt.resolvedUrl("scripts/proxy-activity.py"))
   readonly property string keeperUrl: String(UsageLogic.setting(settings, "keeperUrl", ""))
   readonly property string passwordFile: String(UsageLogic.setting(settings, "keeperPasswordFile", ""))
@@ -29,7 +32,7 @@ Item {
   readonly property string liveState: useLive ? (liveConnection ? liveConnection.connectionState : "unavailable") : "off"
   readonly property var liveAccounts: useLive && liveConnection ? liveConnection.accounts : []
   readonly property string liveNotice: useLive ? (liveConnection ? liveConnection.message : "Live activity unavailable.") : ""
-  readonly property string connectionId: JSON.stringify([usageBackend.connectionId, usageBackend.proxyImplementation, keeperUrl, passwordFile, useLive, liveScriptPath])
+  readonly property string connectionId: JSON.stringify([usageBackend.connectionId, rustProxy ? "rust" : "keeper", keeperUrl, passwordFile, useLive, liveScriptPath])
 
   function syncLive() {
     if (!ready) return
@@ -53,10 +56,15 @@ Item {
     ? "Configure CPA Usage Keeper in settings to track the last-used account."
     : fetchError !== "" ? fetchError : lastSuccessAt <= 0 ? "Loading account activity…" : ""
 
-  function refresh() {
-    if (!trackingEnabled || useLive) return
-    if (process.running || launchPending) { pendingRefresh = true; return }
+  function refresh() { request(true) }
+  // Every quota refresh refreshes activity; automatic ones at most once a second.
+  function request(manual) {
+    if (stopped || (!manual && !automaticRefreshEnabled) || !trackingEnabled || useLive) return
+    // A manual request waits for the running one; automatic ones are dropped.
+    if (process.running || launchPending) { pendingRefresh = pendingRefresh || !!manual; return }
+    if (!manual && Date.now() - lastAttemptAt < 1000) return
     launchPending = true
+    lastAttemptAt = Date.now()
     pendingRefresh = false
     var command = ["python3", scriptPath, "--timeout", "10"].concat(usageBackend.proxyArgs())
     if (!rustProxy && keeperUrl.trim() !== "") command.push("--keeper-url", keeperUrl)
@@ -66,8 +74,24 @@ Item {
     process.running = true
   }
 
+  function stop() {
+    stopped = true
+    ready = false
+    pendingRefresh = false
+    process.running = false
+    liveConnection = null
+    if (liveKey !== "") UsageLogic.releaseLive(liveKey)
+    liveKey = ""
+  }
+  Connections {
+    target: root.usageBackend
+    ignoreUnknownSignals: true
+    function onRefreshed(manual) { root.request(manual) }
+  }
+
   function settle() {
     launchPending = false
+    if (stopped) return
     if (process.connectionId !== connectionId || !trackingEnabled || useLive) {
       pendingRefresh = trackingEnabled && !useLive
     } else {
@@ -86,7 +110,7 @@ Item {
       }
     }
     if (pendingRefresh) Qt.callLater(function() {
-      if (root.pendingRefresh) root.refresh()
+      if (root.pendingRefresh) root.request(true)
     })
   }
 
@@ -97,7 +121,8 @@ Item {
     legacyError = ""
     legacySuccessAt = 0
     pendingRefresh = false
-    Qt.callLater(refresh)
+    lastAttemptAt = 0
+    Qt.callLater(function() { root.request(false) })
   }
 
   Process {
@@ -140,9 +165,9 @@ Item {
   }
   Timer {
     interval: 15000
-    running: root.trackingEnabled && !root.useLive
+    running: root.automaticRefreshEnabled && !root.stopped && root.trackingEnabled && !root.useLive
     repeat: true
     triggeredOnStart: true
-    onTriggered: root.refresh()
+    onTriggered: root.request(false)
   }
 }
