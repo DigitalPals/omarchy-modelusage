@@ -193,6 +193,15 @@ ShellRoot {
       settings: { enabledProviders: [], usageSource: "cliproxy",
         cliproxyUrl: "https://proxy.test/prefix", cliproxyKeyFile: "/private/proxy key" }
     }, "Panel.qml proxy discovery")
+    // Popups are built on first use; build them now so their cards lay out
+    // while the backends load, as the checks below read them.
+    for (var lazy of [widget, proxyWidget]) {
+      if (!lazy) continue
+      assertTrue(!lazy.popupLoaded && lazy.providerCards === null && lazy.settingsForm === null,
+        "a popup that was never opened is not built")
+      lazy.ensurePopup()
+      assertTrue(lazy.popupLoaded && lazy.providerCards !== null, "the popup builds on demand")
+    }
     if (malformedBackend) {
       malformedBackend.settings = { enabledProviders: ["kimi"], refreshIntervalSec: 3600 }
       malformedBackend.refresh()
@@ -228,10 +237,6 @@ ShellRoot {
       }
     }
     if (proxyWidget) {
-      assertTrue(!proxyWidget.popupLoaded && proxyWidget.providerCards === null && proxyWidget.settingsForm === null,
-        "a popup that was never opened is not built")
-      proxyWidget.ensurePopup()
-      assertTrue(proxyWidget.popupLoaded && proxyWidget.providerCards !== null, "the popup builds on demand")
       assertEqual(proxyWidget.providers.length, 4, "proxy popup includes newly discovered providers with no local selection")
       assertEqual(proxyWidget.providerCards.count, 4, "every provider has its own card, with no provider to select")
       var codexCard = proxyWidget.providerCard("codex")
@@ -351,7 +356,6 @@ ShellRoot {
       assertTrue(finite(widget.implicitWidth), "horizontal implicitWidth is finite")
       assertTrue(finite(widget.implicitHeight), "horizontal implicitHeight is finite")
       assertEqual(widget.providers.length, 3, "all normalized providers render")
-      widget.ensurePopup()
       assertEqual(widget.providerCards.count, 3, "every provider has its own card at once")
       var claude = providerById(widget, "claude")
       var claudeCard = widget.providerCard("claude")
