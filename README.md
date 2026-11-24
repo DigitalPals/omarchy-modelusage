@@ -55,6 +55,16 @@ The built-in `omarchy.agents` widget can coexist. To use only Model Usage:
 omarchy plugin disable omarchy.agents
 ```
 
+### Cybex OS
+
+Cybex OS runs Omarchy schema-1 plugins in its own shell. Install the plugin with:
+
+```bash
+cybex plugin add https://github.com/DigitalPals/omarchy-modelusage
+```
+
+then turn it on in **Settings → Plugins** (or `cybex plugin enable digitalpals.model-usage`) and place it in **Settings → Bar & Control Center**. Saved keys, quota history and cost caches stay where earlier Cybex OS releases kept them for the built-in Model Usage widget (`~/.config/omarchy/model-usage/` and `~/.local/state/omarchy/model-usage/`), so they carry over. The widget's own settings (source, server URL, thresholds) are plugin settings; set them again in the panel's settings if they are not there.
+
 ## Connect your sources
 
 One settings page has a **Limits** tab and a **Costs** tab. Costs follow Limits: when Limits reads a Fusebox server, Costs use its usage history automatically; otherwise they use this computer's CLI history. The Costs tab can choose this computer instead, or a different Fusebox server.

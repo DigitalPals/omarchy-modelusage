@@ -4,7 +4,7 @@
 - Omarchy commit: `2c247e390e357ae0fee3f8565b0c816adb705e6a`
 - Development date: 2026-08-23
 - Latest release review validation: 2026-11-10
-- Plugin release: `1.5.1`
+- Plugin release: `1.6.0`
 - Plugin manifest schema: 1
 - Limit backend schema: 1
 - Estimated-cost backend schema: 1

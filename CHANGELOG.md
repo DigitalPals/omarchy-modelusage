@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0
+
+Fixes and lifecycle work from Cybex OS, which shipped a patched copy of this plugin as a built-in widget and now installs the plugin itself instead.
+
+- Share one quota worker and one account-activity worker per connection between every bar showing the widget. Two monitors no longer mean two fetches, and unplugging one keeps the other bar's readings. The last bar to go stops the worker.
+- Pause automatic refreshes while the session is idle (five minutes without input, through Quickshell's `IdleMonitor`; idle inhibitors such as video keep readings live). Opening the panel, `r` and the IPC `refresh` still refresh at once, and the first refresh after idle happens straight away. On a Quickshell without `IdleMonitor` the widget keeps polling as before. A host can bind the panel's `automaticRefreshEnabled` to its own state.
+- Build the popup the first time it opens, not when the bar starts, and keep it afterwards so focus and unsaved settings survive closing.
+- Codex: read the account before asking for limits. An API-key sign-in now says it has no ChatGPT subscription limits instead of showing an RPC error, an `OPENAI_API_KEY` in the environment no longer hides the saved ChatGPT sign-in from the quota probe (Codex sessions keep it), and a rejected ChatGPT sign-in is refreshed once through Codex itself. Sign-in errors say what to do.
+- Claude: accept a `CLAUDE_CODE_OAUTH_TOKEN` sign-in (`claude setup-token`) without a credentials file. When the saved sign-in has expired, ask `claude auth status` (which sends no prompt) and read the credentials it refreshed. Read `.claude.json` from `CLAUDE_CONFIG_DIR` when that is set.
+- Document installing on Cybex OS.
+
 ## 1.5.1
 
 Fixes from the Omarchy marketplace's review of 1.5.0.
