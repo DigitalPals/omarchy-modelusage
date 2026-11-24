@@ -74,6 +74,21 @@ its line break, a 100,000-character clipboard pasted nothing, and a
 9,000-character one stopped at the field's 8,191-character limit. No live
 desktop shell or provider sign-in was checked for these fixes.
 
+The 1.6.0 changes (2026-11-24) ran the same pinned `tests/ci-qml` suite:
+212 Python tests, JavaScript checks, QML lint, every QML contract (including
+the new shared-worker contract) and the headless Wayland runtime contract
+(now also checking that a popup is built only on first use) passed. The
+quota, activity, live and shared-worker contracts also passed under Qt 6.12.0
+and Quickshell 0.3.2.
+
+On Cybex OS (`CybexBV/CybexOS` at `18c96166`, Qt 6.12.0, Quickshell 0.3.2),
+the package was installed with Cybex OS's own `user-plugins.py add` into an
+isolated user root, validated and enabled, then loaded by the real Cybex OS
+plugin host under headless sway with two outputs and fixture data: both bars
+shared one quota worker, neither popup was built until opened, the opened
+popup drew a card per provider, and a settings save reached `plugins.json`.
+No QML errors were logged. No live desktop or provider sign-in was checked.
+
 ## Provider compatibility
 
 - T3 Code usage contracts 4/5 at `b1e223e2b0d87124883b1410ab52dd6a1338e40d`:
