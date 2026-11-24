@@ -113,6 +113,8 @@ ShellRoot {
         root.widget.resetAction.scriptPath = Quickshell.env("MODEL_USAGE_FAKE_RESET")
         root.phase++
       } else if (root.phase === 6 && root.widget.providers.length > 0) {
+        // Cards live in the popup, which is built on first use.
+        root.widget.ensurePopup()
         var card = root.widget.providerCard("codex")
         root.check(card !== null && card.accountRows.count === 3, "account badge integration fixture loaded")
         var zero = card ? root.namedChild(card.accountRows.itemAt(0), "accountResetAction") : null
