@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.1
+
+- One IPC handler for `digitalpals.model-usage`: every monitor's bar built
+  its own, so a second monitor logged a duplicate-handler warning. The first
+  panel answers, and the next one takes over when it goes.
+
 ## 1.6.0
 
 Fixes and lifecycle work from Cybex OS, which shipped a patched copy of this plugin as a built-in widget and now installs the plugin itself instead.

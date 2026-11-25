@@ -1,5 +1,23 @@
 .pragma library
 
+// One IPC handler per target: every bar (one per monitor) builds a panel, and
+// Quickshell warns about, and ignores, a second handler for the same target.
+// The first panel answers; when it goes, the next one takes over.
+var ipcPanels = []
+
+function claimIpc(panel) {
+  if (ipcPanels.indexOf(panel) < 0)
+    ipcPanels.push(panel)
+  return ipcPanels[0] === panel
+}
+
+function releaseIpc(panel) {
+  var index = ipcPanels.indexOf(panel)
+  if (index >= 0)
+    ipcPanels.splice(index, 1)
+  return ipcPanels.length ? ipcPanels[0] : null
+}
+
 // One observer per connection across bars, monitors and open panels. The
 // shared object has no panel parent; the final consumer explicitly stops it.
 var liveConnections = ({})

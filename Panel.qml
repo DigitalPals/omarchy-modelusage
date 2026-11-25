@@ -580,8 +580,18 @@ Ui.Panel {
     }
   }
 
+  // Only one monitor's panel answers IPC (UsageLogic.claimIpc).
+  property bool ipcOwner: false
+  Component.onCompleted: ipcOwner = UsageLogic.claimIpc(root)
+  Component.onDestruction: {
+    var next = UsageLogic.releaseIpc(root)
+    if (next && next !== root)
+      next.ipcOwner = true
+  }
+
   IpcHandler {
     target: root.ipcTarget
+    enabled: root.ipcOwner
     function open(): void { root.open() }
     function close(): void { root.close() }
     function show(): void { root.open() }
